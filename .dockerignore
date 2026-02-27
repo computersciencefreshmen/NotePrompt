@@ -1,0 +1,25 @@
+# 忽略 Git 相关文件
+.git
+.gitignore
+
+# 忽略 node_modules，我们会在 Dockerfile 中重新安装
+node_modules
+
+# 忽略构建产物，这些会在容器内生成
+.next
+
+# 忽略开发和本地配置文件
+.env
+.env.production
+.env.test
+
+# 忽略 log 文件
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 忽略编辑器和操作系统相关文件
+.vscode
+.idea
+*.log
+*.DS_Store

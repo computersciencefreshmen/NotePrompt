@@ -1,0 +1,820 @@
+import {
+  AIOptimizeRequest,
+  AIOptimizeResponse,
+  AIMultiTurnOptimizeRequest,
+  AIMultiTurnOptimizeResponse,
+  LoginRequest,
+  RegisterRequest,
+  AuthResponse,
+  User,
+  CreatePromptData,
+  UpdatePromptData,
+  Prompt,
+  PublicPrompt,
+  ApiResponse,
+  PaginatedResponse,
+  PromptQueryParams,
+  PublicPromptQueryParams,
+  Folder,
+  CreateFolderData,
+  UserProfile,
+  UserStats,
+  Category,
+  Tag,
+  PublicFolder,
+  ExportData,
+  ImportedFolder,
+  AdminPrompt,
+  AdminFolder,
+  PromptVersion
+} from '@/types'
+
+// API基础配置
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
+
+// 获取存储的token
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem('auth_token')
+}
+
+// 设置认证token
+function setAuthToken(token: string): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('auth_token', token)
+  }
+}
+
+// 清除认证token
+function clearAuthToken(): void {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('auth_token')
+  }
+}
+
+// 通用API请求函数
+async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  // 动态检测端口，优先使用当前页面的端口
+  const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
+  const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
+  const url = `${baseURL}/api/v1${endpoint}`
+  
+  // 开发环境输出日志
+  if (process.env.NODE_ENV === 'development') {
+    console.log('API请求URL:', url)
+  }
+  
+  const config: RequestInit = {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  }
+
+  const token = getAuthToken()
+  
+  if (token) {
+    config.headers = {
+      ...config.headers,
+      Authorization: `Bearer ${token}`,
+    }
+  }
+
+  // 请求超时控制 (30秒)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const response = await fetch(url, {
+      ...config,
+      signal: controller.signal
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      let errorData
+      try {
+        errorData = JSON.parse(errorText)
+      } catch {
+        errorData = { error: errorText || `HTTP ${response.status}: ${response.statusText}` }
+      }
+      
+      throw new Error(errorData.error || errorData.details || `请求失败: ${response.status}`)
+    }
+
+    const data = await response.json()
+    
+    return data
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new Error('请求超时，请稍后重试')
+      }
+      throw error
+    }
+    throw new Error('网络请求失败，请检查网络连接')
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+// 用户认证相关API
+export const auth = {
+  // 用户登录
+  login: async (data: LoginRequest): Promise<AuthResponse> => {
+    const result = await apiRequest<AuthResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+
+    if (result.success && result.data?.token) {
+      setAuthToken(result.data.token)
+    }
+
+    return result
+  },
+
+  // 用户注册
+  register: async (data: RegisterRequest): Promise<AuthResponse> => {
+    const result = await apiRequest<AuthResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+
+    if (result.success && result.data?.token) {
+      setAuthToken(result.data.token)
+    }
+
+    return result
+  },
+
+  // 退出登录
+  logout: (): void => {
+    clearAuthToken()
+  },
+
+  // 检查登录状态
+  isLoggedIn: (): boolean => {
+    return getAuthToken() !== null
+  },
+
+  // 获取当前token
+  getToken: (): string | null => {
+    return getAuthToken()
+  }
+}
+
+// 用户资料相关API
+export const user = {
+  // 获取用户资料
+  getProfile: async (): Promise<ApiResponse<UserProfile>> => {
+    return apiRequest<ApiResponse<UserProfile>>('/user/profile')
+  },
+
+  // 更新用户资料
+  updateProfile: async (data: Partial<UserProfile>): Promise<ApiResponse<UserProfile>> => {
+    return apiRequest<ApiResponse<UserProfile>>('/user/profile', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 获取用户统计
+  getStats: async (): Promise<ApiResponse<UserStats>> => {
+    return apiRequest<ApiResponse<UserStats>>('/user/stats')
+  },
+
+  // 增加AI使用次数
+  incrementAIUsage: async (aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize'): Promise<ApiResponse<UserStats>> => {
+    return apiRequest<ApiResponse<UserStats>>('/user/stats', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        action: 'increment_ai_usage',
+        aiMode: aiMode
+      }),
+    })
+  },
+
+  // 获取用户导入文件夹
+  getImportedFolders: async (): Promise<ApiResponse<ImportedFolder[]>> => {
+    return apiRequest<ApiResponse<ImportedFolder[]>>('/user/imported-folders')
+  },
+
+  // 获取导入文件夹的提示词
+  getImportedFolderPrompts: async (id: number): Promise<ApiResponse<PublicPrompt[]>> => {
+    return apiRequest<ApiResponse<PublicPrompt[]>>(`/user/imported-folders/${id}/prompts`)
+  },
+
+  // 删除导入文件夹
+  deleteImportedFolder: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/user/imported-folders/${id}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 修改密码
+  changePassword: async (data: { currentPassword: string; newPassword: string }): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>('/user/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 导出用户数据
+  exportData: async (): Promise<ApiResponse<ExportData>> => {
+    return apiRequest<ApiResponse<ExportData>>('/user/export-data')
+  },
+
+  // 删除账户
+  deleteAccount: async (): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>('/user/delete-account', {
+      method: 'DELETE',
+    })
+  },
+
+  // 获取用户发布的公共提示词
+  getPublishedPrompts: async (params?: { page?: number; limit?: number; search?: string }): Promise<PaginatedResponse<PublicPrompt>> => {
+    const queryParams = new URLSearchParams()
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+    if (params?.search) queryParams.append('search', params.search)
+
+    const endpoint = `/user/published-prompts${queryParams.toString() ? `?${queryParams}` : ''}`
+    return apiRequest<PaginatedResponse<PublicPrompt>>(endpoint)
+  },
+
+  // 获取用户发布的公共文件夹
+  getPublishedFolders: async (params?: { page?: number; limit?: number; search?: string }): Promise<PaginatedResponse<PublicFolder>> => {
+    const queryParams = new URLSearchParams()
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+    if (params?.search) queryParams.append('search', params.search)
+
+    const endpoint = `/user/published-folders${queryParams.toString() ? `?${queryParams}` : ''}`
+    return apiRequest<PaginatedResponse<PublicFolder>>(endpoint)
+  }
+}
+
+
+
+// 文件夹管理相关API
+export const folders = {
+  // 获取文件夹列表
+  list: async (): Promise<ApiResponse<Folder[]>> => {
+    return apiRequest<ApiResponse<Folder[]>>('/folders')
+  },
+
+  // 获取单个文件夹
+  get: async (id: number): Promise<ApiResponse<Folder>> => {
+    return apiRequest<ApiResponse<Folder>>(`/folders/${id}`)
+  },
+
+  // 创建文件夹
+  create: async (data: CreateFolderData): Promise<ApiResponse<Folder>> => {
+    return apiRequest<ApiResponse<Folder>>('/folders', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 更新文件夹
+  update: async (id: number, data: { name: string }): Promise<ApiResponse<Folder>> => {
+    return apiRequest<ApiResponse<Folder>>(`/folders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 删除文件夹
+  delete: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/folders/${id}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 从文件夹移除提示词
+  removePromptFromFolder: async (folderId: number, promptId: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/folders/${folderId}/prompts`, {
+      method: 'DELETE',
+      body: JSON.stringify({ prompt_id: promptId }),
+    })
+  },
+  // 获取文件夹下提示词
+  getPrompts: async (folderId: number): Promise<ApiResponse<Prompt[]>> => {
+    return apiRequest<ApiResponse<Prompt[]>>(`/folders/${folderId}/prompts`)
+  },
+  // 添加提示词到文件夹
+  addPromptToFolder: async (folderId: number, promptId: number): Promise<ApiResponse<{ success: boolean }>> => {
+    return apiRequest<ApiResponse<{ success: boolean }>>(`/folders/${folderId}/add-prompt`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt_id: promptId }),
+    })
+  },
+
+  // 发布文件夹到公共库
+  publish: async (folderId: number, description?: string): Promise<ApiResponse<PublicFolder>> => {
+    return apiRequest<ApiResponse<PublicFolder>>(`/folders/${folderId}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ description: description || '' }),
+    })
+  },
+
+  // 删除公共文件夹（用户删除自己发布的）
+  deletePublicFolder: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/public-folders/${id}/delete`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 编辑公共文件夹（用户编辑自己发布的）
+  updatePublicFolder: async (id: number, data: { name?: string; description?: string }): Promise<ApiResponse<PublicFolder>> => {
+    return apiRequest<ApiResponse<PublicFolder>>(`/public-folders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  }
+
+}
+
+// 提示词管理相关API
+export const prompts = {
+  // 获取用户提示词列表
+  list: async (params?: PromptQueryParams): Promise<PaginatedResponse<Prompt>> => {
+    const queryParams = new URLSearchParams()
+    if (params?.folder_id) queryParams.append('folder_id', params.folder_id.toString())
+    if (params?.search) queryParams.append('search', params.search)
+    if (params?.tag_name) queryParams.append('tag_name', params.tag_name)
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+
+    const endpoint = `/prompts${queryParams.toString() ? `?${queryParams}` : ''}`
+    return apiRequest<PaginatedResponse<Prompt>>(endpoint)
+  },
+
+  // 获取单个提示词
+  get: async (id: number): Promise<ApiResponse<Prompt>> => {
+    return apiRequest<ApiResponse<Prompt>>(`/prompts/${id}`)
+  },
+
+  // 创建提示词
+  create: async (data: CreatePromptData): Promise<ApiResponse<Prompt>> => {
+    return apiRequest<ApiResponse<Prompt>>('/prompts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 更新提示词
+  update: async (id: number, data: UpdatePromptData): Promise<ApiResponse<Prompt>> => {
+    return apiRequest<ApiResponse<Prompt>>(`/prompts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 删除提示词
+  delete: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/prompts/${id}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 发布单个提示词到公共库
+  publish: async (id: number): Promise<ApiResponse<PublicPrompt>> => {
+    return apiRequest<ApiResponse<PublicPrompt>>(`/prompts/${id}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  // 批量发布提示词到公共库
+  publishBatch: async (ids: number[]): Promise<ApiResponse<PublicPrompt[]>> => {
+    return apiRequest<ApiResponse<PublicPrompt[]>>('/prompts/publish-batch', {
+      method: 'POST',
+      body: JSON.stringify({ prompt_ids: ids }),
+    })
+  },
+
+  // 删除公共提示词（用户删除自己发布的）
+  deletePublicPrompt: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/public-prompts/${id}/delete`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 编辑公共提示词（用户编辑自己发布的）
+  updatePublicPrompt: async (id: number, data: { title?: string; content?: string; description?: string; tags?: string[] }): Promise<ApiResponse<PublicPrompt>> => {
+    return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 获取提示词版本历史列表
+  getVersions: async (id: number): Promise<ApiResponse<PromptVersion[]>> => {
+    return apiRequest<ApiResponse<PromptVersion[]>>(`/prompts/${id}/versions`)
+  },
+
+  // 获取单个版本详情
+  getVersion: async (promptId: number, versionId: number): Promise<ApiResponse<PromptVersion>> => {
+    return apiRequest<ApiResponse<PromptVersion>>(`/prompts/${promptId}/versions/${versionId}`)
+  },
+
+  // 恢复到指定版本
+  restoreVersion: async (promptId: number, versionId: number): Promise<ApiResponse<Prompt>> => {
+    return apiRequest<ApiResponse<Prompt>>(`/prompts/${promptId}/versions/${versionId}`, {
+      method: 'POST',
+    })
+  }
+}
+
+// 公共提示词相关API
+export const publicPrompts = {
+  // 获取公共提示词列表
+  list: async (params?: PublicPromptQueryParams): Promise<PaginatedResponse<PublicPrompt>> => {
+    const queryParams = new URLSearchParams()
+    if (params?.category_id) queryParams.append('category_id', params.category_id.toString())
+    if (params?.search) queryParams.append('search', params.search)
+    if (params?.tag) queryParams.append('tag', params.tag)
+    if (params?.sort) queryParams.append('sort', params.sort)
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+
+    const endpoint = `/public-prompts${queryParams.toString() ? `?${queryParams}` : ''}`
+    return apiRequest<PaginatedResponse<PublicPrompt>>(endpoint)
+  },
+
+  // 获取单个公共提示词详情
+  get: async (id: number): Promise<ApiResponse<PublicPrompt>> => {
+    return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}`)
+  },
+
+  // 导入提示词到用户库（支持公共提示词和用户提示词）
+  import: async (id: number, folderId?: number): Promise<ApiResponse<Prompt>> => {
+    return apiRequest<ApiResponse<Prompt>>(`/prompts/${id}/import`, {
+      method: 'POST',
+      body: JSON.stringify({ folder_id: folderId }),
+    })
+  }
+}
+
+// 收藏功能相关API
+export const favorites = {
+  // 获取收藏列表
+  list: async (page?: number, limit?: number): Promise<PaginatedResponse<PublicPrompt>> => {
+    const queryParams = new URLSearchParams()
+    if (page) queryParams.append('page', page.toString())
+    if (limit) queryParams.append('limit', limit.toString())
+
+    const endpoint = `/favorites${queryParams.toString() ? `?${queryParams}` : ''}`
+    return apiRequest<PaginatedResponse<PublicPrompt>>(endpoint)
+  },
+
+  // 添加收藏
+  add: async (publicPromptId: number): Promise<ApiResponse<null> | { success: false; error: string }> => {
+    return apiRequest<ApiResponse<null> | { success: false; error: string }>('/favorites', {
+      method: 'POST',
+      body: JSON.stringify({ public_prompt_id: publicPromptId }),
+    })
+  },
+
+  // 移除收藏
+  remove: async (publicPromptId: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/favorites/${publicPromptId}`, {
+      method: 'DELETE',
+    })
+  }
+}
+
+// 分类相关API
+export const categories = {
+  // 获取所有分类
+  list: async (): Promise<ApiResponse<Category[]>> => {
+    return apiRequest<ApiResponse<Category[]>>('/categories')
+  }
+}
+
+// 标签相关API
+export const tags = {
+  // 获取所有标签
+  list: async (): Promise<ApiResponse<Tag[]>> => {
+    return apiRequest<ApiResponse<Tag[]>>('/tags')
+  },
+
+  // 创建标签
+  create: async (data: { name: string; color?: string }): Promise<ApiResponse<Tag>> => {
+    return apiRequest<ApiResponse<Tag>>('/tags', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+}
+
+// AI相关API
+export const ai = {
+  // 单轮提示词优化
+  optimizePrompt: async (data: AIOptimizeRequest): Promise<AIOptimizeResponse> => {
+    return apiRequest<AIOptimizeResponse>('/ai/optimize-prompt', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 多轮提示词优化
+  optimizePromptMultiTurn: async (data: AIMultiTurnOptimizeRequest): Promise<AIMultiTurnOptimizeResponse> => {
+    return apiRequest<AIMultiTurnOptimizeResponse>('/ai/optimize-prompt-multiturn', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+}
+
+// 简化的AI优化API
+export const optimizePrompt = async (data: {
+  prompt: string;
+  provider: string;
+  model: string;
+  temperature?: number;
+}): Promise<{
+  success: boolean;
+  optimized?: string;
+  error?: string;
+}> => {
+  // 输入验证
+  if (!data.prompt || data.prompt.trim().length === 0) {
+    return { success: false, error: '提示词内容不能为空' }
+  }
+  if (data.prompt.length > 10000) {
+    return { success: false, error: '提示词内容不能超过10000字符' }
+  }
+  if (!data.provider || !data.model) {
+    return { success: false, error: '请选择AI提供商和模型' }
+  }
+
+  try {
+    const response = await apiRequest<{
+      success: boolean;
+      optimized?: string;
+      error?: string;
+    }>('/ai/optimize-prompt', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return response;
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '网络错误'
+    };
+  }
+};
+
+// AI生成提示词
+export const generatePrompt = async (data: {
+  userInfo: string;
+  targetDescription: string;
+  writingStyle?: string;
+  tone?: string;
+  outputFormat?: string;
+  examples?: string;
+  tags?: string;
+  provider: string;
+  model: string;
+}): Promise<{
+  success: boolean;
+  generated?: string;
+  error?: string;
+}> => {
+  // 输入验证
+  if (!data.userInfo || data.userInfo.trim().length === 0) {
+    return { success: false, error: '用户信息不能为空' }
+  }
+  if (!data.targetDescription || data.targetDescription.trim().length === 0) {
+    return { success: false, error: '目标描述不能为空' }
+  }
+  if (data.userInfo.length > 10000 || data.targetDescription.length > 10000) {
+    return { success: false, error: '输入内容不能超过10000字符' }
+  }
+  if (!data.provider || !data.model) {
+    return { success: false, error: '请选择AI提供商和模型' }
+  }
+
+  try {
+    const response = await apiRequest<{
+      success: boolean;
+      generated?: string;
+      error?: string;
+    }>('/ai/generate-prompt', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return response;
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '网络错误'
+    };
+  }
+};
+
+// 全局搜索API
+export interface SearchResults {
+  userPrompts: {
+    items: Array<{
+      id: number
+      title: string
+      content: string
+      folder_id: number | null
+      created_at: string
+      updated_at: string
+      source_type: 'user_prompt'
+    }>
+    total: number
+  }
+  publicPrompts: {
+    items: Array<{
+      id: number
+      title: string
+      content: string
+      author: string
+      created_at: string
+      updated_at: string
+      source_type: 'public_prompt'
+    }>
+    total: number
+  }
+  folders: {
+    items: Array<{
+      id: number
+      name: string
+      created_at: string
+      source_type: 'folder'
+    }>
+  }
+}
+
+export const search = {
+  query: async (keyword: string, page?: number, limit?: number): Promise<ApiResponse<SearchResults>> => {
+    const queryParams = new URLSearchParams()
+    queryParams.append('q', keyword)
+    if (page) queryParams.append('page', page.toString())
+    if (limit) queryParams.append('limit', limit.toString())
+    return apiRequest<ApiResponse<SearchResults>>(`/search?${queryParams}`)
+  }
+}
+
+// 管理员相关API
+export const admin = {
+  users: {
+    // 获取用户列表
+    list: async (params?: { search?: string; user_type?: string; page?: number; limit?: number }): Promise<ApiResponse<{ users: User[]; total: number; page: number; limit: number; totalPages: number }>> => {
+      const queryParams = new URLSearchParams()
+      if (params?.search) queryParams.append('search', params.search)
+      if (params?.user_type) queryParams.append('user_type', params.user_type)
+      if (params?.page) queryParams.append('page', params.page.toString())
+      if (params?.limit) queryParams.append('limit', params.limit.toString())
+
+      const endpoint = `/admin/users${queryParams.toString() ? `?${queryParams}` : ''}`
+      return apiRequest<ApiResponse<{ users: User[]; total: number; page: number; limit: number; totalPages: number }>>(endpoint)
+    },
+
+    // 更新用户权限
+    update: async (userId: number, updates: { user_type?: string; is_active?: boolean; is_admin?: boolean }): Promise<ApiResponse<null>> => {
+      return apiRequest<ApiResponse<null>>('/admin/users', {
+        method: 'PUT',
+        body: JSON.stringify({ userId, ...updates }),
+      })
+    }
+  },
+
+  // 获取公共提示词列表
+  getPublicPrompts: async (): Promise<ApiResponse<AdminPrompt[]>> => {
+    return apiRequest<ApiResponse<AdminPrompt[]>>('/admin/public-prompts')
+  },
+
+  // 获取单个公共提示词
+  getPublicPrompt: async (id: number): Promise<ApiResponse<AdminPrompt>> => {
+    return apiRequest<ApiResponse<AdminPrompt>>(`/admin/public-prompts/${id}`)
+  },
+
+  // 获取公共文件夹列表
+  getPublicFolders: async (): Promise<ApiResponse<AdminFolder[]>> => {
+    return apiRequest<ApiResponse<AdminFolder[]>>('/admin/public-folders')
+  },
+
+  // 删除公共提示词
+  deletePublicPrompt: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/admin/public-prompts/${id}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 删除公共文件夹
+  deletePublicFolder: async (id: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/admin/public-folders/${id}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 更新公共提示词
+  updatePublicPrompt: async (id: number, data: Partial<AdminPrompt>): Promise<ApiResponse<AdminPrompt>> => {
+    return apiRequest<ApiResponse<AdminPrompt>>(`/admin/public-prompts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 更新公共文件夹
+  updatePublicFolder: async (id: number, data: Partial<AdminFolder>): Promise<ApiResponse<AdminFolder>> => {
+    return apiRequest<ApiResponse<AdminFolder>>(`/admin/public-folders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  // 获取公共文件夹内的提示词
+  getPublicFolderPrompts: async (id: number): Promise<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>> => {
+    return apiRequest<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>>(`/admin/public-folders/${id}/prompts`)
+  },
+
+  // 向公共文件夹添加提示词
+  addPromptToPublicFolder: async (folderId: number, promptId: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/admin/public-folders/${folderId}/prompts`, {
+      method: 'POST',
+      body: JSON.stringify({ promptId }),
+    })
+  },
+
+  // 从公共文件夹移除提示词
+  removePromptFromPublicFolder: async (folderId: number, promptId: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/admin/public-folders/${folderId}/prompts?promptId=${promptId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // 获取可选的提示词列表
+  getAvailablePrompts: async (params?: { search?: string; folderId?: number }): Promise<ApiResponse<AdminPrompt[]>> => {
+    const queryParams = new URLSearchParams()
+    if (params?.search) queryParams.append('search', params.search)
+    if (params?.folderId) queryParams.append('folderId', params.folderId.toString())
+
+    const endpoint = `/admin/available-prompts${queryParams.toString() ? `?${queryParams}` : ''}`
+    return apiRequest<ApiResponse<AdminPrompt[]>>(endpoint)
+  }
+}
+
+// 导出所有API方法
+export const api = {
+  auth,
+  user,
+  folders,
+  prompts,
+  publicPrompts,
+  publicFolders: {
+    // 获取公共文件夹列表
+    list: async (params?: { page?: number; limit?: number; search?: string }): Promise<PaginatedResponse<PublicFolder>> => {
+      const queryParams = new URLSearchParams()
+      if (params?.page) queryParams.append('page', params.page.toString())
+      if (params?.limit) queryParams.append('limit', params.limit.toString())
+      if (params?.search) queryParams.append('search', params.search)
+
+      const endpoint = `/public-folders${queryParams.toString() ? `?${queryParams}` : ''}`
+      return apiRequest<PaginatedResponse<PublicFolder>>(endpoint)
+    },
+
+    // 获取公共文件夹详情
+    get: async (id: number): Promise<ApiResponse<PublicFolder>> => {
+      return apiRequest<ApiResponse<PublicFolder>>(`/public-folders/${id}`)
+    },
+
+    // 获取公共文件夹的提示词
+    getPrompts: async (id: number): Promise<ApiResponse<PublicPrompt[]>> => {
+      return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts`)
+    },
+
+    // 导入公共文件夹
+    import: async (id: number): Promise<ApiResponse<{ 
+      importedCount: number; 
+      totalPrompts: number; 
+      importedPrompts: Record<string, unknown>[]; 
+      createdFolder: Record<string, unknown> | null;
+      message: string;
+    }>> => {
+      return apiRequest<ApiResponse<{ 
+        importedCount: number; 
+        totalPrompts: number; 
+        importedPrompts: Record<string, unknown>[]; 
+        createdFolder: Record<string, unknown> | null;
+        message: string;
+      }>>(`/public-folders/${id}/import`, {
+        method: 'POST',
+      })
+    }
+  },
+  tags,
+  favorites,
+  categories,
+  ai,
+  search,
+  admin
+}

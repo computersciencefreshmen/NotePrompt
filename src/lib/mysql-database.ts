@@ -169,7 +169,7 @@ class MySQLDB {
       [title, content, description, user_id, folder_id, category_id, mode, is_public ? 1 : 0]
     );
 
-    const insertId = (result.rows as any)[0]?.insertId;
+    const insertId = (result.rows as any).insertId;
     const newPrompt = await this.getUserPromptById(insertId);
     return newPrompt;
   }
@@ -274,7 +274,7 @@ class MySQLDB {
       [title, content, description, author_id, category_id]
     );
 
-    const insertId = (result.rows as any)[0]?.insertId;
+    const insertId = (result.rows as any).insertId;
     const newPrompt = await this.getPublicPromptById(insertId);
     return newPrompt;
   }
@@ -333,7 +333,7 @@ class MySQLDB {
       [name, user_id, parent_id]
     );
 
-    const insertId = (result.rows as any)[0]?.insertId;
+    const insertId = (result.rows as any).insertId;
     const newFolder = await this.getFolderById(insertId);
     return newFolder;
   }
@@ -830,7 +830,7 @@ class MySQLDB {
       [data.prompt_id, data.user_id, data.title, data.content, nextVersion, data.change_summary || null]
     );
 
-    return { id: (result.rows as any)[0]?.insertId, version_number: nextVersion };
+    return { id: (result.rows as any).insertId, version_number: nextVersion };
   }
 
   async getPromptVersions(promptId: number) {
@@ -860,19 +860,19 @@ class MySQLDB {
   // ===== 全局搜索相关方法 =====
 
   async globalSearch(userId: number, keyword: string, options?: { page?: number; limit?: number }) {
-    const page = options?.page || 1;
-    const limit = options?.limit || 20;
+    const page = Math.max(1, parseInt(String(options?.page || 1)));
+    const limit = Math.min(50, Math.max(1, parseInt(String(options?.limit || 20))));
     const offset = (page - 1) * limit;
     const searchTerm = `%${keyword}%`;
 
-    // 搜索用户自己的提示词
+    // 搜索用户自己的提示词 (inline LIMIT/OFFSET to avoid prepared statement issues)
     const userPromptsResult = await this.query(
       `SELECT id, title, content, folder_id, created_at, updated_at, 'user_prompt' as source_type
        FROM user_prompts
        WHERE user_id = ? AND (title LIKE ? OR content LIKE ?)
        ORDER BY updated_at DESC
-       LIMIT ? OFFSET ?`,
-      [userId, searchTerm, searchTerm, limit, offset]
+       LIMIT ${limit} OFFSET ${offset}`,
+      [userId, searchTerm, searchTerm]
     );
 
     const userPromptsCountResult = await this.query(
@@ -882,12 +882,13 @@ class MySQLDB {
 
     // 搜索公共提示词
     const publicPromptsResult = await this.query(
-      `SELECT pp.id, pp.title, pp.content, pp.author, pp.created_at, pp.updated_at, 'public_prompt' as source_type
+      `SELECT pp.id, pp.title, pp.content, pp.author_id, u.username as author, pp.created_at, pp.updated_at, 'public_prompt' as source_type
        FROM public_prompts pp
+       LEFT JOIN users u ON pp.author_id = u.id
        WHERE pp.title LIKE ? OR pp.content LIKE ?
        ORDER BY pp.updated_at DESC
-       LIMIT ? OFFSET ?`,
-      [searchTerm, searchTerm, limit, offset]
+       LIMIT ${limit} OFFSET ${offset}`,
+      [searchTerm, searchTerm]
     );
 
     const publicPromptsCountResult = await this.query(
@@ -901,8 +902,8 @@ class MySQLDB {
        FROM folders
        WHERE user_id = ? AND name LIKE ?
        ORDER BY created_at DESC
-       LIMIT ?`,
-      [userId, searchTerm, 10]
+       LIMIT 10`,
+      [userId, searchTerm]
     );
 
     return {

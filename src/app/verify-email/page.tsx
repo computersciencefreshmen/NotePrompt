@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { EmailVerification } from '@/components/auth/EmailVerification';
@@ -8,7 +9,7 @@ import { EmailVerification } from '@/components/auth/EmailVerification';
  * 邮箱验证页面
  * 用于用户验证注册邮箱
  */
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
@@ -50,5 +51,17 @@ export default function VerifyEmailPage() {
         onBack={handleBack}
       />
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-gray-500">加载中...</p>
+      </div>
+    }>
+      <VerifyEmailContent />
+    </Suspense>
   );
 }

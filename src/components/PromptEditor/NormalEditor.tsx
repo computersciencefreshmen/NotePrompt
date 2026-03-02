@@ -648,8 +648,7 @@ export default function NormalEditor({
                     <Sparkles className="h-3 w-3 mr-1" />
                     {aiFunction === 'optimize' ? 'AI优化' : 'AI生成'}
                   </Button>
-                )
-              )}
+                )}
             </div>
           </div>
         </CardHeader>

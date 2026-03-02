@@ -140,7 +140,6 @@ export default function PromptEditor({
       tags: tags,
       is_public: isPublic,
     }
-    }
 
     onSave(saveData)
   }
@@ -287,7 +286,7 @@ export default function PromptEditor({
                 </button>
               </div>
 
-              {/* 版本历史按钮（仅编辑模式）*/}
+              {/* 版本历史按钮（仅编辑模式） */}
               {prompt && (
                 <VersionHistory
                   promptId={prompt.id}

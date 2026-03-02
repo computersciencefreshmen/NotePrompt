@@ -201,7 +201,7 @@ export default function UnifiedFolderCard({
         <CardContent className="pt-0">
           {/* 导入文件夹的额外信息 */}
           {isImported && importedFolder && (
-            <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
+            <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400 mb-3">
               <div className="flex items-center space-x-2">
                 <User className="h-3 w-3" />
                 <span>{importedFolder.author}</span>
@@ -216,7 +216,7 @@ export default function UnifiedFolderCard({
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <FileText className="h-4 w-4 text-gray-400" />
-              <span className="text-sm text-gray-600">
+              <span className="text-sm text-gray-600 dark:text-gray-400">
                 {promptCount} 个提示词
               </span>
             </div>
@@ -262,7 +262,7 @@ export default function UnifiedFolderCard({
             <DialogTitle>确认删除文件夹</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-300">
               确定要删除文件夹 "{folder.name}" 吗？{isImported ? '这将从您的导入列表中移除该文件夹，但不会影响原始文件夹。' : '此操作不可撤销。'}
             </p>
             <div className="flex justify-end space-x-2">

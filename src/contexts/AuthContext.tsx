@@ -7,7 +7,7 @@ import { api } from '@/lib/api'
 interface AuthContextType {
   user: User | null
   loading: boolean
-  login: (credentials: LoginRequest) => Promise<{ success: boolean; error?: string }>
+  login: (credentials: LoginRequest) => Promise<{ success: boolean; error?: string; data?: AuthResponse['data'] }>
   register: (data: RegisterRequest) => Promise<{ success: boolean; error?: string; data?: AuthResponse['data'] }>
   logout: () => void
   refreshUser: () => Promise<void>
@@ -97,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // 真实登录
-  const login = async (credentials: LoginRequest): Promise<{ success: boolean; error?: string }> => {
+  const login = async (credentials: LoginRequest): Promise<{ success: boolean; error?: string; data?: AuthResponse['data'] }> => {
     setLoading(true)
     try {
       const response: AuthResponse = await api.auth.login(credentials)
@@ -108,7 +108,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setUser(null)
         setLoading(false)
-        return { success: false, error: response.error || '登录失败' }
+        // 传递邮箱验证相关数据
+        return { success: false, error: response.error || '登录失败', data: response.data }
       }
     } catch (error: unknown) {
       setUser(null)

@@ -91,13 +91,16 @@ export async function POST(request: NextRequest) {
     // 加密密码（使用12轮增强安全性，符合OWASP建议）
     const passwordHash = await bcrypt.hash(password, 12)
 
-    // 创建用户 - 开发模式直接激活，跳过邮箱验证
+    // 是否启用邮箱验证（通过环境变量控制）
+    const enableEmailVerification = process.env.ENABLE_EMAIL_VERIFICATION === 'true'
+
+    // 创建用户
     const newUser = await db.createUser({
       username,
       email,
       password_hash: passwordHash,
       user_type: 'free',
-      is_active: true  // 开发模式直接激活
+      is_active: enableEmailVerification ? false : true
     })
 
     // 不记录敏感信息到日志
@@ -118,7 +121,48 @@ export async function POST(request: NextRequest) {
       console.error('用户统计记录创建失败:', error)
     }
 
-    // 更新为邮箱已验证（开发模式跳过验证）
+    // 邮箱验证流程
+    if (enableEmailVerification) {
+      // 生成验证码并发送邮件
+      try {
+        const verificationCode = emailService.generateVerificationCode()
+        const verificationExpires = emailService.getVerificationExpiry(10)
+
+        // 更新数据库中的验证码
+        await db.query(
+          `UPDATE users SET verification_code = ?, verification_expires = ?, verification_attempts = 0, email_verify_sent_at = NOW() WHERE id = ?`,
+          [verificationCode, verificationExpires, newUser.id]
+        )
+
+        // 发送验证码邮件
+        await emailService.sendVerificationEmail({
+          to: email,
+          username,
+          code: verificationCode,
+        })
+      } catch (emailError) {
+        console.error('验证码邮件发送失败:', emailError)
+        // 邮件发送失败不影响注册，用户可以稍后在验证页面重新发送
+      }
+
+      // 返回需要邮箱验证的响应
+      return NextResponse.json<AuthResponse>({
+        success: true,
+        message: '注册成功！请查收邮箱验证码完成验证。',
+        data: {
+          requireVerification: true,
+          email_verified: false,
+          user: {
+            id: newUser.id as number,
+            username: newUser.username as string,
+            email: newUser.email as string,
+            email_verified: false
+          }
+        }
+      })
+    }
+
+    // 不需要邮箱验证时，直接激活并返回 token
     await db.query(
       `UPDATE users SET email_verified = 1 WHERE id = ?`,
       [newUser.id]
@@ -135,7 +179,6 @@ export async function POST(request: NextRequest) {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     )
 
-    // 返回注册成功信息（开发模式直接返回 token）
     return NextResponse.json<AuthResponse>({
       success: true,
       message: '注册成功！',

@@ -39,13 +39,13 @@ export async function GET(request: NextRequest) {
       (promptsResult.rows as any[]).map(async (p) => {
         // 获取提示词标签
         const tagsResult = await db.query(
-          `SELECT t.name, t.color
+          `SELECT t.name
            FROM user_prompt_tags upt
            JOIN tags t ON upt.tag_id = t.id
            WHERE upt.user_prompt_id = ?`,
           [p.id]
         )
-        const tags = (tagsResult.rows as any[]).map(t => ({ name: t.name, color: t.color }))
+        const tags = (tagsResult.rows as any[]).map(t => ({ name: t.name }))
 
         return {
           id: p.id,
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
     // 获取收藏列表
     const favoritesResult = await db.query(
       `SELECT pp.*, f.created_at as favorited_at
-       FROM favorites f
+       FROM user_favorites f
        JOIN public_prompts pp ON f.public_prompt_id = pp.id
        WHERE f.user_id = ?
        ORDER BY f.created_at DESC`,
@@ -82,14 +82,14 @@ export async function GET(request: NextRequest) {
 
     // 获取导入的文件夹
     const importedFoldersResult = await db.query(
-      `SELECT * FROM imported_folders WHERE user_id = ? ORDER BY imported_at DESC`,
+      `SELECT * FROM user_imported_folders WHERE user_id = ? ORDER BY created_at DESC`,
       [user_id]
     )
 
     const imported_folders = (importedFoldersResult.rows as any[]).map(f => ({
       id: f.id,
       name: f.name,
-      imported_at: f.imported_at
+      imported_at: f.created_at
     }))
 
     // 获取用户统计
@@ -97,8 +97,8 @@ export async function GET(request: NextRequest) {
       `SELECT
          (SELECT COUNT(*) FROM user_prompts WHERE user_id = ?) as total_prompts,
          (SELECT COUNT(*) FROM folders WHERE user_id = ?) as total_folders,
-         (SELECT COUNT(*) FROM favorites WHERE user_id = ?) as total_favorites,
-         (SELECT COUNT(*) FROM imported_folders WHERE user_id = ?) as total_imported_folders`,
+         (SELECT COUNT(*) FROM user_favorites WHERE user_id = ?) as total_favorites,
+         (SELECT COUNT(*) FROM user_imported_folders WHERE user_id = ?) as total_imported_folders`,
       [user_id, user_id, user_id, user_id]
     )
 
@@ -115,7 +115,7 @@ export async function GET(request: NextRequest) {
         stats
       }
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('导出数据失败:', error)
     return NextResponse.json(
       { success: false, error: '导出数据失败' },

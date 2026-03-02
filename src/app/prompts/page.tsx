@@ -451,6 +451,7 @@ export default function PromptsPage() {
 
           <div className="space-y-8">
             {/* 文件夹区域 */}
+            <div id="folders-section" />
             <FolderSection
               folders={folders}
               importedFolders={importedFolders}
@@ -464,8 +465,8 @@ export default function PromptsPage() {
               dragOverFolder={dragOverFolder}
             />
 
-            {/* 提示词列表 */
-            <div>
+            {/* 提示词列表 */}
+            <div id="prompts-section">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold">我的提示词</h2>
                 <div className="flex items-center space-x-2">
@@ -512,7 +513,7 @@ export default function PromptsPage() {
               {/* 搜索状态指示器 */}
               {searchTerm && (
                 <div className="mb-4">
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
                     搜索 "{searchTerm}" 的结果
                   </p>
                 </div>
@@ -523,14 +524,14 @@ export default function PromptsPage() {
                 <div className="flex items-center justify-center h-64">
                   <div className="text-center">
                     <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-                    <p className="text-gray-600">加载中...</p>
+                    <p className="text-gray-600 dark:text-gray-400">加载中...</p>
                   </div>
                 </div>
               ) : prompts.length === 0 ? (
                 <Card>
                   <CardContent className="py-8">
-                    <div className="text-center text-gray-500">
-                      <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                    <div className="text-center text-gray-500 dark:text-gray-400">
+                      <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300 dark:text-gray-600" />
                       {searchTerm ? (
                         <>
                           <p>未找到包含 "{searchTerm}" 的提示词</p>
@@ -588,7 +589,7 @@ export default function PromptsPage() {
               {loading && prompts.length > 0 && (
                 <div className="text-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-blue-600 mx-auto" />
-                  <span className="ml-2 text-gray-600">加载更多...</span>
+                  <span className="ml-2 text-gray-600 dark:text-gray-400">加载更多...</span>
                 </div>
               )}
             </div>

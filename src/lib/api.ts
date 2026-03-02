@@ -53,7 +53,7 @@ function clearAuthToken(): void {
 }
 
 // 通用API请求函数
-async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeoutMs?: number): Promise<T> {
   // 动态检测端口，优先使用当前页面的端口
   const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
   const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
@@ -81,9 +81,9 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
     }
   }
 
-  // 请求超时控制 (30秒)
+  // 请求超时控制 (默认30秒，AI请求可传入更长时间)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 30000)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs ?? 30000)
 
   try {
     const response = await fetch(url, {
@@ -196,6 +196,14 @@ export const user = {
     })
   },
 
+  // 获取 AI 使用热力图数据
+  getHeatmap: async (): Promise<ApiResponse<{
+    daily: Array<{ usage_date: string; optimize_count: number; generate_count: number; total_count: number }>
+    summary: { totalOptimize: number; totalGenerate: number; totalAll: number; maxDaily: number; activeDays: number; totalDays: number }
+  }>> => {
+    return apiRequest('/user/heatmap')
+  },
+
   // 获取用户导入文件夹
   getImportedFolders: async (): Promise<ApiResponse<ImportedFolder[]>> => {
     return apiRequest<ApiResponse<ImportedFolder[]>>('/user/imported-folders')
@@ -230,6 +238,25 @@ export const user = {
   deleteAccount: async (): Promise<ApiResponse<null>> => {
     return apiRequest<ApiResponse<null>>('/user/delete-account', {
       method: 'DELETE',
+    })
+  },
+
+  // 获取升级进度
+  getUpgradeProgress: async (): Promise<ApiResponse<{
+    currentType: string
+    canUpgrade: boolean
+    conditionsMet: number
+    conditionsRequired: number
+    conditions: Record<string, { current: number; required: number; met: boolean; label: string }>
+    extras: { publicFolders: number }
+  }>> => {
+    return apiRequest('/user/upgrade')
+  },
+
+  // 执行升级到 Pro
+  upgradeToPro: async (): Promise<ApiResponse<{ newType: string }>> => {
+    return apiRequest<ApiResponse<{ newType: string }>>('/user/upgrade', {
+      method: 'POST',
     })
   },
 
@@ -517,7 +544,7 @@ export const ai = {
     return apiRequest<AIOptimizeResponse>('/ai/optimize-prompt', {
       method: 'POST',
       body: JSON.stringify(data),
-    })
+    }, 180000)
   },
 
   // 多轮提示词优化
@@ -525,7 +552,7 @@ export const ai = {
     return apiRequest<AIMultiTurnOptimizeResponse>('/ai/optimize-prompt-multiturn', {
       method: 'POST',
       body: JSON.stringify(data),
-    })
+    }, 180000)
   }
 }
 
@@ -559,7 +586,7 @@ export const optimizePrompt = async (data: {
     }>('/ai/optimize-prompt', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
+    }, 180000);
     return response;
   } catch (error) {
     return {
@@ -607,7 +634,7 @@ export const generatePrompt = async (data: {
     }>('/ai/generate-prompt', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
+    }, 180000);
     return response;
   } catch (error) {
     return {
@@ -665,6 +692,24 @@ export const search = {
 
 // 管理员相关API
 export const admin = {
+  // 获取统计数据
+  getStats: async (): Promise<ApiResponse<{
+    stats: {
+      totalUsers: number
+      adminUsers: number
+      activeUsers: number
+      totalPrompts: number
+      totalPublicPrompts: number
+      featuredPrompts: number
+      totalPublicFolders: number
+      totalFavorites: number
+    }
+    recentUsers: Array<{ id: number; username: string; email: string; user_type: string; is_admin: boolean; created_at: string }>
+    recentPrompts: Array<{ id: number; title: string; created_at: string; views_count: number; author: string }>
+  }>> => {
+    return apiRequest('/admin/stats')
+  },
+
   users: {
     // 获取用户列表
     list: async (params?: { search?: string; user_type?: string; page?: number; limit?: number }): Promise<ApiResponse<{ users: User[]; total: number; page: number; limit: number; totalPages: number }>> => {
@@ -683,6 +728,14 @@ export const admin = {
       return apiRequest<ApiResponse<null>>('/admin/users', {
         method: 'PUT',
         body: JSON.stringify({ userId, ...updates }),
+      })
+    },
+
+    // 删除用户
+    delete: async (userId: number): Promise<ApiResponse<null>> => {
+      return apiRequest<ApiResponse<null>>('/admin/users', {
+        method: 'DELETE',
+        body: JSON.stringify({ userId }),
       })
     }
   },
@@ -794,18 +847,12 @@ export const api = {
 
     // 导入公共文件夹
     import: async (id: number): Promise<ApiResponse<{ 
-      importedCount: number; 
-      totalPrompts: number; 
-      importedPrompts: Record<string, unknown>[]; 
-      createdFolder: Record<string, unknown> | null;
-      message: string;
+      importedFolder: Record<string, unknown>;
+      publicFolder: Record<string, unknown>;
     }>> => {
       return apiRequest<ApiResponse<{ 
-        importedCount: number; 
-        totalPrompts: number; 
-        importedPrompts: Record<string, unknown>[]; 
-        createdFolder: Record<string, unknown> | null;
-        message: string;
+        importedFolder: Record<string, unknown>;
+        publicFolder: Record<string, unknown>;
       }>>(`/public-folders/${id}/import`, {
         method: 'POST',
       })

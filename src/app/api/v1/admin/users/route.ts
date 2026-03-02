@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAdminAuth } from '@/lib/auth'
 
+// 安全的用户字段列表（不包含 password_hash）
+const SAFE_USER_FIELDS = 'id, username, email, user_type, is_admin, is_active, avatar_url, created_at, updated_at'
+
 // GET - 获取所有用户列表（管理员权限）
 export async function GET(request: NextRequest) {
   try {
@@ -18,7 +21,7 @@ export async function GET(request: NextRequest) {
 
     const offset = (page - 1) * limit
 
-    let query = 'SELECT * FROM users WHERE 1=1'
+    let query = `SELECT ${SAFE_USER_FIELDS} FROM users WHERE 1=1`
     const queryParams: (string | number)[] = []
 
     if (search) {
@@ -36,7 +39,7 @@ export async function GET(request: NextRequest) {
     queryParams.push(String(offset), String(limit))
 
     const result = await db.query(query, queryParams)
-    const users = result.rows as any[]
+    const users = result.rows as Record<string, unknown>[]
 
     // 获取总数
     let countQuery = 'SELECT COUNT(*) as total FROM users WHERE 1=1'
@@ -83,7 +86,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
     }
 
-    const { userId, userType, isActive, isAdmin } = await request.json()
+    const body = await request.json()
+    const userId = body.userId
+    const userType = body.userType ?? body.user_type
+    const isActive = body.isActive ?? body.is_active
+    const isAdmin = body.isAdmin ?? body.is_admin
 
     if (!userId) {
       return NextResponse.json(
@@ -92,15 +99,34 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // 更新用户权限
-    const updateData: any = {}
-    if (userType !== undefined) updateData.user_type = userType
-    if (isActive !== undefined) updateData.is_active = isActive
-    if (isAdmin !== undefined) updateData.is_admin = isAdmin
+    // 构建参数化 UPDATE 语句
+    const setClauses: string[] = []
+    const updateParams: (string | number | boolean)[] = []
 
+    if (userType !== undefined) {
+      setClauses.push('user_type = ?')
+      updateParams.push(userType)
+    }
+    if (isActive !== undefined) {
+      setClauses.push('is_active = ?')
+      updateParams.push(isActive ? 1 : 0)
+    }
+    if (isAdmin !== undefined) {
+      setClauses.push('is_admin = ?')
+      updateParams.push(isAdmin ? 1 : 0)
+    }
+
+    if (setClauses.length === 0) {
+      return NextResponse.json(
+        { success: false, error: '没有需要更新的字段' },
+        { status: 400 }
+      )
+    }
+
+    updateParams.push(userId)
     await db.query(
-      'UPDATE users SET ? WHERE id = ?',
-      [updateData, userId]
+      `UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`,
+      updateParams
     )
 
     return NextResponse.json({
@@ -111,6 +137,46 @@ export async function PUT(request: NextRequest) {
     console.error('更新用户权限失败:', error)
     return NextResponse.json(
       { success: false, error: '更新用户权限失败' },
+      { status: 500 }
+    )
+  }
+}
+
+// DELETE - 删除用户（管理员权限）
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireAdminAuth(request)
+    if ('error' in auth) {
+      return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
+    }
+
+    const { userId } = await request.json()
+
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: '缺少用户ID' },
+        { status: 400 }
+      )
+    }
+
+    // 不能删除自己
+    if (userId === auth.userId) {
+      return NextResponse.json(
+        { success: false, error: '不能删除自己的账号' },
+        { status: 400 }
+      )
+    }
+
+    await db.query('DELETE FROM users WHERE id = ?', [userId])
+
+    return NextResponse.json({
+      success: true,
+      message: '用户已删除'
+    })
+  } catch (error) {
+    console.error('删除用户失败:', error)
+    return NextResponse.json(
+      { success: false, error: '删除用户失败' },
       { status: 500 }
     )
   }

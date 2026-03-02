@@ -1,19 +1,19 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Shield, User } from 'lucide-react';
+import { Shield, User, CheckCircle } from 'lucide-react';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { LoginRequest } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 
-export default function LoginPage() {
+function LoginContent() {
   const [formData, setFormData] = useState<LoginRequest>({
     username: '',
     password: '',
@@ -21,9 +21,21 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('user');
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const verified = searchParams.get('verified');
 
   const { login } = useAuth();
   const router = useRouter();
+
+  // 显示邮箱验证成功提示
+  useEffect(() => {
+    if (verified === 'true') {
+      toast({
+        title: '邮箱验证成功',
+        description: '请使用您的账户信息登录',
+      });
+    }
+  }, [verified, toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +62,15 @@ export default function LoginPage() {
           router.push('/');
         }
       } else {
+        // 如果邮箱未验证，跳转到验证页面
+        if (result.data?.requireVerification && result.data?.user?.email) {
+          toast({
+            title: '邮箱未验证',
+            description: '请先完成邮箱验证后再登录',
+          });
+          router.push(`/verify-email?email=${encodeURIComponent(result.data.user.email as string)}`);
+          return;
+        }
         toast({
           title: '登录失败',
           description: result.error || '用户名或密码错误',
@@ -88,6 +109,14 @@ export default function LoginPage() {
             </p>
           </CardHeader>
           <CardContent>
+            {/* 邮箱验证成功提示 */}
+            {verified === 'true' && (
+              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                <p className="text-green-700 text-sm">邮箱验证成功！请使用您的账户信息登录。</p>
+              </div>
+            )}
+
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="user" className="flex items-center space-x-2">
@@ -158,5 +187,17 @@ export default function LoginPage() {
         </Card>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-gray-500">加载中...</p>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   )
 }

@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/contexts/AuthContext'
-import { User, Settings, LogOut, Star, FileText } from 'lucide-react'
+import { User, Settings, LogOut, Star, FileText, Shield } from 'lucide-react'
 import ThemeToggle from '@/components/ThemeToggle'
 import GlobalSearch from '@/components/GlobalSearch'
 
@@ -84,7 +84,7 @@ export default function Header() {
             <GlobalSearch />
             <ThemeToggle />
             {loading ? (
-              <div className="w-8 h-8 bg-gray-200 rounded-full animate-pulse" />
+              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" />
             ) : user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -107,10 +107,10 @@ export default function Header() {
                       </p>
                       <div className="flex items-center space-x-2 mt-1">
                         <Badge
-                          variant={user.user_type === 'pro' ? 'default' : 'secondary'}
+                          variant={user.user_type === 'admin' ? 'destructive' : user.user_type === 'pro' ? 'default' : 'secondary'}
                           className="text-xs"
                         >
-                          {user.user_type === 'pro' ? '专业版' : '免费版'}
+                          {user.user_type === 'admin' ? '管理员' : user.user_type === 'pro' ? '专业版' : '免费版'}
                         </Badge>
                       </div>
                     </div>
@@ -153,6 +153,18 @@ export default function Header() {
                   </DropdownMenuItem>
 
                   <DropdownMenuSeparator />
+
+                  {(user.user_type === 'admin' || user.is_admin) && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        <Link href="/admin" className="cursor-pointer text-orange-600 dark:text-orange-400">
+                          <Shield className="mr-2 h-4 w-4" />
+                          <span>管理后台</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
 
                   <DropdownMenuItem
                     className="cursor-pointer text-red-600"

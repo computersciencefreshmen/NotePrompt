@@ -309,7 +309,7 @@ export default function PromptCard({
         </div>
 
         {isPublicPrompt && (
-          <div className="flex items-center justify-between text-sm text-gray-500">
+          <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-1">
                 <User className="h-3 w-3" />
@@ -328,7 +328,7 @@ export default function PromptCard({
         )}
 
         {!isPublicPrompt && userPrompt.updated_at && (
-          <div className="flex items-center space-x-1 text-sm text-gray-500">
+          <div className="flex items-center space-x-1 text-sm text-gray-500 dark:text-gray-400">
             <Calendar className="h-3 w-3" />
             <span>更新于 {formatDate(userPrompt.updated_at)}</span>
           </div>
@@ -336,7 +336,7 @@ export default function PromptCard({
 
         {/* 多文件夹信息显示 */}
         {!isPublicPrompt && (folderNames.length > 0 || userPrompt.folder_id) && (
-          <div className="flex items-center space-x-1 text-sm text-gray-500 mt-2">
+          <div className="flex items-center space-x-1 text-sm text-gray-500 dark:text-gray-400 mt-2">
             <Folder className="h-3 w-3" />
             <span>
               {hasMultipleFolders 
@@ -352,13 +352,13 @@ export default function PromptCard({
         <div className="space-y-4">
           {/* 描述或内容预览 */}
           {isPublicPrompt && publicPrompt.description && (
-            <p className="text-sm text-gray-600 line-clamp-2">
+            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
               {publicPrompt.description}
             </p>
           )}
 
-          <div className="bg-gray-50 p-3 rounded-md">
-            <p className="text-sm text-gray-700 line-clamp-3">
+          <div className="bg-gray-50 dark:bg-white/5 p-3 rounded-md">
+            <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
               {prompt.content}
             </p>
           </div>
@@ -533,7 +533,7 @@ export default function PromptCard({
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-300">
             {type === 'public' 
               ? `确定要取消收藏提示词 "${prompt.title}" 吗？`
               : `确定要删除提示词 "${prompt.title}" 吗？此操作不可撤销。`

@@ -1,12 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   Sparkles, Wand2, FolderOpen, Globe, ArrowRight,
-  Zap, Shield, Users, ChevronDown, Star, BookOpen
+  Zap, Shield, Users, ChevronDown, Star, BookOpen, Check, X, Crown
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -52,14 +50,6 @@ function StatBlock({ value, label }: { value: string; label: string }) {
 
 export default function Home() {
   const { user, loading } = useAuth()
-  const router = useRouter()
-
-  // 已登录用户直接进入
-  useEffect(() => {
-    if (!loading && user) {
-      router.push('/prompts')
-    }
-  }, [user, loading, router])
 
   if (loading) {
     return (
@@ -70,8 +60,6 @@ export default function Home() {
       </div>
     )
   }
-
-  if (user) return null
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 overflow-hidden">
@@ -86,16 +74,25 @@ export default function Home() {
           </Link>
           <div className="hidden md:flex items-center space-x-6 text-sm">
             <a href="#features" className="text-gray-600 dark:text-gray-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors">功能</a>
+            <a href="#pricing" className="text-gray-600 dark:text-gray-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors">方案对比</a>
             <a href="#how-it-works" className="text-gray-600 dark:text-gray-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors">使用方式</a>
             <Link href="/public-prompts" className="text-gray-600 dark:text-gray-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors">提示词库</Link>
           </div>
           <div className="flex items-center space-x-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/login">登录</Link>
-            </Button>
-            <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-5" asChild>
-              <Link href="/register">免费注册</Link>
-            </Button>
+            {user ? (
+              <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-5" asChild>
+                <Link href="/prompts">进入工作台</Link>
+              </Button>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/login">登录</Link>
+                </Button>
+                <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-5" asChild>
+                  <Link href="/register">免费注册</Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -134,12 +131,21 @@ export default function Home() {
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button size="lg" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-8 h-12 text-base shadow-lg shadow-teal-500/25 hover:shadow-teal-500/40 transition-all" asChild>
-              <Link href="/register">
-                开始使用
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
+            {user ? (
+              <Button size="lg" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-8 h-12 text-base shadow-lg shadow-teal-500/25 hover:shadow-teal-500/40 transition-all" asChild>
+                <Link href="/prompts">
+                  进入工作台
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+            ) : (
+              <Button size="lg" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-8 h-12 text-base shadow-lg shadow-teal-500/25 hover:shadow-teal-500/40 transition-all" asChild>
+                <Link href="/register">
+                  开始使用
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+            )}
             <Button variant="outline" size="lg" className="rounded-full px-8 h-12 text-base border-gray-300 dark:border-gray-700" asChild>
               <Link href="/public-prompts">
                 <Globe className="mr-2 h-4 w-4" />
@@ -215,6 +221,116 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Pricing / Plans Section */}
+      <section id="pricing" className="py-20 md:py-28">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-gray-50">
+              选择适合你的方案
+            </h2>
+            <p className="mt-4 text-gray-600 dark:text-gray-400 max-w-xl mx-auto">
+              免费版即可体验全部核心功能，通过贡献解锁 Pro 版无限制体验
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+            {/* Free Plan */}
+            <div className="relative p-8 rounded-2xl bg-white/80 dark:bg-gray-900/60 backdrop-blur-sm border border-gray-200/60 dark:border-gray-700/40">
+              <div className="mb-6">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">免费版</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">开箱即用，零成本上手</p>
+                <div className="mt-4">
+                  <span className="text-4xl font-bold text-gray-900 dark:text-gray-50">¥0</span>
+                  <span className="text-gray-500 dark:text-gray-400 ml-1">/永久</span>
+                </div>
+              </div>
+              <ul className="space-y-3 text-sm">
+                {[
+                  { text: '最多 50 个提示词', included: true },
+                  { text: '最多 10 个文件夹', included: true },
+                  { text: '每月 10 次 AI 优化', included: true },
+                  { text: '17+ AI 模型可选', included: true },
+                  { text: '公共提示词库浏览与收藏', included: true },
+                  { text: '文件夹导入与分享', included: true },
+                  { text: '无限 AI 优化次数', included: false },
+                  { text: '无限提示词和文件夹', included: false },
+                ].map((item, i) => (
+                  <li key={i} className="flex items-center gap-2.5">
+                    {item.included ? (
+                      <Check className="h-4 w-4 text-teal-500 flex-shrink-0" />
+                    ) : (
+                      <X className="h-4 w-4 text-gray-300 dark:text-gray-600 flex-shrink-0" />
+                    )}
+                    <span className={item.included ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}>
+                      {item.text}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Button variant="outline" className="w-full mt-8 rounded-full h-11" asChild>
+                <Link href={user ? '/prompts' : '/register'}>
+                  {user ? '当前方案' : '免费注册'}
+                </Link>
+              </Button>
+            </div>
+
+            {/* Pro Plan */}
+            <div className="relative p-8 rounded-2xl bg-white/80 dark:bg-gray-900/60 backdrop-blur-sm border-2 border-teal-400 dark:border-teal-600 shadow-lg shadow-teal-500/10">
+              <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+                <span className="inline-flex items-center gap-1 px-4 py-1 rounded-full bg-gradient-to-r from-teal-500 to-emerald-500 text-white text-xs font-medium shadow-md">
+                  <Crown className="h-3 w-3" />
+                  推荐
+                </span>
+              </div>
+              <div className="mb-6">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Pro 版</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">通过贡献免费解锁，无限制使用</p>
+                <div className="mt-4">
+                  <span className="text-4xl font-bold bg-gradient-to-r from-teal-500 to-emerald-500 bg-clip-text text-transparent">免费</span>
+                  <span className="text-gray-500 dark:text-gray-400 ml-1">/贡献解锁</span>
+                </div>
+              </div>
+              <ul className="space-y-3 text-sm">
+                {[
+                  '无限提示词创建',
+                  '无限文件夹',
+                  '无限 AI 优化次数',
+                  '17+ AI 模型全部可用',
+                  '公共提示词库浏览与收藏',
+                  '文件夹导入与分享',
+                  '优先体验新功能',
+                  'Pro 专属标识',
+                ].map((text, i) => (
+                  <li key={i} className="flex items-center gap-2.5">
+                    <Check className="h-4 w-4 text-teal-500 flex-shrink-0" />
+                    <span className="text-gray-700 dark:text-gray-300">{text}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button className="w-full mt-8 rounded-full h-11 bg-teal-600 hover:bg-teal-700 text-white shadow-md shadow-teal-500/20" asChild>
+                <Link href={user ? '/prompts' : '/register'}>
+                  {user ? '查看升级进度' : '免费注册'}
+                </Link>
+              </Button>
+            </div>
+          </div>
+
+          {/* Upgrade conditions */}
+          <div className="mt-12 max-w-2xl mx-auto">
+            <div className="p-6 rounded-2xl bg-teal-50/50 dark:bg-teal-900/10 border border-teal-200/50 dark:border-teal-800/30">
+              <h4 className="text-sm font-semibold text-teal-800 dark:text-teal-300 mb-3 flex items-center gap-2">
+                <Crown className="h-4 w-4" />
+                如何解锁 Pro 版？
+              </h4>
+              <p className="text-sm text-teal-700 dark:text-teal-400 leading-relaxed">
+                满足以下任意 <strong>2 项</strong> 条件即可自动升级：发布 10 个公共提示词、创建 20 个提示词、获得 5 次收藏。
+                通过贡献优质内容即可解锁全部功能，无需付费。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* How it works */}
       <section id="how-it-works" className="py-20 md:py-28 bg-white/50 dark:bg-gray-900/50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6">
@@ -254,8 +370,8 @@ export default function Home() {
             免费注册，立即使用 17+ AI 模型优化你的提示词
           </p>
           <Button size="lg" className="bg-teal-600 hover:bg-teal-700 text-white rounded-full px-10 h-12 text-base shadow-lg shadow-teal-500/25" asChild>
-            <Link href="/register">
-              免费注册
+            <Link href={user ? '/prompts' : '/register'}>
+              {user ? '进入工作台' : '免费注册'}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
@@ -277,7 +393,7 @@ export default function Home() {
               <Link href="/public-folders" className="hover:text-teal-600 transition-colors">公共文件夹</Link>
               <Link href="/login" className="hover:text-teal-600 transition-colors">登录</Link>
             </div>
-            <p className="text-xs text-gray-400 dark:text-gray-500">© 2025 Note Prompt. 毕业设计作品</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">© 2026 Note Prompt</p>
           </div>
         </div>
       </footer>

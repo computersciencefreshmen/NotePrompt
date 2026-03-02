@@ -58,6 +58,21 @@ export async function POST(request: NextRequest) {
 
     // 检查账户是否激活
     if (!dbUser.is_active) {
+      // 如果未激活且邮箱未验证，提示用户验证邮箱
+      if (!dbUser.email_verified) {
+        return NextResponse.json<AuthResponse>({
+          success: false,
+          error: '请先验证您的邮箱后再登录',
+          code: 'EMAIL_NOT_VERIFIED',
+          data: {
+            email_verified: false,
+            requireVerification: true,
+            user: {
+              email: dbUser.email
+            }
+          }
+        }, { status: 403 })
+      }
       return NextResponse.json<AuthResponse>({
         success: false,
         error: '账户未激活，请联系管理员'

@@ -475,6 +475,8 @@ class MySQLDB {
   }
 
   async incrementAIUsage(userId: number, aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize') {
+    const today = new Date().toISOString().split('T')[0]
+
     // 根据AI模式更新相应的统计字段
     if (aiMode === 'ai_optimize') {
       await this.query(
@@ -493,6 +495,19 @@ class MySQLDB {
         [userId]
       );
     }
+
+    // 记录每日使用明细（用于热力图）
+    const optimizeInc = (aiMode === 'ai_optimize' || aiMode !== 'ai_generate') ? 1 : 0
+    const generateInc = aiMode === 'ai_generate' ? 1 : 0
+    await this.query(
+      `INSERT INTO ai_usage_daily (user_id, usage_date, optimize_count, generate_count, total_count)
+       VALUES (?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         optimize_count = optimize_count + VALUES(optimize_count),
+         generate_count = generate_count + VALUES(generate_count),
+         total_count = total_count + 1`,
+      [userId, today, optimizeInc, generateInc]
+    )
   }
 
   // 统计方法
@@ -602,7 +617,13 @@ class MySQLDB {
 
   // 文件夹提示词统计
   async getFolderPromptCount(folderId: number): Promise<number> {
-    const result = await this.query('SELECT COUNT(*) as count FROM user_prompt_folders WHERE folder_id = ?', [folderId]);
+    const result = await this.query(
+      `SELECT COUNT(*) as count FROM user_prompt_folders upf
+       JOIN user_prompts up ON upf.user_prompt_id = up.id
+       JOIN folders f ON upf.folder_id = f.id
+       WHERE upf.folder_id = ? AND up.user_id = f.user_id`,
+      [folderId]
+    );
     return Number((result.rows as DbRow[])[0]?.count) || 0;
   }
 
@@ -922,5 +943,13 @@ class MySQLDB {
   }
 }
 
-const db = new MySQLDB();
+// 防止 Next.js HMR 重复创建连接池导致 "Too many connections"
+const globalForDb = globalThis as unknown as { __mysqlDb?: MySQLDB }
+
+const db = globalForDb.__mysqlDb ?? new MySQLDB()
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForDb.__mysqlDb = db
+}
+
 export default db;

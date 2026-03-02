@@ -98,12 +98,21 @@ export default function PublicFolderDetailPage() {
 
   const handleImportPrompt = async (promptId: number) => {
     try {
-      // 使用apiRequest函数来确保添加认证头
-      const response = await api.folders.addPromptToFolder(folderId, promptId)
+      // 导入公共提示词到用户的个人提示词库
+      const response = await api.publicPrompts.import(promptId)
       if (response.success) {
-        await fetchFolderPrompts()
+        toast({
+          title: '导入成功',
+          description: '提示词已导入到您的个人提示词库',
+          variant: 'success',
+        })
       } else {
-        console.error('添加提示词到文件夹失败:', response.error)
+        console.error('导入提示词失败:', response.error)
+        toast({
+          title: '导入失败',
+          description: response.error || '导入提示词失败，请稍后重试',
+          variant: 'destructive',
+        })
       }
     } catch (error) {
       console.error('Failed to import prompt:', error)
@@ -117,7 +126,7 @@ export default function PublicFolderDetailPage() {
       if (response.success) {
         toast({
           title: '导入成功',
-          description: response.data?.message || '文件夹已成功导入到您的个人文件夹',
+          description: (response as any).message || '文件夹已成功导入到您的个人文件夹',
           variant: 'success',
         })
         

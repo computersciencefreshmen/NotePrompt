@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const search = searchParams.get('search')
     const folderId = searchParams.get('folder_id')
+    const tagName = searchParams.get('tag_name')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '12')
     const offset = (page - 1) * limit
@@ -70,6 +71,13 @@ export async function GET(request: NextRequest) {
       query += ` AND up.folder_id = ?`
       countQuery += ` AND up.folder_id = ?`
       queryParams.push(parseInt(folderId))
+    }
+
+    // 添加标签筛选条件
+    if (tagName && tagName.trim()) {
+      query += ` AND up.id IN (SELECT upt.user_prompt_id FROM user_prompt_tags upt JOIN tags t ON upt.tag_id = t.id WHERE t.name = ?)`
+      countQuery += ` AND up.id IN (SELECT upt.user_prompt_id FROM user_prompt_tags upt JOIN tags t ON upt.tag_id = t.id WHERE t.name = ?)`
+      queryParams.push(tagName.trim())
     }
     
     query += ` ORDER BY up.created_at DESC LIMIT ${limit} OFFSET ${offset}`

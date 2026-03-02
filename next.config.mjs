@@ -1,24 +1,38 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Docker部署支持
   output: 'standalone',
 
   eslint: {
-    // 在构建时忽略 ESLint 错误，允许部署
     ignoreDuringBuilds: true,
   },
   typescript: {
-    // 在构建时忽略 TypeScript 错误，允许部署
     ignoreBuildErrors: true,
   },
 
-  // 环境变量配置
   env: {
     CUSTOM_KEY: process.env.CUSTOM_KEY,
   },
 
-  // 服务器外部包配置
   serverExternalPackages: ['mysql2'],
+
+  // Disable x-powered-by header
+  poweredByHeader: false,
+
+  // Security headers
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-DNS-Prefetch-Control', value: 'on' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'X-XSS-Protection', value: '1; mode=block' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

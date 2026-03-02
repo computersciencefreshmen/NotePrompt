@@ -34,6 +34,7 @@ WORKDIR /app
 # 这将把所有必要的代码、依赖和配置文件一次性复制过来
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.mjs ./next.config.mjs
 COPY --from=builder /app/.env.local ./.env.local
 COPY --from=builder /app/package.json ./package.json

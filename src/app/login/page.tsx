@@ -172,7 +172,16 @@ function LoginContent() {
               </Button>
             </form>
 
-            <div className="mt-6 text-center">
+            <div className="mt-4 text-center">
+              <Link
+                href="/forgot-password"
+                className="text-sm text-gray-500 hover:text-blue-600"
+              >
+                忘记密码？
+              </Link>
+            </div>
+
+            <div className="mt-4 text-center">
               <p className="text-sm text-gray-600">
                 还没有账户？{' '}
                 <Link

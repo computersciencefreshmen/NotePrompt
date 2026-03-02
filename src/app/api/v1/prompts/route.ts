@@ -168,13 +168,17 @@ export async function POST(request: NextRequest) {
     let newPrompt
 
     try {
+      // folder_id 和 category_id 可能是 number 或 string，安全转换
+      const parsedFolderId = folder_id != null ? (typeof folder_id === 'number' ? folder_id : parseInt(folder_id)) : null
+      const parsedCategoryId = category_id != null ? (typeof category_id === 'number' ? category_id : parseInt(category_id)) : null
+
       newPrompt = await db.createUserPrompt({
         title,
         content,
         description: description || null,
         user_id: userId,
-        folder_id: folder_id ? parseInt(folder_id) : null,
-        category_id: category_id ? parseInt(category_id) : null,
+        folder_id: isNaN(parsedFolderId as number) ? null : parsedFolderId,
+        category_id: isNaN(parsedCategoryId as number) ? null : parsedCategoryId,
         mode: mode || 'normal',
         is_public: is_public || false
       })

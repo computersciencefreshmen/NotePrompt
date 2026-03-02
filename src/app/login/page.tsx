@@ -59,7 +59,7 @@ function LoginContent() {
         if (activeTab === 'admin') {
           router.push('/admin');
         } else {
-          router.push('/');
+          router.push('/public-prompts');
         }
       } else {
         // 如果邮箱未验证，跳转到验证页面

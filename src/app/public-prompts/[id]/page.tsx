@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import Header from '@/components/Header'
 import { PublicPrompt } from '@/types'
 import { api } from '@/lib/api'
+import { useAuth } from '@/contexts/AuthContext'
+import { toast } from '@/hooks/use-toast'
 import { 
   ArrowLeft, 
   FileText, 
@@ -23,17 +25,39 @@ import {
 export default function PublicPromptDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const { user } = useAuth()
   const promptId = parseInt(params.id as string)
   
   const [prompt, setPrompt] = useState<PublicPrompt | null>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [isFavorited, setIsFavorited] = useState(false)
+  const [favoriting, setFavoriting] = useState(false)
 
   useEffect(() => {
     if (promptId) {
       fetchPromptDetail()
     }
   }, [promptId])
+
+  // 检查当前用户是否已收藏
+  useEffect(() => {
+    if (user && promptId) {
+      checkFavoriteStatus()
+    }
+  }, [user, promptId])
+
+  const checkFavoriteStatus = async () => {
+    try {
+      const response = await api.favorites.list(1, 200)
+      if (response.success && response.data?.items) {
+        const found = response.data.items.some((item: PublicPrompt) => item.id === promptId)
+        setIsFavorited(found)
+      }
+    } catch {
+      // 未登录或请求失败忽略
+    }
+  }
 
   const fetchPromptDetail = async () => {
     setLoading(true)
@@ -63,11 +87,37 @@ export default function PublicPromptDetailPage() {
 
   const handleFavorite = async () => {
     if (!prompt) return
-    
+
+    if (!user) {
+      toast({ description: '请先登录后再收藏', variant: 'destructive' })
+      router.push('/login')
+      return
+    }
+
+    setFavoriting(true)
     try {
-      // 这里需要实现收藏功能
+      if (isFavorited) {
+        const response = await api.favorites.remove(prompt.id)
+        if (response.success) {
+          setIsFavorited(false)
+          setPrompt({ ...prompt, favorites_count: Math.max(0, (prompt.favorites_count || 0) - 1) })
+          toast({ description: '已取消收藏' })
+        }
+      } else {
+        const response = await api.favorites.add(prompt.id)
+        if (response.success) {
+          setIsFavorited(true)
+          setPrompt({ ...prompt, favorites_count: (prompt.favorites_count || 0) + 1 })
+          toast({ description: '收藏成功' })
+        } else {
+          toast({ description: ('error' in response ? response.error : '收藏失败') || '收藏失败', variant: 'destructive' })
+        }
+      }
     } catch (error) {
       console.error('Failed to favorite prompt:', error)
+      toast({ description: '操作失败，请稍后重试', variant: 'destructive' })
+    } finally {
+      setFavoriting(false)
     }
   }
 
@@ -158,11 +208,13 @@ export default function PublicPromptDetailPage() {
               <div className="flex items-center space-x-2">
                 <Button
                   onClick={handleFavorite}
-                  variant="outline"
+                  variant={isFavorited ? 'default' : 'outline'}
                   size="sm"
+                  disabled={favoriting}
+                  className={isFavorited ? 'bg-red-500 hover:bg-red-600 text-white' : ''}
                 >
-                  <Heart className="h-4 w-4 mr-1" />
-                  收藏
+                  <Heart className={`h-4 w-4 mr-1 ${isFavorited ? 'fill-current' : ''}`} />
+                  {favoriting ? '处理中...' : isFavorited ? '已收藏' : '收藏'}
                 </Button>
                 <Button
                   onClick={handleCopyPrompt}
@@ -224,12 +276,6 @@ export default function PublicPromptDetailPage() {
                 <Eye className="h-4 w-4" />
                 <span>浏览: {prompt.views_count || 0}</span>
               </div>
-              {prompt.favorites_count !== undefined && (
-                <div className="flex items-center space-x-1">
-                  <Download className="h-4 w-4" />
-                  <span>收藏: {prompt.favorites_count}</span>
-                </div>
-              )}
             </div>
 
             {/* 标签 */}
@@ -249,16 +295,7 @@ export default function PublicPromptDetailPage() {
           </CardContent>
         </Card>
 
-        {/* 相关提示词推荐 */}
-        <div className="mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">
-            相关推荐
-          </h2>
-          <div className="text-center py-8 text-gray-600">
-            <FileText className="h-12 w-12 mx-auto text-gray-400 mb-2" />
-            <p>相关推荐功能开发中...</p>
-          </div>
-        </div>
+
       </main>
     </div>
   )

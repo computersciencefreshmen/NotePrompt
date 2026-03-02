@@ -262,9 +262,11 @@ export interface CreatePromptData {
   title: string
   content: string
   description?: string
-  folder_id?: number
-  category_id?: number
+  folder_id?: number | null
+  category_id?: number | null
   tags?: string[] // 标签名数组
+  mode?: string
+  is_public?: boolean
 }
 
 export interface UpdatePromptData {

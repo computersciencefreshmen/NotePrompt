@@ -82,8 +82,8 @@ export default function StatsCards({ stats }: StatsCardsProps) {
             <div className="flex items-center">
               <Sparkles className="h-8 w-8 text-purple-600 group-hover:scale-110 transition-transform" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">本月优化</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.ai_optimize_count || 0}</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">本月 AI 使用</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.monthly_usage || 0}</p>
                 <p className="text-[10px] text-purple-500 dark:text-purple-400 mt-0.5">点击查看热力图</p>
               </div>
             </div>

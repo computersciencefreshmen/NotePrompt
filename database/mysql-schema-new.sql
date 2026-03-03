@@ -151,6 +151,8 @@ CREATE TABLE IF NOT EXISTS user_usage_stats (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL UNIQUE,
   ai_optimize_count INT DEFAULT 0,
+  ai_generate_count INT DEFAULT 0,
+  total_ai_usage INT DEFAULT 0,
   monthly_usage INT DEFAULT 0,
   last_reset_date DATE DEFAULT (CURRENT_DATE),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

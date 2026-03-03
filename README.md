@@ -273,26 +273,6 @@ All API endpoints are prefixed with `/api/v1/`.
 
 ## 📸 Screenshots
 
-<div align="center">
-<table>
-<tr>
-<td><b>Landing Page</b></td>
-<td><b>Prompt Workspace</b></td>
-</tr>
-<tr>
-<td><img src="public/screenshots/landing.png" alt="Landing Page" width="400"/></td>
-<td><img src="public/screenshots/workspace.png" alt="Prompt Workspace" width="400"/></td>
-</tr>
-<tr>
-<td><b>AI Optimization</b></td>
-<td><b>Admin Dashboard</b></td>
-</tr>
-<tr>
-<td><img src="public/screenshots/ai-optimize.png" alt="AI Optimization" width="400"/></td>
-<td><img src="public/screenshots/admin.png" alt="Admin Dashboard" width="400"/></td>
-</tr>
-</table>
-</div>
 
 > 📌 *Screenshots coming soon — visit [noteprompt.cn](https://noteprompt.cn) for the live experience.*
 

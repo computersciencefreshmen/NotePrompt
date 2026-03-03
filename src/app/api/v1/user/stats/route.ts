@@ -25,6 +25,8 @@ export async function GET(request: NextRequest) {
           total_favorites: 0,
           monthly_usage: newStats?.monthly_usage || 0,
           ai_optimize_count: newStats?.ai_optimize_count || 0,
+          ai_generate_count: newStats?.ai_generate_count || 0,
+          total_ai_usage: newStats?.total_ai_usage || 0,
           max_prompts: 50 // 免费用户限制
         }
       })
@@ -57,6 +59,8 @@ export async function GET(request: NextRequest) {
         total_favorites: totalFavorites,
         monthly_usage: userStats.monthly_usage,
         ai_optimize_count: userStats.ai_optimize_count || 0,
+        ai_generate_count: userStats.ai_generate_count || 0,
+        total_ai_usage: userStats.total_ai_usage || 0,
         max_prompts: 50 // 免费用户限制
       }
     })
@@ -153,6 +157,8 @@ export async function POST(request: NextRequest) {
           total_favorites: totalFavorites,
           monthly_usage: updatedStats?.monthly_usage || 0,
           ai_optimize_count: updatedStats?.ai_optimize_count || 0,
+          ai_generate_count: updatedStats?.ai_generate_count || 0,
+          total_ai_usage: updatedStats?.total_ai_usage || 0,
           max_prompts: 50
         }
       })

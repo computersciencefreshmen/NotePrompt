@@ -1,6 +1,6 @@
 // AI模型配置 (2026最新)
 export const DEFAULT_AI_PROVIDER = process.env.DEFAULT_AI_PROVIDER || 'qwen'
-export const DEFAULT_AI_MODEL = process.env.DEFAULT_AI_MODEL || 'qwen3.5-plus'
+export const DEFAULT_AI_MODEL = process.env.DEFAULT_AI_MODEL || 'qwen3-coder-plus'
 export const FALLBACK_AI_PROVIDER = 'deepseek'
 export const FALLBACK_AI_MODEL = 'deepseek-chat'
 
@@ -31,14 +31,28 @@ export type AIRequestConfig = {
   headers: Record<string, string>;
 }
 
+// 模型按响应速度排序（基于实测benchmark）
+// 最快: qwen3-coder-plus 1420ms → 最慢: glm-4.6 38032ms
 export const AI_MODELS = {
+  qwen: {
+    name: 'Qwen',
+    apiKey: process.env.DASHSCOPE_API_KEY || process.env.QWEN_API_KEY,
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: {
+      'qwen3-coder-plus': { name: 'Qwen3 Coder Plus', model: 'qwen3-coder-plus', max_tokens: 32768 },  // 1420ms
+      'qwen3-max': { name: 'Qwen3 Max', model: 'qwen3-max', max_tokens: 32768 },                      // 1621ms
+      'qwen-long': { name: 'Qwen Long', model: 'qwen-long', max_tokens: 32768 },                      // 2261ms
+      'qwen3.5-flash': { name: 'Qwen3.5 Flash', model: 'qwen3.5-flash', max_tokens: 32768 },          // 24230ms
+      'qwen3.5-plus': { name: 'Qwen3.5 Plus', model: 'qwen3.5-plus', max_tokens: 32768 },             // 超时>60s
+    }
+  },
   deepseek: {
     name: 'DeepSeek',
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: 'https://api.deepseek.com/v1',
     models: {
-      'deepseek-chat': { name: 'DeepSeek-V3.2 Chat', model: 'deepseek-chat', max_tokens: 8192 },
-      'deepseek-reasoner': { name: 'DeepSeek-R1 推理', model: 'deepseek-reasoner', max_tokens: 8192 },
+      'deepseek-chat': { name: 'DeepSeek-V3.2 Chat', model: 'deepseek-chat', max_tokens: 8192 },      // 2006ms
+      'deepseek-reasoner': { name: 'DeepSeek-R1 推理', model: 'deepseek-reasoner', max_tokens: 8192 }, // 6001ms
     }
   },
   kimi: {
@@ -46,23 +60,11 @@ export const AI_MODELS = {
     apiKey: process.env.KIMI_API_KEY,
     baseURL: 'https://api.moonshot.cn/v1',
     models: {
-      'kimi-k2.5': { name: 'Kimi K2.5', model: 'kimi-k2.5', max_tokens: 32768, fixedTemperature: true },
-      'kimi-k2-0905-preview': { name: 'Kimi K2 Preview', model: 'kimi-k2-0905-preview', max_tokens: 8192 },
-      'kimi-k2-thinking': { name: 'Kimi K2 Thinking', model: 'kimi-k2-thinking', max_tokens: 16384, fixedTemperature: true },
-      'moonshot-v1-128k': { name: 'Moonshot V1 128k', model: 'moonshot-v1-128k', max_tokens: 4096 },
-      'moonshot-v1-32k': { name: 'Moonshot V1 32k', model: 'moonshot-v1-32k', max_tokens: 4096 },
-    }
-  },
-  qwen: {
-    name: 'Qwen',
-    apiKey: process.env.DASHSCOPE_API_KEY || process.env.QWEN_API_KEY,
-    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: {
-      'qwen3-max': { name: 'Qwen3 Max', model: 'qwen3-max', max_tokens: 32768 },
-      'qwen3.5-plus': { name: 'Qwen3.5 Plus', model: 'qwen3.5-plus', max_tokens: 32768 },
-      'qwen-long': { name: 'Qwen Long', model: 'qwen-long', max_tokens: 32768 },
-      'qwen3-coder-plus': { name: 'Qwen3 Coder Plus', model: 'qwen3-coder-plus', max_tokens: 32768 },
-      'qwen3.5-flash': { name: 'Qwen3.5 Flash', model: 'qwen3.5-flash', max_tokens: 32768 },
+      'kimi-k2-0905-preview': { name: 'Kimi K2 Preview', model: 'kimi-k2-0905-preview', max_tokens: 8192 },     // 2529ms
+      'moonshot-v1-32k': { name: 'Moonshot V1 32k', model: 'moonshot-v1-32k', max_tokens: 4096 },               // 2898ms
+      'kimi-k2.5': { name: 'Kimi K2.5', model: 'kimi-k2.5', max_tokens: 32768, fixedTemperature: true },        // 需temperature=1
+      'kimi-k2-thinking': { name: 'Kimi K2 Thinking', model: 'kimi-k2-thinking', max_tokens: 16384, fixedTemperature: true },  // 引擎繁忙
+      'moonshot-v1-128k': { name: 'Moonshot V1 128k', model: 'moonshot-v1-128k', max_tokens: 4096 },            // 引擎繁忙
     }
   },
   zhipu: {
@@ -70,11 +72,11 @@ export const AI_MODELS = {
     apiKey: process.env.ZHIPU_API_KEY,
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     models: {
-      'glm-5': { name: 'GLM-5', model: 'glm-5', max_tokens: 131072 },
-      'glm-4.7': { name: 'GLM-4.7', model: 'glm-4.7', max_tokens: 131072 },
-      'glm-4.7-flash': { name: 'GLM-4.7-Flash', model: 'glm-4.7-flash', max_tokens: 131072 },
-      'glm-4.6': { name: 'GLM-4.6', model: 'glm-4.6', max_tokens: 131072 },
-      'glm-4.5': { name: 'GLM-4.5', model: 'glm-4.5', max_tokens: 131072 },
+      'glm-4.7-flash': { name: 'GLM-4.7-Flash', model: 'glm-4.7-flash', max_tokens: 131072 },  // 4887ms
+      'glm-4.7': { name: 'GLM-4.7', model: 'glm-4.7', max_tokens: 131072 },                    // 429繁忙
+      'glm-5': { name: 'GLM-5', model: 'glm-5', max_tokens: 131072 },                          // 12284ms
+      'glm-4.5': { name: 'GLM-4.5', model: 'glm-4.5', max_tokens: 131072 },                    // 25142ms
+      'glm-4.6': { name: 'GLM-4.6', model: 'glm-4.6', max_tokens: 131072 },                    // 38032ms
     }
   }
 };

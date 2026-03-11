@@ -124,6 +124,8 @@ async function createTablesManually() {
       user_id INT NOT NULL,
       folder_id INT DEFAULT NULL,
       category_id INT DEFAULT NULL,
+      mode VARCHAR(20) DEFAULT 'normal',
+      is_public TINYINT(1) DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

@@ -20,7 +20,8 @@ import {
   Tag,
   X,
   Sparkles,
-  Eye
+  Eye,
+  ChevronsUpDown
 } from 'lucide-react'
 import { ProfessionalModeData } from '@/types'
 import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
@@ -61,6 +62,7 @@ export default function ProfessionalEditor({
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [optimizedPreview, setOptimizedPreview] = useState('')
   const [showMarkdown, setShowMarkdown] = useState(false)
+  const [previewExpanded, setPreviewExpanded] = useState(false)
   const previewTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -756,7 +758,7 @@ export default function ProfessionalEditor({
                   </span>
                 </div>
                 {showMarkdown ? (
-                  <div className="min-h-[120px] max-h-[600px] overflow-auto p-3 border border-gray-200 rounded-lg bg-white">
+                  <div className={`min-h-[120px] overflow-auto p-3 border border-gray-200 rounded-lg bg-white ${previewExpanded ? '' : 'max-h-[600px]'}`}>
                     <MarkdownPreview content={optimizedPreview || data.content} />
                   </div>
                 ) : (
@@ -766,13 +768,17 @@ export default function ProfessionalEditor({
                     onChange={(e) => {
                       if (optimizedPreview) return
                       onChange({ ...data, content: e.target.value })
-                      adjustTextareaHeight(e.target, 120, 600)
+                      const maxH = previewExpanded ? 100000 : 600
+                      adjustTextareaHeight(e.target, 120, maxH)
                     }}
                     placeholder="在这里编辑或查看生成的提示词..."
                     className="w-full min-h-[120px] p-3 border border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    style={{ resize: 'vertical', minHeight: '120px', maxHeight: '600px' }}
+                    style={{ resize: 'vertical', minHeight: '120px', maxHeight: previewExpanded ? 'none' : '600px' }}
                     disabled={loading || !!optimizedPreview}
-                    onInput={(e) => adjustTextareaHeight(e.target as HTMLTextAreaElement, 120, 600)}
+                    onInput={(e) => {
+                      const maxH = previewExpanded ? 100000 : 600
+                      adjustTextareaHeight(e.target as HTMLTextAreaElement, 120, maxH)
+                    }}
                   />
                 )}
                 {optimizedPreview && (
@@ -781,7 +787,16 @@ export default function ProfessionalEditor({
                   </div>
                 )}
                 <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                  <span>💡 提示：点击"编辑/Markdown"切换视图</span>
+                  <div className="flex items-center space-x-3">
+                    <span>💡 提示：点击"编辑/Markdown"切换视图</span>
+                    <button
+                      onClick={() => setPreviewExpanded(!previewExpanded)}
+                      className="flex items-center space-x-1 text-purple-600 hover:text-purple-700 font-medium"
+                    >
+                      <ChevronsUpDown className="h-3 w-3" />
+                      <span>{previewExpanded ? '收起' : '展开全部'}</span>
+                    </button>
+                  </div>
                   <Button
                     onClick={async () => {
                       try {

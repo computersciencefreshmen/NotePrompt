@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { FileText, Tag, X, Sparkles, ChevronsUpDown } from 'lucide-react'
+import { FileText, Tag, X, Sparkles } from 'lucide-react'
 import { NormalModeData, PromptTemplate } from '@/types'
 import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
 import { optimizePrompt, generatePrompt } from '@/lib/api'
@@ -145,7 +145,7 @@ export default function NormalEditor({
   const [showTips, setShowTips] = useState(true)
   const [newTag, setNewTag] = useState('')
   const [modelType, setModelType] = useState<'deepseek' | 'kimi' | 'qwen' | 'zhipu'>('qwen')
-  const [modelName, setModelName] = useState<string>('qwen3.5-plus')
+  const [modelName, setModelName] = useState<string>('qwen3-coder-plus')
   const [temperature, setTemperature] = useState<number>(0.7)
   const [aiFunction, setAiFunction] = useState<'optimize' | 'generate'>('optimize')
   const [error, setError] = useState('')
@@ -169,11 +169,11 @@ export default function NormalEditor({
   const examplesRef = useRef<HTMLTextAreaElement>(null)
 
   // 自适应高度函数
-  const [previewExpanded, setPreviewExpanded] = useState(false)
-
-  const adjustTextareaHeight = (textarea: HTMLTextAreaElement, minHeight: number, maxHeight: number) => {
+  // 自适应高度函数
+  const adjustTextareaHeight = (textarea: HTMLTextAreaElement, minHeight: number, maxHeight?: number) => {
     textarea.style.height = 'auto'
-    textarea.style.height = Math.min(textarea.scrollHeight, maxHeight) + 'px'
+    const h = Math.max(textarea.scrollHeight, minHeight)
+    textarea.style.height = (maxHeight ? Math.min(h, maxHeight) : h) + 'px'
   }
 
   // 在组件加载和内容变化时调整高度
@@ -668,33 +668,22 @@ export default function NormalEditor({
               value={data.objective}
               onChange={(e) => {
                 onChange({ ...data, objective: e.target.value })
-                const maxH = previewExpanded ? 100000 : 600
-                adjustTextareaHeight(e.target, 120, maxH)
+                adjustTextareaHeight(e.target, 120)
               }}
               className="w-full min-h-[120px] p-3 border border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               placeholder="在这里编辑或完善你的提示词..."
               style={{
-                resize: 'vertical',
+                resize: 'none',
                 minHeight: '120px',
-                maxHeight: previewExpanded ? 'none' : '600px'
+                overflow: 'hidden'
               }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement
-                const maxH = previewExpanded ? 100000 : 600
-                adjustTextareaHeight(target, 120, maxH)
+                adjustTextareaHeight(target, 120)
               }}
             />
             <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-              <div className="flex items-center space-x-3">
-                <span>💡 提示：你可以直接在这里修改生成的提示词</span>
-                <button
-                  onClick={() => setPreviewExpanded(!previewExpanded)}
-                  className="flex items-center space-x-1 text-teal-600 hover:text-teal-700 font-medium"
-                >
-                  <ChevronsUpDown className="h-3 w-3" />
-                  <span>{previewExpanded ? '收起' : '展开全部'}</span>
-                </button>
-              </div>
+              <span>💡 提示：你可以直接在这里修改生成的提示词</span>
               <Button
                 onClick={() => {
                   handleCopy(data.objective)

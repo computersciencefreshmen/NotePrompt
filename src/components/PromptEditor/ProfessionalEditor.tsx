@@ -20,8 +20,7 @@ import {
   Tag,
   X,
   Sparkles,
-  Eye,
-  ChevronsUpDown
+  Eye
 } from 'lucide-react'
 import { ProfessionalModeData } from '@/types'
 import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
@@ -56,13 +55,12 @@ export default function ProfessionalEditor({
   const [newTag, setNewTag] = useState('')
   const [temperature, setTemperature] = useState(0.7)
   const [modelType, setModelType] = useState<'deepseek' | 'kimi' | 'qwen' | 'zhipu'>('qwen')
-  const [modelName, setModelName] = useState<string>('qwen3.5-plus')
+  const [modelName, setModelName] = useState<string>('qwen3-coder-plus')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [optimizedPreview, setOptimizedPreview] = useState('')
   const [showMarkdown, setShowMarkdown] = useState(false)
-  const [previewExpanded, setPreviewExpanded] = useState(false)
   const previewTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,7 +189,7 @@ export default function ProfessionalEditor({
       const result = await callOptimizeAPI({ 
         prompt: userPrompt.trim(),
         provider: modelType,
-        model: modelName || 'qwen3.5-plus',
+        model: modelName || 'qwen3-coder-plus',
         temperature: temperature
       })
       
@@ -241,10 +239,10 @@ export default function ProfessionalEditor({
   }
 
   // 自动调整textarea高度
-  const adjustTextareaHeight = (textarea: HTMLTextAreaElement, minHeight: number, maxHeight: number) => {
+  const adjustTextareaHeight = (textarea: HTMLTextAreaElement, minHeight: number, maxHeight?: number) => {
     textarea.style.height = 'auto'
-    const scrollHeight = textarea.scrollHeight
-    textarea.style.height = Math.min(Math.max(scrollHeight, minHeight), maxHeight) + 'px'
+    const h = Math.max(textarea.scrollHeight, minHeight)
+    textarea.style.height = (maxHeight ? Math.min(h, maxHeight) : h) + 'px'
   }
 
   return (
@@ -758,7 +756,7 @@ export default function ProfessionalEditor({
                   </span>
                 </div>
                 {showMarkdown ? (
-                  <div className={`min-h-[120px] overflow-auto p-3 border border-gray-200 rounded-lg bg-white ${previewExpanded ? '' : 'max-h-[600px]'}`}>
+                  <div className="min-h-[120px] overflow-auto p-3 border border-gray-200 rounded-lg bg-white">
                     <MarkdownPreview content={optimizedPreview || data.content} />
                   </div>
                 ) : (
@@ -768,17 +766,13 @@ export default function ProfessionalEditor({
                     onChange={(e) => {
                       if (optimizedPreview) return
                       onChange({ ...data, content: e.target.value })
-                      const maxH = previewExpanded ? 100000 : 600
-                      adjustTextareaHeight(e.target, 120, maxH)
+                      adjustTextareaHeight(e.target, 120)
                     }}
                     placeholder="在这里编辑或查看生成的提示词..."
                     className="w-full min-h-[120px] p-3 border border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    style={{ resize: 'vertical', minHeight: '120px', maxHeight: previewExpanded ? 'none' : '600px' }}
+                    style={{ resize: 'none', minHeight: '120px', overflow: 'hidden' }}
                     disabled={loading || !!optimizedPreview}
-                    onInput={(e) => {
-                      const maxH = previewExpanded ? 100000 : 600
-                      adjustTextareaHeight(e.target as HTMLTextAreaElement, 120, maxH)
-                    }}
+                    onInput={(e) => adjustTextareaHeight(e.target as HTMLTextAreaElement, 120)}
                   />
                 )}
                 {optimizedPreview && (
@@ -787,16 +781,7 @@ export default function ProfessionalEditor({
                   </div>
                 )}
                 <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                  <div className="flex items-center space-x-3">
-                    <span>💡 提示：点击"编辑/Markdown"切换视图</span>
-                    <button
-                      onClick={() => setPreviewExpanded(!previewExpanded)}
-                      className="flex items-center space-x-1 text-purple-600 hover:text-purple-700 font-medium"
-                    >
-                      <ChevronsUpDown className="h-3 w-3" />
-                      <span>{previewExpanded ? '收起' : '展开全部'}</span>
-                    </button>
-                  </div>
+                  <span>💡 提示：点击"编辑/Markdown"切换视图</span>
                   <Button
                     onClick={async () => {
                       try {

@@ -283,7 +283,7 @@ export default function NormalEditor({
           onChange({ ...data, objective: result.optimized })
           
           // 记录AI使用次数
-          api.incrementAIUsage('ai_optimize').catch(() => {})
+          api.user.incrementAIUsage('ai_optimize').catch(() => {})
           
           // 显示成功消息
           setSuccess('AI优化完成！')
@@ -312,7 +312,7 @@ export default function NormalEditor({
           onChange({ ...data, objective: result.generated })
           
           // 记录AI使用次数
-          api.incrementAIUsage('ai_generate').catch(() => {})
+          api.user.incrementAIUsage('ai_generate').catch(() => {})
           
           // 显示成功消息
           setSuccess('AI生成完成！')

@@ -92,6 +92,18 @@ interface StatsData {
   recentPrompts: Array<{ id: number; title: string; created_at: string; views_count: number; author: string }>
 }
 
+interface UserAIUsage {
+  user_id: number
+  username: string
+  email: string
+  user_type: string
+  ai_optimize_count: number
+  ai_generate_count: number
+  total_ai_usage: number
+  monthly_usage: number
+  last_used_at: string | null
+}
+
 export default function AdminPage() {
   const { user, loading } = useAuth()
   const { toast } = useToast()
@@ -128,6 +140,11 @@ export default function AdminPage() {
   const [showFolderEditDialog, setShowFolderEditDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'prompt' | 'folder' | 'user'; id: number; title: string } | null>(null)
+
+  // AI用量弹窗
+  const [showAIUsageDialog, setShowAIUsageDialog] = useState(false)
+  const [aiUsageData, setAIUsageData] = useState<UserAIUsage[]>([])
+  const [aiUsageLoading, setAIUsageLoading] = useState(false)
 
   // 管理员权限检查
   useEffect(() => {
@@ -202,6 +219,25 @@ export default function AdminPage() {
       fetchStats()
     }
   }, [user, fetchStats])
+
+  // 获取用户AI用量统计
+  const fetchAIUsage = useCallback(async () => {
+    setAIUsageLoading(true)
+    try {
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch('/api/v1/admin/ai-usage', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) {
+        setAIUsageData(data.data || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch AI usage:', error)
+    } finally {
+      setAIUsageLoading(false)
+    }
+  }, [])
 
   // Tab 切换时加载数据
   useEffect(() => {
@@ -428,7 +464,7 @@ export default function AdminPage() {
                       </div>
                     </CardContent>
                   </Card>
-                  <Card>
+                  <Card className="cursor-pointer hover:ring-2 hover:ring-orange-400 transition-all" onClick={() => { setShowAIUsageDialog(true); fetchAIUsage(); }}>
                     <CardContent className="pt-6">
                       <div className="flex items-center space-x-2">
                         <Zap className="h-8 w-8 text-orange-500" />
@@ -440,6 +476,7 @@ export default function AdminPage() {
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                         优化 {statsData.stats.totalOptimize ?? 0} · 生成 {statsData.stats.totalGenerate ?? 0} · 总计 {statsData.stats.totalAIUsage ?? 0}
                       </p>
+                      <p className="text-xs text-orange-500 mt-1">点击查看明细 →</p>
                     </CardContent>
                   </Card>
                 </div>
@@ -862,6 +899,66 @@ export default function AdminPage() {
           setEditingFolder(null)
         }}
       />
+
+      {/* AI用量统计对话框 */}
+      <Dialog open={showAIUsageDialog} onOpenChange={setShowAIUsageDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <Zap className="h-5 w-5 text-orange-500" />
+              <span>AI用量统计 - 用户明细</span>
+            </DialogTitle>
+          </DialogHeader>
+          {aiUsageLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500"></div>
+              <span className="ml-2 text-gray-500">加载中...</span>
+            </div>
+          ) : (
+            <ScrollArea className="h-[55vh]">
+              <div className="space-y-0">
+                {/* 表头 */}
+                <div className="grid grid-cols-6 gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg text-xs font-medium text-gray-500 dark:text-gray-400 sticky top-0">
+                  <span className="col-span-2">用户</span>
+                  <span className="text-center">本月</span>
+                  <span className="text-center">优化</span>
+                  <span className="text-center">生成</span>
+                  <span className="text-center">总计</span>
+                </div>
+                {aiUsageData.filter(u => u.total_ai_usage > 0 || u.monthly_usage > 0).length === 0 ? (
+                  <p className="text-sm text-gray-500 text-center py-8">暂无AI使用记录</p>
+                ) : (
+                  aiUsageData
+                    .filter(u => u.total_ai_usage > 0 || u.monthly_usage > 0)
+                    .map((u) => (
+                    <div key={u.user_id} className="grid grid-cols-6 gap-2 px-3 py-3 border-b dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 items-center">
+                      <div className="col-span-2 flex items-center space-x-2 min-w-0">
+                        <div className="h-7 w-7 rounded-full bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                          {u.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{u.username}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{u.email || ''}</p>
+                        </div>
+                      </div>
+                      <p className="text-center text-sm font-bold text-orange-600">{u.monthly_usage}</p>
+                      <p className="text-center text-sm text-blue-600">{u.ai_optimize_count}</p>
+                      <p className="text-center text-sm text-green-600">{u.ai_generate_count}</p>
+                      <p className="text-center text-sm font-semibold text-gray-900 dark:text-gray-100">{u.total_ai_usage}</p>
+                    </div>
+                  ))
+                )}
+                {/* 无使用记录的用户折叠 */}
+                {aiUsageData.filter(u => u.total_ai_usage === 0 && u.monthly_usage === 0).length > 0 && (
+                  <p className="text-xs text-gray-400 text-center py-3">
+                    还有 {aiUsageData.filter(u => u.total_ai_usage === 0 && u.monthly_usage === 0).length} 位用户暂无使用记录
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

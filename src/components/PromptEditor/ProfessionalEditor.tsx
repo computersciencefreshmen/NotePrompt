@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -244,6 +244,13 @@ export default function ProfessionalEditor({
     const h = Math.max(textarea.scrollHeight, minHeight)
     textarea.style.height = (maxHeight ? Math.min(h, maxHeight) : h) + 'px'
   }
+
+  // 预览区域自适应高度（AI优化后自动调整）
+  useEffect(() => {
+    if (previewTextareaRef.current) {
+      adjustTextareaHeight(previewTextareaRef.current, 120)
+    }
+  }, [data.content, optimizedPreview])
 
   return (
     <div className="space-y-6">

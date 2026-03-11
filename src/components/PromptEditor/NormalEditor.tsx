@@ -167,6 +167,7 @@ export default function NormalEditor({
   const objectiveRef = useRef<HTMLTextAreaElement>(null)
   const contextRef = useRef<HTMLTextAreaElement>(null)
   const examplesRef = useRef<HTMLTextAreaElement>(null)
+  const previewRef = useRef<HTMLTextAreaElement>(null)
 
   // 自适应高度函数
   // 自适应高度函数
@@ -188,6 +189,13 @@ export default function NormalEditor({
       adjustTextareaHeight(examplesRef.current, 60, 120)
     }
   }, [data.objective, data.context, data.examples])
+
+  // 预览区域自适应高度（AI优化后自动调整）
+  useEffect(() => {
+    if (previewRef.current) {
+      adjustTextareaHeight(previewRef.current, 120)
+    }
+  }, [data.objective])
 
   const handleFieldChange = (field: keyof NormalModeData, value: string) => {
     onChange({
@@ -665,6 +673,7 @@ export default function NormalEditor({
               </span>
             </div>
             <textarea
+              ref={previewRef}
               value={data.objective}
               onChange={(e) => {
                 onChange({ ...data, objective: e.target.value })

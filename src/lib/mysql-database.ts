@@ -163,10 +163,10 @@ class MySQLDB {
     mode?: string;
     is_public?: boolean;
   }) {
-    const { title, content, description, user_id, folder_id, category_id } = promptData;
+    const { title, content, description, user_id, folder_id, category_id, mode, is_public } = promptData;
     const result = await this.query(
-      'INSERT INTO user_prompts (title, content, description, user_id, folder_id, category_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [title, content, description, user_id, folder_id, category_id]
+      'INSERT INTO user_prompts (title, content, description, user_id, folder_id, category_id, mode, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [title, content, description, user_id, folder_id, category_id, mode || 'basic', is_public ? 1 : 0]
     );
 
     const insertId = (result.rows as any).insertId;

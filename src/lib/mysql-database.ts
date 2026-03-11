@@ -477,19 +477,19 @@ class MySQLDB {
   async incrementAIUsage(userId: number, aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize') {
     const today = new Date().toISOString().split('T')[0]
 
+    // 确保用户有统计记录（INSERT IGNORE 不会报错如果已存在）
+    await this.query(
+      'INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)',
+      [userId]
+    );
+
     // 根据AI模式更新相应的统计字段
-    if (aiMode === 'ai_optimize') {
-      await this.query(
-        'UPDATE user_usage_stats SET ai_optimize_count = ai_optimize_count + 1, total_ai_usage = total_ai_usage + 1, monthly_usage = monthly_usage + 1 WHERE user_id = ?',
-        [userId]
-      );
-    } else if (aiMode === 'ai_generate') {
+    if (aiMode === 'ai_generate') {
       await this.query(
         'UPDATE user_usage_stats SET ai_generate_count = ai_generate_count + 1, total_ai_usage = total_ai_usage + 1, monthly_usage = monthly_usage + 1 WHERE user_id = ?',
         [userId]
       );
     } else {
-      // 默认更新优化次数
       await this.query(
         'UPDATE user_usage_stats SET ai_optimize_count = ai_optimize_count + 1, total_ai_usage = total_ai_usage + 1, monthly_usage = monthly_usage + 1 WHERE user_id = ?',
         [userId]

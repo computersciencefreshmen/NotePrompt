@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
       publicPromptsResult,
       publicFoldersResult,
       favoritesResult,
+      aiUsageResult,
       recentUsersResult,
       recentPromptsResult
     ] = await Promise.all([
@@ -25,6 +26,7 @@ export async function GET(request: NextRequest) {
       db.query('SELECT COUNT(*) as total, SUM(CASE WHEN is_featured = 1 THEN 1 ELSE 0 END) as featured FROM public_prompts'),
       db.query('SELECT COUNT(*) as total FROM public_folders'),
       db.query('SELECT COUNT(*) as total FROM user_favorites'),
+      db.query('SELECT COALESCE(SUM(total_ai_usage), 0) as totalAIUsage, COALESCE(SUM(monthly_usage), 0) as monthlyAIUsage, COALESCE(SUM(ai_optimize_count), 0) as totalOptimize, COALESCE(SUM(ai_generate_count), 0) as totalGenerate FROM user_usage_stats'),
       db.query('SELECT id, username, email, user_type, is_admin, created_at FROM users ORDER BY created_at DESC'),
       db.query(`
         SELECT pp.id, pp.title, pp.created_at, pp.views_count,
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest) {
     const publicPrompts = (publicPromptsResult.rows as Record<string, number>[])[0]
     const publicFolders = (publicFoldersResult.rows as { total: number }[])[0]
     const favorites = (favoritesResult.rows as { total: number }[])[0]
+    const aiUsage = (aiUsageResult.rows as Record<string, number>[])[0] || {}
 
     return NextResponse.json({
       success: true,
@@ -54,6 +57,10 @@ export async function GET(request: NextRequest) {
           featuredPrompts: publicPrompts.featured,
           totalPublicFolders: publicFolders.total,
           totalFavorites: favorites.total,
+          totalAIUsage: Number(aiUsage.totalAIUsage) || 0,
+          monthlyAIUsage: Number(aiUsage.monthlyAIUsage) || 0,
+          totalOptimize: Number(aiUsage.totalOptimize) || 0,
+          totalGenerate: Number(aiUsage.totalGenerate) || 0,
         },
         recentUsers: recentUsersResult.rows,
         recentPrompts: recentPromptsResult.rows

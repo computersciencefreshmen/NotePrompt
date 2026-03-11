@@ -24,7 +24,8 @@ import {
   Crown,
   Shield,
   Home,
-  LogOut
+  LogOut,
+  Zap
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
@@ -82,6 +83,10 @@ interface StatsData {
     featuredPrompts: number
     totalPublicFolders: number
     totalFavorites: number
+    totalAIUsage?: number
+    monthlyAIUsage?: number
+    totalOptimize?: number
+    totalGenerate?: number
   }
   recentUsers: Array<{ id: number; username: string; email: string; user_type: string; is_admin: boolean; created_at: string }>
   recentPrompts: Array<{ id: number; title: string; created_at: string; views_count: number; author: string }>
@@ -372,7 +377,7 @@ export default function AdminPage() {
             ) : statsData ? (
               <div className="space-y-6">
                 {/* 统计卡片 */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <Card>
                     <CardContent className="pt-6">
                       <div className="flex items-center space-x-2">
@@ -421,6 +426,20 @@ export default function AdminPage() {
                           <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{statsData.stats.totalFavorites}</p>
                         </div>
                       </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center space-x-2">
+                        <Zap className="h-8 w-8 text-orange-500" />
+                        <div>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">本月AI使用</p>
+                          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{statsData.stats.monthlyAIUsage ?? 0}</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        优化 {statsData.stats.totalOptimize ?? 0} · 生成 {statsData.stats.totalGenerate ?? 0} · 总计 {statsData.stats.totalAIUsage ?? 0}
+                      </p>
                     </CardContent>
                   </Card>
                 </div>

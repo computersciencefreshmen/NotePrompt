@@ -25,7 +25,7 @@ import {
 import { ProfessionalModeData } from '@/types'
 import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
 import MarkdownPreview from '@/components/ui/markdown-preview'
-import { optimizePrompt as callOptimizeAPI } from '@/lib/api'
+import { optimizePrompt as callOptimizeAPI, api } from '@/lib/api'
 import { getProviderModels } from '@/config/ai'
 
 interface ProfessionalEditorProps {
@@ -195,6 +195,10 @@ export default function ProfessionalEditor({
       
       if (result.success && result.optimized) {
         setOptimizedPreview(result.optimized)
+        
+        // 记录AI使用次数
+        api.incrementAIUsage('ai_optimize').catch(() => {})
+        
         setSuccess('AI优化完成！请预览后选择"应用结果"')
         setTimeout(() => setSuccess(''), 3000)
       } else {

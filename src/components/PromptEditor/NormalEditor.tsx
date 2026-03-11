@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FileText, Tag, X, Sparkles } from 'lucide-react'
 import { NormalModeData, PromptTemplate } from '@/types'
 import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
-import { optimizePrompt, generatePrompt } from '@/lib/api'
+import { optimizePrompt, generatePrompt, api } from '@/lib/api'
 import { getAvailableProviders, getProviderModels } from '@/config/ai'
 
 interface NormalEditorProps {
@@ -282,6 +282,9 @@ export default function NormalEditor({
           // 将优化结果应用到当前内容
           onChange({ ...data, objective: result.optimized })
           
+          // 记录AI使用次数
+          api.incrementAIUsage('ai_optimize').catch(() => {})
+          
           // 显示成功消息
           setSuccess('AI优化完成！')
           setTimeout(() => setSuccess(''), 3000)
@@ -307,6 +310,9 @@ export default function NormalEditor({
         if (result.success && result.generated) {
           // 将生成结果应用到当前内容
           onChange({ ...data, objective: result.generated })
+          
+          // 记录AI使用次数
+          api.incrementAIUsage('ai_generate').catch(() => {})
           
           // 显示成功消息
           setSuccess('AI生成完成！')

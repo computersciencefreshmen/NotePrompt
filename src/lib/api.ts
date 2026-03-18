@@ -596,6 +596,102 @@ export const optimizePrompt = async (data: {
   }
 };
 
+// 流式AI优化提示词（支持实时展示思考过程）
+export interface StreamCallbacks {
+  onThinking?: (chunk: string) => void
+  onContent?: (chunk: string) => void
+  onDone?: (result: { optimized: string; thinking?: string; processing_time: number; provider: string; model: string }) => void
+  onError?: (message: string) => void
+}
+
+export async function optimizePromptStream(
+  data: { prompt: string; provider: string; model: string; temperature?: number },
+  callbacks: StreamCallbacks
+): Promise<void> {
+  if (!data.prompt || data.prompt.trim().length === 0) {
+    callbacks.onError?.('提示词内容不能为空')
+    return
+  }
+  if (data.prompt.length > 10000) {
+    callbacks.onError?.('提示词内容不能超过10000字符')
+    return
+  }
+
+  const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
+  const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
+  const url = `${baseURL}/api/v1/ai/optimize-prompt-stream`
+
+  const token = getAuthToken()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 180000)
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
+      callbacks.onError?.(errorData.error || `请求失败: ${response.status}`)
+      return
+    }
+
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) continue
+        const jsonStr = trimmed.slice(5).trim()
+        if (!jsonStr) continue
+
+        try {
+          const event = JSON.parse(jsonStr)
+          switch (event.type) {
+            case 'thinking':
+              callbacks.onThinking?.(event.content)
+              break
+            case 'content':
+              callbacks.onContent?.(event.content)
+              break
+            case 'done':
+              callbacks.onDone?.(event)
+              break
+            case 'error':
+              callbacks.onError?.(event.message)
+              break
+          }
+        } catch {
+          // skip invalid JSON
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      callbacks.onError?.('请求超时，请稍后重试')
+    } else {
+      callbacks.onError?.(error instanceof Error ? error.message : '网络请求失败')
+    }
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 // AI生成提示词
 export const generatePrompt = async (data: {
   userInfo: string;

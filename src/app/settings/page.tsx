@@ -17,14 +17,18 @@ import {
   AlertTriangle,
   Lock,
   User,
-  Smartphone
+  Smartphone,
+  Check
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useUISettings } from '@/contexts/UISettingsContext'
+import { visualStyleOptions } from '@/config/visual-styles'
 import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
 
 export default function SettingsPage() {
   const { user, logout, loading: authLoading } = useAuth()
+  const { visualStyle, setVisualStyle } = useUISettings()
   const router = useRouter()
 
   const [loading, setLoading] = useState(false)
@@ -288,6 +292,36 @@ export default function SettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div>
+                <h4 className="font-medium">界面风格</h4>
+                <p className="text-sm text-gray-600 mt-1">调整优化工作台和后续新版页面的视觉密度与色彩取向</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {visualStyleOptions.map(option => {
+                    const isSelected = visualStyle === option.value
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setVisualStyle(option.value)}
+                        className={`rounded-[8px] border p-4 text-left transition-colors ${
+                          isSelected
+                            ? 'border-teal-500 bg-teal-50 text-teal-950 dark:border-teal-400 dark:bg-teal-950/30 dark:text-teal-50'
+                            : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700'
+                        }`}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="font-medium">{option.label}</span>
+                          {isSelected && <Check className="h-4 w-4 text-teal-600 dark:text-teal-300" />}
+                        </span>
+                        <span className="mt-2 block text-sm text-gray-600 dark:text-gray-400">{option.note}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="border-t border-gray-200 pt-4 dark:border-gray-800" />
+
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-medium">深色模式</h4>

@@ -12,6 +12,7 @@ out/
 .env.production.local
 .env.development.local
 .env.test.local
+.provider-config.local.json
 
 # Build output
 build/

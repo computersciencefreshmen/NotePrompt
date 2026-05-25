@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAdminAuth } from '@/lib/auth'
 
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 // GET - 获取管理员统计数据
 export async function GET(request: NextRequest) {
   try {
@@ -9,6 +16,12 @@ export async function GET(request: NextRequest) {
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
     }
+
+    await db.ensureAIUsageDailyTable()
+
+    const now = new Date()
+    const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
 
     // 并行获取所有统计数据
     const [
@@ -26,7 +39,28 @@ export async function GET(request: NextRequest) {
       db.query('SELECT COUNT(*) as total, SUM(CASE WHEN is_featured = 1 THEN 1 ELSE 0 END) as featured FROM public_prompts'),
       db.query('SELECT COUNT(*) as total FROM public_folders'),
       db.query('SELECT COUNT(*) as total FROM user_favorites'),
-      db.query('SELECT COALESCE(SUM(total_ai_usage), 0) as totalAIUsage, COALESCE(SUM(monthly_usage), 0) as monthlyAIUsage, COALESCE(SUM(ai_optimize_count), 0) as totalOptimize, COALESCE(SUM(ai_generate_count), 0) as totalGenerate FROM user_usage_stats'),
+      db.query(`
+        SELECT
+          COALESCE(SUM(s.total_ai_usage), 0) as totalAIUsage,
+          COALESCE(SUM(s.ai_optimize_count), 0) as totalOptimize,
+          COALESCE(SUM(s.ai_generate_count), 0) as totalGenerate,
+          COALESCE((
+            SELECT SUM(d.total_count)
+            FROM ai_usage_daily d
+            WHERE d.usage_date >= ? AND d.usage_date < ?
+          ), 0) as monthlyAIUsage,
+          COALESCE((
+            SELECT SUM(d.optimize_count)
+            FROM ai_usage_daily d
+            WHERE d.usage_date >= ? AND d.usage_date < ?
+          ), 0) as monthlyOptimize,
+          COALESCE((
+            SELECT SUM(d.generate_count)
+            FROM ai_usage_daily d
+            WHERE d.usage_date >= ? AND d.usage_date < ?
+          ), 0) as monthlyGenerate
+        FROM user_usage_stats s
+      `, [monthStart, nextMonthStart, monthStart, nextMonthStart, monthStart, nextMonthStart]),
       db.query('SELECT id, username, email, user_type, is_admin, created_at FROM users ORDER BY created_at DESC'),
       db.query(`
         SELECT pp.id, pp.title, pp.created_at, pp.views_count,
@@ -59,6 +93,8 @@ export async function GET(request: NextRequest) {
           totalFavorites: favorites.total,
           totalAIUsage: Number(aiUsage.totalAIUsage) || 0,
           monthlyAIUsage: Number(aiUsage.monthlyAIUsage) || 0,
+          monthlyOptimize: Number(aiUsage.monthlyOptimize) || 0,
+          monthlyGenerate: Number(aiUsage.monthlyGenerate) || 0,
           totalOptimize: Number(aiUsage.totalOptimize) || 0,
           totalGenerate: Number(aiUsage.totalGenerate) || 0,
         },

@@ -1,4 +1,23 @@
 import { AI_MODELS } from '@/config/ai'
+import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
+
+type AIProviderKey = keyof typeof AI_MODELS
+type AIModelConfig = {
+  name: string
+  model: string
+  max_tokens: number
+  temperature?: number
+  fixedTemperature?: boolean
+  baseURL?: string
+}
+
+function getProviderConfig(provider: string) {
+  if (!Object.prototype.hasOwnProperty.call(AI_MODELS, provider)) {
+    return null
+  }
+
+  return AI_MODELS[provider as AIProviderKey]
+}
 
 // 验证AI模型配置
 export function validateAIModel(provider: string, modelId: string): {
@@ -14,7 +33,7 @@ export function validateAIModel(provider: string, modelId: string): {
   };
 } {
   try {
-    const providerConfig = AI_MODELS[provider];
+    const providerConfig = getProviderConfig(provider);
     if (!providerConfig) {
       return {
         isValid: false,
@@ -22,7 +41,8 @@ export function validateAIModel(provider: string, modelId: string): {
       };
     }
 
-    const modelConfig = providerConfig.models[modelId];
+    const models = providerConfig.models as Record<string, AIModelConfig>;
+    const modelConfig = models[modelId];
     if (!modelConfig) {
       return {
         isValid: false,
@@ -30,22 +50,35 @@ export function validateAIModel(provider: string, modelId: string): {
       };
     }
 
-    if (!providerConfig.apiKey) {
+    const runtimeConfig = getProviderRuntimeConfig(provider, {
+      apiKey: providerConfig.apiKey,
+      baseURL: providerConfig.baseURL,
+    });
+
+    if (!runtimeConfig.apiKey) {
       return {
         isValid: false,
         error: "未配置" + provider + "的API密钥，请在环境变量中设置" + provider.toUpperCase() + "_API_KEY"
       };
     }
 
+    const baseURL = runtimeConfig.baseURL || modelConfig.baseURL;
+    if (!baseURL) {
+      return {
+        isValid: false,
+        error: "未配置" + provider + "的API地址"
+      };
+    }
+
     return {
       isValid: true,
       config: {
-        baseURL: providerConfig.baseURL || modelConfig.baseURL,
+        baseURL,
         model: modelConfig.model,
         temperature: modelConfig.temperature ?? 0.7,
         max_tokens: modelConfig.max_tokens,
         fixedTemperature: modelConfig.fixedTemperature || false,
-        headers: { 'Authorization': 'Bearer ' + providerConfig.apiKey }
+        headers: { 'Authorization': 'Bearer ' + runtimeConfig.apiKey }
       }
     };
   } catch (error) {
@@ -58,14 +91,15 @@ export function validateAIModel(provider: string, modelId: string): {
 
 // 获取可用的模型列表
 export function getAvailableModels(provider: string): Array<{key: string, name: string}> {
-  const providerConfig = AI_MODELS[provider];
+  const providerConfig = getProviderConfig(provider);
   if (!providerConfig) {
     return [];
   }
 
-  return Object.keys(providerConfig.models).map(key => ({
+  const models = providerConfig.models as Record<string, AIModelConfig>;
+  return Object.keys(models).map(key => ({
     key,
-    name: providerConfig.models[key].name
+    name: models[key].name
   }));
 }
 
@@ -106,21 +140,33 @@ export function getRecommendedModels(): Array<{
   return [
     {
       provider: 'qwen',
-      model: 'qwen3.5-plus',
-      name: 'Qwen-Plus',
-      reason: '阿里云、稳定可靠、性能强'
+      model: 'qwen3.6-plus',
+      name: 'Qwen3.6 Plus',
+      reason: '阿里百炼最新通用文本模型，适合日常优化'
     },
     {
       provider: 'deepseek',
-      model: 'deepseek-chat',
-      name: 'DeepSeek-Chat',
-      reason: '高质量、支持中文'
+      model: 'deepseek-v4-flash',
+      name: 'DeepSeek V4 Flash',
+      reason: '最新低成本高并发模型，适合默认优化'
     },
     {
       provider: 'zhipu',
-      model: 'glm-4-plus',
-      name: 'GLM-4-Plus',
-      reason: '智谱清言、国内领先'
+      model: 'glm-5.1',
+      name: 'GLM-5.1',
+      reason: '长程任务和 Agent 场景能力强'
+    },
+    {
+      provider: 'kimi',
+      model: 'kimi-k2.6',
+      name: 'Kimi K2.6',
+      reason: '长上下文和代码任务能力强'
+    },
+    {
+      provider: 'minimax',
+      model: 'MiniMax-M2.7',
+      name: 'MiniMax M2.7',
+      reason: 'MiniMax 最新文本模型，适合 Agent 和长任务优化'
     }
   ];
 }

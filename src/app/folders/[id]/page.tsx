@@ -151,8 +151,12 @@ export default function FolderDetailPage() {
                   prompt={prompt}
                   type="user"
                   onClick={() => handlePromptClick(prompt)}
+                  onEdit={() => handlePromptClick(prompt)}
                   onDelete={() => handleRemoveFromFolder(prompt.id)}
                   showCopy={true}
+                  deleteLabel="移除"
+                  deleteConfirmTitle="确认移出文件夹"
+                  deleteConfirmDescription={`确定要将提示词 "${prompt.title}" 从当前文件夹中移除吗？提示词本身不会被删除。`}
                 />
               ))}
             </div>

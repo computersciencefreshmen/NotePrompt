@@ -27,6 +27,15 @@ import { api } from '@/lib/api'
 import { UserStats } from '@/types'
 import { toast } from '@/hooks/use-toast'
 
+const DEFAULT_USER_STATS: UserStats = {
+  total_prompts: 0,
+  total_folders: 0,
+  total_favorites: 0,
+  monthly_usage: 0,
+  ai_optimize_count: 0,
+  max_prompts: 50,
+}
+
 export default function ProfilePage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
@@ -78,7 +87,8 @@ export default function ProfilePage() {
         setStats(response.data)
       }
     } catch (error) {
-      console.error('Failed to fetch user stats:', error)
+      console.warn('Failed to fetch user stats, using fallback stats:', error)
+      setStats(DEFAULT_USER_STATS)
     } finally {
       setLoading(false)
     }

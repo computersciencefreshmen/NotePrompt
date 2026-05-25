@@ -12,11 +12,19 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import Header from '@/components/Header'
 import { useToast } from '@/hooks/use-toast'
 import { Prompt, Folder, ImportedFolder, PublicPrompt } from '@/types'
-import PromptCard from '@/components/PromptCard'
+import PromptCard, { PromptCardSkeleton } from '@/components/PromptCard'
 import { Card, CardContent } from '@/components/ui/card'
 import StatsCards from '@/components/StatsCards'
 import FolderSection from '@/components/FolderSection'
 import { NewFolderDialog, FolderSelectDialog } from '@/components/FolderDialogs'
+
+const DEFAULT_USER_STATS = {
+  total_prompts: 0,
+  total_folders: 0,
+  monthly_usage: 0,
+  total_favorites: 0,
+  ai_optimize_count: 0,
+}
 
 export default function PromptsPage() {
   const { user } = useAuth()
@@ -57,7 +65,8 @@ export default function PromptsPage() {
         setUserStats(response.data)
       }
     } catch (error) {
-      console.error('Failed to fetch user stats:', error)
+      console.warn('Failed to fetch user stats, using fallback stats:', error)
+      setUserStats(DEFAULT_USER_STATS)
     }
   }
 
@@ -520,12 +529,11 @@ export default function PromptsPage() {
               )}
 
               {/* 提示词网格 */}
-              {loading ? (
-                <div className="flex items-center justify-center h-64">
-                  <div className="text-center">
-                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-                    <p className="text-gray-600 dark:text-gray-400">加载中...</p>
-                  </div>
+              {loading && prompts.length === 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" aria-label="正在加载提示词">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <PromptCardSkeleton key={index} />
+                  ))}
                 </div>
               ) : prompts.length === 0 ? (
                 <Card>

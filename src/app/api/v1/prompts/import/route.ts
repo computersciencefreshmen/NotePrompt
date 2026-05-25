@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
     // 获取用户的默认文件夹
     const folders = await db.getFoldersByUserId(user_id)
-    const defaultFolder = folders[0]
+    const defaultFolder = folders[0] as Record<string, unknown> | undefined
 
     if (!defaultFolder) {
       return NextResponse.json({
@@ -49,12 +49,12 @@ export async function POST(request: NextRequest) {
 
         // 导入到用户提示词表
         await db.createUserPrompt({
-          title: `[导入] ${publicPrompt.title}`,
-          content: publicPrompt.content,
-          description: publicPrompt.description,
+          title: `[导入] ${String(publicPrompt.title || '')}`,
+          content: String(publicPrompt.content || ''),
+          description: publicPrompt.description ? String(publicPrompt.description) : null,
           user_id: user_id,
-          folder_id: defaultFolder.id,
-          category_id: publicPrompt.category_id
+          folder_id: Number(defaultFolder.id),
+          category_id: publicPrompt.category_id == null ? null : Number(publicPrompt.category_id)
         })
 
         // 复制标签
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
             const latestPrompt = importedPrompt[0]
             if (latestPrompt) {
               const tagNames = tags.map((tag: Record<string, unknown>) => tag.name as string)
-              await db.addUserPromptTags(latestPrompt.id, tagNames)
+              await db.addUserPromptTags(Number(latestPrompt.id), tagNames)
             }
           }
         } catch (tagError) {

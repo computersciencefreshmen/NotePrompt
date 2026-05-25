@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     
     // 5. 尝试简单查询
     console.log('5. 尝试简单查询...')
-    let simpleQueryResult
+    let simpleQueryResult: { rows?: unknown; error?: string }
     try {
       simpleQueryResult = await db.query(`
         SELECT pf.*, u.username as author
@@ -44,12 +44,12 @@ export async function GET(request: NextRequest) {
       console.log('简单查询结果:', simpleQueryResult.rows)
     } catch (error) {
       console.error('简单查询失败:', error)
-      simpleQueryResult = { rows: [], error: error.message }
+      simpleQueryResult = { rows: [], error: error instanceof Error ? error.message : '未知错误' }
     }
     
     // 6. 尝试带参数的查询
     console.log('6. 尝试带参数的查询...')
-    let paramQueryResult
+    let paramQueryResult: { rows?: unknown; error?: string }
     try {
       paramQueryResult = await db.query(`
         SELECT pf.*, u.username as author
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
       console.log('带参数查询结果:', paramQueryResult.rows)
     } catch (error) {
       console.error('带参数查询失败:', error)
-      paramQueryResult = { rows: [], error: error.message }
+      paramQueryResult = { rows: [], error: error instanceof Error ? error.message : '未知错误' }
     }
     
     console.log('=== 调试公共文件夹API结束 ===')

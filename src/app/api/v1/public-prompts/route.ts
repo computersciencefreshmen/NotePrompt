@@ -2,19 +2,48 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { englishFeaturedPrompts } from '@/data/english-featured-prompts'
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('开始处理公共提示词列表请求...')
-    
     const { searchParams } = new URL(request.url)
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '10')
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1'))
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '10')))
     const search = searchParams.get('search') || ''
     const tag = searchParams.get('tag') || ''
+    const lang = searchParams.get('lang') || 'zh'
     const sort = searchParams.get('sort') || 'latest'
-    
-    console.log('请求参数:', { page, limit, search, tag, sort })
+
+    if (lang === 'en') {
+      const normalizedSearch = search.trim().toLowerCase()
+      const normalizedTag = tag.trim().toLowerCase()
+      const filteredItems = englishFeaturedPrompts.filter(prompt => {
+        const matchesSearch = !normalizedSearch || [prompt.title, prompt.description || '', prompt.content, prompt.category, ...prompt.tags]
+          .join(' ')
+          .toLowerCase()
+          .includes(normalizedSearch)
+        const matchesTag = !normalizedTag || prompt.tags.some(item => item.toLowerCase() === normalizedTag) || prompt.category.toLowerCase() === normalizedTag
+        return matchesSearch && matchesTag
+      })
+      const sortedItems = [...filteredItems].sort((a, b) => {
+        if (sort === 'latest') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        return (b.favorites_count + b.views_count) - (a.favorites_count + a.views_count)
+      })
+      const offset = (page - 1) * limit
+      const pagedItems = sortedItems.slice(offset, offset + limit)
+      const total = sortedItems.length
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          items: pagedItems,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        }
+      })
+    }
     
     // 尝试获取用户信息（可选）
     let userId: number | null = null
@@ -25,7 +54,6 @@ export async function GET(request: NextRequest) {
       }
     } catch (authError) {
       // 用户未登录，继续执行
-      console.log('用户未登录，继续获取公共提示词')
     }
     
     // 构建查询条件
@@ -74,15 +102,10 @@ export async function GET(request: NextRequest) {
       ${whereClause}
     `
     
-    console.log('执行计数查询...')
     const countResult = await db.query(countQuery, queryParams)
     const total = (countResult.rows as { total: number }[])[0]?.total || 0
-    console.log('总数:', total)
-    
-    console.log('执行主查询...')
     const result = await db.query(query, queryParams)
     const items = result.rows || []
-    console.log('查询结果数量:', Array.isArray(items) ? items.length : 0)
     
     // 处理数据，获取标签信息和收藏状态
     const processedItems = await Promise.all((items as Array<{
@@ -129,14 +152,6 @@ export async function GET(request: NextRequest) {
     }))
     
     const totalPages = Math.ceil(total / limit)
-    
-    console.log('返回数据:', { 
-      itemsCount: processedItems.length, 
-      total, 
-      page, 
-      limit, 
-      totalPages 
-    })
     
     return NextResponse.json({
       success: true,

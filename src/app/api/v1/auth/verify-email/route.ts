@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
 
     // 检查验证尝试次数（防止暴力破解）
     const maxAttempts = 5;
-    if (user.verification_attempts && user.verification_attempts >= maxAttempts) {
+    const verificationAttempts = Number(user.verification_attempts || 0);
+    if (verificationAttempts >= maxAttempts) {
       return NextResponse.json(
         { success: false, error: '验证尝试次数过多，请重新获取验证码' },
         { status: 429 }
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     // 检查验证码是否过期
     if (user.verification_expires) {
-      const expiresTime = new Date(user.verification_expires);
+      const expiresTime = new Date(String(user.verification_expires));
       const now = new Date();
       if (now > expiresTime) {
         return NextResponse.json(
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
 
     // 验证码比对（使用constant-time比较防止时序攻击）
     if (!user.verification_code || !crypto.timingSafeEqual(
-      Buffer.from(user.verification_code),
+      Buffer.from(String(user.verification_code)),
       Buffer.from(code)
     )) {
       // 增加失败计数（防止暴力破解）

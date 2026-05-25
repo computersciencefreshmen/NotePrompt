@@ -12,6 +12,62 @@ import { Shield, User, CheckCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoginRequest } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { Locale, withLocaleHref } from '@/lib/i18n';
+
+const loginCopy = {
+  zh: {
+    verifiedTitle: '邮箱验证成功',
+    verifiedDesc: '请使用您的账户信息登录',
+    inputError: '输入错误',
+    fillAll: '请填写所有字段',
+    unverifiedTitle: '邮箱未验证',
+    unverifiedDesc: '请先完成邮箱验证后再登录',
+    failed: '登录失败',
+    wrongCredentials: '用户名或密码错误',
+    retry: '登录失败，请稍后重试',
+    title: '登录 Note Prompt',
+    subtitle: '欢迎回来，请输入您的账户信息',
+    verifiedInline: '邮箱验证成功！请使用您的账户信息登录。',
+    userLogin: '用户登录',
+    adminLogin: '管理员登录',
+    username: '用户名',
+    usernamePlaceholder: '请输入用户名',
+    password: '密码',
+    passwordPlaceholder: '请输入密码',
+    submitting: '登录中...',
+    submit: '登录',
+    forgot: '忘记密码？',
+    noAccount: '还没有账户？',
+    register: '立即注册',
+    loading: '加载中...',
+  },
+  en: {
+    verifiedTitle: 'Email verified',
+    verifiedDesc: 'Sign in with your account details.',
+    inputError: 'Missing fields',
+    fillAll: 'Please fill in all fields.',
+    unverifiedTitle: 'Email not verified',
+    unverifiedDesc: 'Please verify your email before signing in.',
+    failed: 'Sign-in failed',
+    wrongCredentials: 'Incorrect username or password.',
+    retry: 'Sign-in failed. Please try again later.',
+    title: 'Log in to Note Prompt',
+    subtitle: 'Welcome back. Enter your account details to continue.',
+    verifiedInline: 'Email verified. You can now sign in.',
+    userLogin: 'User Login',
+    adminLogin: 'Admin Login',
+    username: 'Username',
+    usernamePlaceholder: 'Enter your username',
+    password: 'Password',
+    passwordPlaceholder: 'Enter your password',
+    submitting: 'Signing in...',
+    submit: 'Log in',
+    forgot: 'Forgot password?',
+    noAccount: 'No account yet?',
+    register: 'Create one',
+    loading: 'Loading...',
+  },
+}
 
 function LoginContent() {
   const [formData, setFormData] = useState<LoginRequest>({
@@ -23,6 +79,9 @@ function LoginContent() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const verified = searchParams.get('verified');
+  const locale: Locale = searchParams.get('lang') === 'en' ? 'en' : 'zh';
+  const copy = loginCopy[locale];
+  const href = (path: string) => withLocaleHref(path, locale);
 
   const { login } = useAuth();
   const router = useRouter();
@@ -31,8 +90,8 @@ function LoginContent() {
   useEffect(() => {
     if (verified === 'true') {
       toast({
-        title: '邮箱验证成功',
-        description: '请使用您的账户信息登录',
+        title: copy.verifiedTitle,
+        description: copy.verifiedDesc,
       });
     }
   }, [verified, toast]);
@@ -43,8 +102,8 @@ function LoginContent() {
 
     if (!formData.username || !formData.password) {
       toast({
-        title: '输入错误',
-        description: '请填写所有字段',
+        title: copy.inputError,
+        description: copy.fillAll,
         variant: 'destructive',
       });
       setLoading(false);
@@ -57,30 +116,30 @@ function LoginContent() {
       if (result.success) {
         // 如果是管理员登录，跳转到管理员页面
         if (activeTab === 'admin') {
-          router.push('/admin');
+          router.push(href('/admin'));
         } else {
-          router.push('/public-prompts');
+          router.push(href('/public-prompts'));
         }
       } else {
         // 如果邮箱未验证，跳转到验证页面
         if (result.data?.requireVerification && result.data?.user?.email) {
           toast({
-            title: '邮箱未验证',
-            description: '请先完成邮箱验证后再登录',
+            title: copy.unverifiedTitle,
+            description: copy.unverifiedDesc,
           });
-          router.push(`/verify-email?email=${encodeURIComponent(result.data.user.email as string)}`);
+          router.push(href(`/verify-email?email=${encodeURIComponent(result.data.user.email as string)}`));
           return;
         }
         toast({
-          title: '登录失败',
-          description: result.error || '用户名或密码错误',
+          title: copy.failed,
+          description: result.error || copy.wrongCredentials,
           variant: 'destructive',
         });
       }
     } catch (err) {
       toast({
-        title: '登录失败',
-        description: '登录失败，请稍后重试',
+        title: copy.failed,
+        description: copy.retry,
         variant: 'destructive',
       });
     } finally {
@@ -102,10 +161,10 @@ function LoginContent() {
         <Card>
           <CardHeader className="text-center">
             <CardTitle className="text-2xl font-bold text-gray-900">
-              登录 Note Prompt
+              {copy.title}
             </CardTitle>
             <p className="text-gray-600 mt-2">
-              欢迎回来，请输入您的账户信息
+              {copy.subtitle}
             </p>
           </CardHeader>
           <CardContent>
@@ -113,7 +172,7 @@ function LoginContent() {
             {verified === 'true' && (
               <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                <p className="text-green-700 text-sm">邮箱验证成功！请使用您的账户信息登录。</p>
+                <p className="text-green-700 text-sm">{copy.verifiedInline}</p>
               </div>
             )}
 
@@ -121,11 +180,11 @@ function LoginContent() {
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="user" className="flex items-center space-x-2">
                   <User className="h-4 w-4" />
-                  <span>用户登录</span>
+                  <span>{copy.userLogin}</span>
                 </TabsTrigger>
                 <TabsTrigger value="admin" className="flex items-center space-x-2">
                   <Shield className="h-4 w-4" />
-                  <span>管理员登录</span>
+                  <span>{copy.adminLogin}</span>
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -133,7 +192,7 @@ function LoginContent() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
-                  用户名
+                  {copy.username}
                 </label>
                 <Input
                   id="username"
@@ -141,7 +200,7 @@ function LoginContent() {
                   type="text"
                   value={formData.username}
                   onChange={handleChange}
-                  placeholder="请输入用户名"
+                  placeholder={copy.usernamePlaceholder}
                   disabled={loading}
                   required
                 />
@@ -149,7 +208,7 @@ function LoginContent() {
 
               <div>
                 <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
-                  密码
+                  {copy.password}
                 </label>
                 <Input
                   id="password"
@@ -157,7 +216,7 @@ function LoginContent() {
                   type="password"
                   value={formData.password}
                   onChange={handleChange}
-                  placeholder="请输入密码"
+                  placeholder={copy.passwordPlaceholder}
                   disabled={loading}
                   required
                 />
@@ -168,27 +227,27 @@ function LoginContent() {
                 className="w-full bg-blue-600 hover:bg-blue-700"
                 disabled={loading}
               >
-                {loading ? '登录中...' : '登录'}
+                {loading ? copy.submitting : copy.submit}
               </Button>
             </form>
 
             <div className="mt-4 text-center">
               <Link
-                href="/forgot-password"
+                href={href('/forgot-password')}
                 className="text-sm text-gray-500 hover:text-blue-600"
               >
-                忘记密码？
+                {copy.forgot}
               </Link>
             </div>
 
             <div className="mt-4 text-center">
               <p className="text-sm text-gray-600">
-                还没有账户？{' '}
+                {copy.noAccount}{' '}
                 <Link
-                  href="/register"
+                  href={href('/register')}
                   className="text-blue-600 hover:text-blue-700 font-medium"
                 >
-                  立即注册
+                  {copy.register}
                 </Link>
               </p>
             </div>
@@ -203,7 +262,7 @@ export default function LoginPage() {
   return (
     <Suspense fallback={
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <p className="text-gray-500">加载中...</p>
+        <p className="text-gray-500">Loading...</p>
       </div>
     }>
       <LoginContent />

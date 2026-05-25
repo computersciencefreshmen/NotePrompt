@@ -2,6 +2,59 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAIRequestConfig, aiConfig } from '@/config/ai'
 import { ConversationMessage } from '@/types'
 
+function buildLocalRefinement({
+  originalPrompt,
+  currentPrompt,
+  userFeedback,
+  optimizationMode,
+}: {
+  originalPrompt: string
+  currentPrompt: string
+  userFeedback: string
+  optimizationMode: 'optimize' | 'rewrite'
+}) {
+  if (optimizationMode === 'rewrite') {
+    return `# 任务
+${originalPrompt}
+
+## 本轮重写要求
+${userFeedback}
+
+## 重写后的提示词
+请你作为专业提示词工程师，基于以上任务重新生成一个完整提示词。要求：
+- 明确角色、目标、上下文、约束条件和输出格式。
+- 保留用户原始目标，不遗漏关键事实。
+- 如信息不足，先列出需要确认的问题。
+- 输出可直接复制使用的 Markdown 结构。`
+  }
+
+  return `${currentPrompt.trim()}
+
+## 本轮修改要求
+${userFeedback}
+
+## 执行方式
+- 在上一版提示词基础上修改，不从零另起。
+- 保留已经有效的角色、约束、上下文和输出规范。
+- 只根据本轮要求调整表达、结构或格式。
+- 最终输出一版完整可复制的提示词。`
+}
+
+function buildPromptTitle(content: string) {
+  const line = content
+    .split('\n')
+    .map(item => item.replace(/^#+\s*/, '').replace(/^[-*\d.、\s]+/, '').trim())
+    .find(Boolean) || '优化提示词'
+
+  return line.replace(/[：:。,.，；;]+$/g, '').slice(0, 24) || '优化提示词'
+}
+
+function buildVisibleThinkingSummary(optimizationMode: 'optimize' | 'rewrite', userFeedback: string) {
+  return optimizationMode === 'rewrite'
+    ? `已按“${userFeedback.slice(0, 80)}”重新评估原始目标，并生成一版完整重写结果。`
+    : `已对照上一版提示词处理“${userFeedback.slice(0, 80)}”，保留有效结构并只调整本轮要求涉及的部分。`
+}
+
 /**
 * 多轮优化提示词API
 * 请求体大小限制: 10MB (通过Next.js默认配置)
@@ -9,8 +62,31 @@ import { ConversationMessage } from '@/types'
 * 对话历史长度限制: 最多20条
 */
 export async function POST(request: NextRequest) {
+  let fallbackOriginalPrompt = ''
+  let fallbackCurrentPrompt = ''
+  let fallbackUserFeedback = ''
+  let fallbackOptimizationMode: 'optimize' | 'rewrite' = 'optimize'
+  let fallbackConversationHistory: ConversationMessage[] = []
+
   try {
-    const { originalPrompt, currentPrompt, userFeedback, conversationHistory, optimizationMode = 'optimize', provider, model } = await request.json()
+    const body = await request.json()
+    const {
+      originalPrompt,
+      currentPrompt,
+      userFeedback,
+      conversationHistory,
+      optimizationMode = 'optimize',
+    } = body
+    fallbackOriginalPrompt = originalPrompt || ''
+    fallbackCurrentPrompt = currentPrompt || ''
+    fallbackUserFeedback = userFeedback || ''
+    fallbackOptimizationMode = optimizationMode
+    fallbackConversationHistory = Array.isArray(conversationHistory) ? conversationHistory : []
+    const provider = body.provider ?? body.modelType
+    const model = body.model ?? body.modelName
+    const temperatureOverride = body.temperature as number | undefined
+    const topPOverride = (body.topP ?? body.top_p) as number | undefined
+    const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
 
     // 输入长度限制
     const MAX_INPUT_LENGTH = 10000;
@@ -28,6 +104,10 @@ export async function POST(request: NextRequest) {
     // 获取AI配置
     const config = getAIRequestConfig(provider, model)
     const systemPrompt = aiConfig.prompts.multiTurn
+    const requestTemperature = Math.min(Math.max(temperatureOverride ?? config.temperature, 0), 2)
+    const requestTopP = Math.min(Math.max(topPOverride ?? config.top_p, 0.1), 1)
+    const requestMaxTokens = Math.min(Math.max(maxTokensOverride ?? config.max_tokens, 512), 8192)
+    const usesCompletionTokensParam = config.provider === 'minimax' || config.provider === 'xiaomi'
 
     // 构建对话历史（带长度限制）
     const MAX_HISTORY_LENGTH = 20;
@@ -41,30 +121,53 @@ export async function POST(request: NextRequest) {
       {
         role: 'user' as const,
         content: optimizationMode === 'rewrite' 
-          ? `用户要求完全重新生成提示词：\n${userFeedback}\n\n请根据要求生成一个全新的提示词。`
-          : `当前提示词版本：\n${currentPrompt}\n\n用户反馈和改进要求：\n${userFeedback}\n\n请根据反馈优化这个提示词。`
+          ? `原始提示词：\n${originalPrompt}\n\n用户要求重新生成：\n${userFeedback}\n\n请按要求生成一版完整的新提示词。`
+          : `请引用并修改上一版提示词，不要重新开始。\n\n上一版提示词：\n${currentPrompt}\n\n用户本轮修改要求：\n${userFeedback}\n\n请输出修改后的完整提示词。`
       }
     ]
 
     // 调用通义千问API
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const requestBody: Record<string, unknown> = {
+      model: config.model,
+      messages,
+      top_p: requestTopP
+    }
+    requestBody[usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens'] = requestMaxTokens
+    if (!config.fixedTemperature) {
+      requestBody.temperature = requestTemperature
+    }
+    if (config.provider === 'xiaomi') {
+      requestBody.thinking = { type: 'disabled' }
+    }
+
     const response = await fetch(`${config.baseURL}/chat/completions`, {
       method: 'POST',
       headers: config.headers,
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        top_p: config.top_p
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal
     })
     clearTimeout(timeoutId)
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`)
+      const localOptimized = buildLocalRefinement({ originalPrompt, currentPrompt, userFeedback, optimizationMode })
+      const localHistory: ConversationMessage[] = [
+        ...history,
+        { role: 'user', content: userFeedback },
+        { role: 'assistant', content: localOptimized }
+      ]
+
+      return NextResponse.json({
+        success: true,
+        optimizedPrompt: localOptimized,
+        conversationHistory: localHistory,
+        round: Math.max(1, Math.floor(localHistory.length / 2)),
+        title: buildPromptTitle(localOptimized),
+        thinking: buildVisibleThinkingSummary(optimizationMode, userFeedback),
+        provider: 'local',
+        model: 'rule-based-refiner'
+      })
     }
 
     const data = await response.json()
@@ -164,11 +267,38 @@ export async function POST(request: NextRequest) {
       success: true,
       optimizedPrompt: finalOptimizedPrompt,
       conversationHistory: updatedHistory,
-      round
+      round,
+      title: buildPromptTitle(finalOptimizedPrompt),
+      thinking: buildVisibleThinkingSummary(optimizationMode, userFeedback)
     })
 
   } catch (error) {
     console.error('Multi-turn optimization error:', error)
+    if (fallbackOriginalPrompt && fallbackCurrentPrompt && fallbackUserFeedback) {
+      const localOptimized = buildLocalRefinement({
+        originalPrompt: fallbackOriginalPrompt,
+        currentPrompt: fallbackCurrentPrompt,
+        userFeedback: fallbackUserFeedback,
+        optimizationMode: fallbackOptimizationMode,
+      })
+      const localHistory: ConversationMessage[] = [
+        ...fallbackConversationHistory.slice(-20),
+        { role: 'user', content: fallbackUserFeedback },
+        { role: 'assistant', content: localOptimized }
+      ]
+
+      return NextResponse.json({
+        success: true,
+        optimizedPrompt: localOptimized,
+        conversationHistory: localHistory,
+        round: Math.max(1, Math.floor(localHistory.length / 2)),
+        title: buildPromptTitle(localOptimized),
+        thinking: buildVisibleThinkingSummary(fallbackOptimizationMode, fallbackUserFeedback),
+        provider: 'local',
+        model: 'rule-based-refiner'
+      })
+    }
+
     return NextResponse.json(
       {
         error: 'Failed to optimize prompt',

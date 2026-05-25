@@ -25,7 +25,8 @@ import {
   Shield,
   Home,
   LogOut,
-  Zap
+  Zap,
+  RefreshCw
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
@@ -85,6 +86,8 @@ interface StatsData {
     totalFavorites: number
     totalAIUsage?: number
     monthlyAIUsage?: number
+    monthlyOptimize?: number
+    monthlyGenerate?: number
     totalOptimize?: number
     totalGenerate?: number
   }
@@ -114,6 +117,7 @@ export default function AdminPage() {
   // 统计数据
   const [statsData, setStatsData] = useState<StatsData | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
+  const [statsUpdatedAt, setStatsUpdatedAt] = useState<string>('')
   
   // 提示词
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -161,13 +165,15 @@ export default function AdminPage() {
       const res = await api.admin.getStats()
       if (res.success && res.data) {
         setStatsData(res.data)
+        setStatsUpdatedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
       }
     } catch (error) {
       console.error('Failed to fetch stats:', error)
+      toast({ title: '获取统计数据失败', description: error instanceof Error ? error.message : '请稍后重试', variant: 'destructive' })
     } finally {
       setStatsLoading(false)
     }
-  }, [])
+  }, [toast])
 
   // 获取提示词
   const fetchPrompts = useCallback(async () => {
@@ -219,6 +225,16 @@ export default function AdminPage() {
       fetchStats()
     }
   }, [user, fetchStats])
+
+  useEffect(() => {
+    if (!user?.is_admin || activeTab !== 'dashboard') return
+
+    const intervalId = window.setInterval(() => {
+      fetchStats()
+    }, 30000)
+
+    return () => window.clearInterval(intervalId)
+  }, [activeTab, user, fetchStats])
 
   // 获取用户AI用量统计
   const fetchAIUsage = useCallback(async () => {
@@ -370,6 +386,10 @@ export default function AdminPage() {
             <p className="text-gray-600 dark:text-gray-400 mt-2">管理系统资源和用户</p>
           </div>
           <div className="flex items-center space-x-2">
+            <Button variant="outline" onClick={fetchStats} disabled={statsLoading}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${statsLoading ? 'animate-spin' : ''}`} />
+              刷新统计
+            </Button>
             <Button variant="outline" onClick={() => router.push('/')}>
               <Home className="h-4 w-4 mr-2" />
               返回主页
@@ -474,9 +494,9 @@ export default function AdminPage() {
                         </div>
                       </div>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                        优化 {statsData.stats.totalOptimize ?? 0} · 生成 {statsData.stats.totalGenerate ?? 0} · 总计 {statsData.stats.totalAIUsage ?? 0}
+                        本月优化 {statsData.stats.monthlyOptimize ?? 0} · 本月生成 {statsData.stats.monthlyGenerate ?? 0} · 历史总计 {statsData.stats.totalAIUsage ?? 0}
                       </p>
-                      <p className="text-xs text-orange-500 mt-1">点击查看明细 →</p>
+                      <p className="text-xs text-orange-500 mt-1">点击查看明细 · {statsUpdatedAt ? `更新于 ${statsUpdatedAt}` : '每 30 秒自动刷新'} →</p>
                     </CardContent>
                   </Card>
                 </div>

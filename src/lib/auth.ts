@@ -20,7 +20,7 @@ interface TokenPayload {
 
 export function verifyToken(token: string): TokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload
+    return jwt.verify(token, JWT_SECRET as string) as unknown as TokenPayload
   } catch (error) {
     return null
   }

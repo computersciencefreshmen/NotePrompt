@@ -6,7 +6,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { getAvailableProviders, getProviderModels } from '@/config/ai';
+import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER, getAIProviderModels, getAvailableAIProviders } from '@/config/ai-models';
 import { optimizePromptStream } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Brain, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
@@ -24,23 +24,23 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
   const [thinkingContent, setThinkingContent] = useState('');
   const [showThinking, setShowThinking] = useState(true);
   const [streamingPhase, setStreamingPhase] = useState<'idle' | 'thinking' | 'generating' | 'done'>('idle');
-  const [selectedProvider, setSelectedProvider] = useState<string>('qwen');
-  const [selectedModel, setSelectedModel] = useState<string>('qwen3.5-plus');
+  const [selectedProvider, setSelectedProvider] = useState<string>(DEFAULT_PUBLIC_AI_PROVIDER);
+  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_PUBLIC_AI_MODEL);
   const { toast } = useToast();
 
   const thinkingRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
 
   // 获取可用的AI提供商
-  const providers = getAvailableProviders();
+  const providers = getAvailableAIProviders();
   
   // 获取当前选择提供商的所有模型
-  const models = getProviderModels(selectedProvider);
+  const models = getAIProviderModels(selectedProvider);
 
   // 当提供商改变时，重置模型选择
   const handleProviderChange = (provider: string) => {
     setSelectedProvider(provider);
-    const providerModels = getProviderModels(provider);
+    const providerModels = getAIProviderModels(provider);
     if (providerModels.length > 0) {
       setSelectedModel(providerModels[0].key);
     }

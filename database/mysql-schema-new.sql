@@ -161,6 +161,22 @@ CREATE TABLE IF NOT EXISTS user_usage_stats (
   INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- AI每日使用明细表：用于热力图和实时自然月统计
+CREATE TABLE IF NOT EXISTS ai_usage_daily (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  usage_date DATE NOT NULL,
+  optimize_count INT DEFAULT 0,
+  generate_count INT DEFAULT 0,
+  total_count INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_user_usage_date (user_id, usage_date),
+  INDEX idx_user_id (user_id),
+  INDEX idx_usage_date (usage_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 公共文件夹表
 CREATE TABLE IF NOT EXISTS public_folders (
   id INT AUTO_INCREMENT PRIMARY KEY,

@@ -29,7 +29,7 @@ export async function POST(
     
     // 获取用户的文件夹
     const folders = await db.getFoldersByUserId(user_id)
-    const defaultFolder = folders[0] // 使用第一个文件夹作为默认文件夹
+    const defaultFolder = folders[0] as Record<string, unknown> | undefined // 使用第一个文件夹作为默认文件夹
     
     if (!defaultFolder) {
       return NextResponse.json(
@@ -44,7 +44,7 @@ export async function POST(
       content: publicPrompt.content as string,
       description: publicPrompt.description as string | null,
       user_id: user_id,
-      folder_id: defaultFolder.id as number,
+      folder_id: Number(defaultFolder.id),
       category_id: publicPrompt.category_id as number | null
     })
 

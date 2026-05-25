@@ -4,15 +4,16 @@ import { requireAuth } from '@/lib/auth'
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const auth = await requireAuth(request)
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const userId = auth.user.id
-    const folderId = parseInt(params.id)
+    const folderId = parseInt(id)
 
     if (!folderId || isNaN(folderId)) {
       return NextResponse.json(

@@ -26,7 +26,7 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
     const [inputValue, setInputValue] = useState(value)
     const [isComposing, setIsComposing] = useState(false)
     const timeoutRef = useRef<NodeJS.Timeout>()
-    const inputRef = useRef<HTMLInputElement>(null)
+    const inputRef = useRef<HTMLInputElement | null>(null)
 
     // 防抖处理
     const debouncedOnChange = useCallback((newValue: string) => {
@@ -95,7 +95,7 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
             if (typeof ref === 'function') {
               ref(node)
             } else if (ref) {
-              ref.current = node
+              ;(ref as React.MutableRefObject<HTMLInputElement | null>).current = node
             }
             inputRef.current = node
           }}

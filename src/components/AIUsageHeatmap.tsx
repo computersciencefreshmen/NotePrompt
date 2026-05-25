@@ -38,6 +38,12 @@ function getColor(count: number, max: number): string {
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
 
+function isHeatmapData(value: unknown): value is HeatmapData {
+  if (!value || typeof value !== 'object') return false
+  const data = value as Partial<HeatmapData>
+  return Array.isArray(data.daily) && Boolean(data.summary)
+}
+
 export default function AIUsageHeatmap() {
   const [data, setData] = useState<HeatmapData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -51,11 +57,14 @@ export default function AIUsageHeatmap() {
   const fetchData = async () => {
     try {
       const res = await api.user.getHeatmap()
-      if (res.success && res.data) {
+      if (res.success && isHeatmapData(res.data)) {
         setData(res.data)
+      } else {
+        setData(null)
       }
     } catch (error) {
-      console.error('Failed to fetch heatmap data:', error)
+      console.warn('Failed to fetch heatmap data:', error)
+      setData(null)
     } finally {
       setLoading(false)
     }

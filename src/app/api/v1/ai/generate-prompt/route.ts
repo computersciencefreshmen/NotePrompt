@@ -18,8 +18,8 @@ export async function POST(request: NextRequest) {
       outputFormat,
       examples,
       tags,
-      provider = "qwen",
-      model = "qwen3.5-plus"
+      provider = "deepseek",
+      model = "deepseek-v4-flash"
     } = await request.json()
 
     // 输入长度限制
@@ -112,13 +112,7 @@ export async function POST(request: NextRequest) {
       } else if (effectiveProvider === "deepseek") {
         headers["Authorization"] = "Bearer " + apiKey
 
-        let deepseekModel = aiConfig.model;
-        const modelMapping: Record<string, string> = {
-          "deepseek-chat": "deepseek-chat",
-          "deepseek-v3": "deepseek-v3",
-          "deepseek-r1": "deepseek-r1"
-        };
-        deepseekModel = modelMapping[aiConfig.model] || "deepseek-chat";
+        const deepseekModel = aiConfig.model;
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000);

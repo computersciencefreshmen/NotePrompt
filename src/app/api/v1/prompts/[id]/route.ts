@@ -81,8 +81,8 @@ export async function PUT(
         await db.createPromptVersion({
           prompt_id: id,
           user_id: userId,
-          title: existingPrompt.title,
-          content: existingPrompt.content,
+          title: String(existingPrompt.title || ''),
+          content: String(existingPrompt.content || ''),
           change_summary: titleChanged && contentChanged
             ? '修改了标题和内容'
             : titleChanged

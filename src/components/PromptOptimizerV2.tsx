@@ -461,7 +461,7 @@ function ParameterControl({ label, value, min, max, step, description, onChange 
 export default function PromptOptimizerV2() {
   const { user } = useAuth()
   const { visualStyle } = useUISettings()
-  const [locale] = useState<Locale>(() => detectLocaleFromSearch())
+  const [locale, setLocale] = useState<Locale>('zh')
   const copy = optimizerCopy[locale]
   const localizedStyleOptions = locale === 'en' ? styleOptionsEn : styleOptions
   const localizedToneOptions = locale === 'en' ? toneOptionsEn : toneOptions
@@ -502,6 +502,26 @@ export default function PromptOptimizerV2() {
   const [parseProgress, setParseProgress] = useState('')
   const [showAdvancedParams, setShowAdvancedParams] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setLocale(detectLocaleFromSearch())
+  }, [])
+
+  useEffect(() => {
+    setSaveTitle(currentTitle => {
+      if (currentTitle === optimizerCopy.zh.defaultSaveTitle || currentTitle === optimizerCopy.en.defaultSaveTitle) {
+        return copy.defaultSaveTitle
+      }
+      return currentTitle
+    })
+    setDraftTags(currentTags => {
+      const defaultTags = [optimizerCopy.zh.defaultTag, optimizerCopy.en.defaultTag]
+      if (currentTags.length === 1 && defaultTags.includes(currentTags[0])) {
+        return [copy.defaultTag]
+      }
+      return currentTags
+    })
+  }, [copy.defaultSaveTitle, copy.defaultTag])
 
   const visualClasses = visualStyleClasses[visualStyle]
   const providerOptions = useMemo(

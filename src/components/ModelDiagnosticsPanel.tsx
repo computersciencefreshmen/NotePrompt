@@ -67,6 +67,26 @@ const diagnosticsCopy = {
   },
 }
 
+const englishProviderNames: Record<string, string> = {
+  zhipu: 'Zhipu GLM',
+  xiaomi: 'Xiaomi MiMo',
+}
+
+const englishMessages: Record<string, string> = {
+  '配置已就绪，未发起真实模型调用': 'Configuration is ready. No real model call was made.',
+  '配置不可用': 'Configuration is unavailable.',
+}
+
+function localizedProviderName(provider: DiagnosticProvider, locale: Locale) {
+  if (locale !== 'en') return provider.name
+  return englishProviderNames[provider.provider] || provider.name
+}
+
+function localizedDiagnosticMessage(message: string, locale: Locale) {
+  if (locale !== 'en') return message
+  return englishMessages[message] || message
+}
+
 function statusClass(status: DiagnosticProvider['status']) {
   if (status === 'ready') return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'
   if (status === 'configured') return 'border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-200'
@@ -143,7 +163,7 @@ export function ModelDiagnosticsPanel({ locale = 'zh' }: { locale?: Locale }) {
           <div key={provider.provider} className={`rounded-[8px] border px-3 py-2 ${statusClass(provider.status)}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{provider.name}</p>
+                <p className="truncate text-sm font-semibold">{localizedProviderName(provider, locale)}</p>
                 <p className="truncate text-xs opacity-75">{provider.model}</p>
               </div>
               {provider.status === 'ready' || provider.status === 'configured' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
@@ -154,7 +174,7 @@ export function ModelDiagnosticsPanel({ locale = 'zh' }: { locale?: Locale }) {
               {provider.latencyMs !== null && <span className="rounded bg-white/60 px-1.5 py-0.5 dark:bg-black/20">{provider.latencyMs}ms</span>}
               {provider.cached && <span className="rounded bg-white/60 px-1.5 py-0.5 dark:bg-black/20">{copy.cached}</span>}
             </div>
-            <p className="mt-2 line-clamp-2 text-xs opacity-80">{provider.message}</p>
+            <p className="mt-2 line-clamp-2 text-xs opacity-80">{localizedDiagnosticMessage(provider.message, locale)}</p>
           </div>
         ))}
       </div>

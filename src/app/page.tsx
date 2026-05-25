@@ -246,7 +246,7 @@ export default function Home() {
                   onClick={() => handleLocaleChange(item)}
                   className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${locale === item ? 'bg-teal-700 text-white' : 'text-zinc-500 hover:text-teal-700 dark:text-zinc-300'}`}
                 >
-                  {item === 'zh' ? '中' : 'EN'}
+                  {item === 'zh' ? 'ZH' : 'EN'}
                 </button>
               ))}
             </div>

@@ -69,9 +69,7 @@ const publicPromptCopy = {
 }
 
 export default function PublicPromptsPage() {
-  const [locale, setLocale] = useState<Locale>(() => {
-    return detectLocaleFromSearch()
-  })
+  const [locale, setLocale] = useState<Locale>('zh')
   const [prompts, setPrompts] = useState<PublicPrompt[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
@@ -92,6 +90,10 @@ export default function PublicPromptsPage() {
   useEffect(() => {
     document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN'
   }, [locale])
+
+  useEffect(() => {
+    setLocale(detectLocaleFromSearch())
+  }, [])
 
   const mergeUniquePrompts = (current: PublicPrompt[], incoming: PublicPrompt[]) => {
     const seen = new Set<number>()
@@ -286,7 +288,7 @@ export default function PublicPromptsPage() {
                 onClick={() => handleLocaleChange(item)}
                 className={`rounded-full px-4 py-1.5 font-medium transition-colors ${locale === item ? 'bg-teal-700 text-white' : 'text-gray-600 hover:text-teal-700 dark:text-gray-300'}`}
               >
-                {item === 'zh' ? '中文' : 'English'}
+                {item === 'zh' ? 'ZH' : 'EN'}
               </button>
             ))}
           </div>

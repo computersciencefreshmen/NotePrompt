@@ -167,7 +167,7 @@ export default function Header() {
                   onClick={() => handleLocaleChange(item)}
                   className={`rounded-full px-2 py-1 font-medium transition-colors ${locale === item ? 'bg-teal-600 text-white dark:bg-teal-400 dark:text-gray-950' : 'text-gray-500 hover:text-teal-700 dark:text-gray-400 dark:hover:text-teal-200'}`}
                 >
-                  {item === 'zh' ? '中' : 'EN'}
+                  {item === 'zh' ? 'ZH' : 'EN'}
                 </button>
               ))}
             </div>

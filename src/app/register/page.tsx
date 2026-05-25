@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -70,7 +70,7 @@ const registerCopy = {
 }
 
 export default function RegisterPage() {
-  const [locale] = useState<Locale>(() => detectLocaleFromSearch())
+  const [locale, setLocale] = useState<Locale>('zh')
   const copy = registerCopy[locale]
   const href = (path: string) => withLocaleHref(path, locale)
   const [formData, setFormData] = useState<RegisterRequest>({
@@ -84,6 +84,10 @@ export default function RegisterPage() {
 
   const { register } = useAuth()
   const router = useRouter()
+
+  useEffect(() => {
+    setLocale(detectLocaleFromSearch())
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

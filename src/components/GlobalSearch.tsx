@@ -5,10 +5,43 @@ import { useRouter } from 'next/navigation'
 import { Search, FileText, Globe, Folder, X, Loader2, Command } from 'lucide-react'
 import { api, SearchResults } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
+import { Locale, withLocaleHref } from '@/lib/i18n'
 
-export default function GlobalSearch() {
+const searchCopy = {
+  zh: {
+    trigger: '搜索...',
+    placeholder: '搜索提示词、文件夹...',
+    empty: '输入关键词搜索提示词和文件夹',
+    loading: '搜索中...',
+    noResults: '未找到匹配结果',
+    noResultsHint: '尝试不同的关键词',
+    myPrompts: '我的提示词',
+    publicPrompts: '公共提示词',
+    folders: '文件夹',
+    nav: '导航',
+    open: '打开',
+    close: '关闭',
+  },
+  en: {
+    trigger: 'Search...',
+    placeholder: 'Search prompts and folders...',
+    empty: 'Type a keyword to search prompts and folders',
+    loading: 'Searching...',
+    noResults: 'No matches found',
+    noResultsHint: 'Try a different keyword',
+    myPrompts: 'My Prompts',
+    publicPrompts: 'Public Prompts',
+    folders: 'Folders',
+    nav: 'Navigate',
+    open: 'Open',
+    close: 'Close',
+  },
+}
+
+export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
   const { user } = useAuth()
   const router = useRouter()
+  const copy = searchCopy[locale]
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResults | null>(null)
@@ -83,7 +116,7 @@ export default function GlobalSearch() {
         id: item.id,
         title: item.title,
         subtitle: item.content.substring(0, 80),
-        href: `/prompts/edit/${item.id}`
+        href: withLocaleHref(`/prompts/edit/${item.id}`, locale)
       })
     }
     for (const item of results.publicPrompts.items) {
@@ -92,7 +125,7 @@ export default function GlobalSearch() {
         id: item.id,
         title: item.title,
         subtitle: `by ${item.author} · ${item.content.substring(0, 60)}`,
-        href: `/public-prompts/${item.id}`
+        href: withLocaleHref(`/public-prompts/${item.id}`, locale)
       })
     }
     for (const item of results.folders.items) {
@@ -100,7 +133,7 @@ export default function GlobalSearch() {
         type: 'folder',
         id: item.id,
         title: item.name,
-        href: `/folders/${item.id}`
+        href: withLocaleHref(`/folders/${item.id}`, locale)
       })
     }
   }
@@ -134,9 +167,9 @@ export default function GlobalSearch() {
 
   const getLabel = (type: string) => {
     switch (type) {
-      case 'user_prompt': return '我的提示词'
-      case 'public_prompt': return '公共提示词'
-      case 'folder': return '文件夹'
+      case 'user_prompt': return copy.myPrompts
+      case 'public_prompt': return copy.publicPrompts
+      case 'folder': return copy.folders
       default: return ''
     }
   }
@@ -151,7 +184,7 @@ export default function GlobalSearch() {
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors border border-gray-200 dark:border-gray-700"
       >
         <Search className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">搜索...</span>
+        <span className="hidden sm:inline">{copy.trigger}</span>
         <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-600">
           <Command className="h-2.5 w-2.5" />K
         </kbd>
@@ -177,7 +210,7 @@ export default function GlobalSearch() {
               <input
                 ref={inputRef}
                 type="text"
-                placeholder="搜索提示词、文件夹..."
+                placeholder={copy.placeholder}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -197,17 +230,17 @@ export default function GlobalSearch() {
               {!query.trim() ? (
                 <div className="py-12 text-center text-gray-400 dark:text-gray-500">
                   <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">输入关键词搜索提示词和文件夹</p>
+                  <p className="text-sm">{copy.empty}</p>
                 </div>
               ) : loading && !results ? (
                 <div className="py-12 text-center text-gray-400">
                   <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                  <p className="text-sm">搜索中...</p>
+                  <p className="text-sm">{copy.loading}</p>
                 </div>
               ) : allItems.length === 0 && query.trim() ? (
                 <div className="py-12 text-center text-gray-400 dark:text-gray-500">
-                  <p className="text-sm">未找到匹配结果</p>
-                  <p className="text-xs mt-1">尝试不同的关键词</p>
+                  <p className="text-sm">{copy.noResults}</p>
+                  <p className="text-xs mt-1">{copy.noResultsHint}</p>
                 </div>
               ) : (
                 <div className="py-2">
@@ -215,14 +248,14 @@ export default function GlobalSearch() {
                   {results && results.userPrompts.items.length > 0 && (
                     <div>
                       <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                        我的提示词 ({results.userPrompts.total})
+                        {copy.myPrompts} ({results.userPrompts.total})
                       </div>
                       {results.userPrompts.items.map((item, idx) => {
                         const globalIdx = idx
                         return (
                           <button
                             key={`up-${item.id}`}
-                            onClick={() => handleSelect(`/prompts/edit/${item.id}`)}
+                            onClick={() => handleSelect(withLocaleHref(`/prompts/edit/${item.id}`, locale))}
                             className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
                               selectedIndex === globalIdx
                                 ? 'bg-teal-50 dark:bg-teal-900/20'
@@ -249,14 +282,14 @@ export default function GlobalSearch() {
                   {results && results.publicPrompts.items.length > 0 && (
                     <div>
                       <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mt-1">
-                        公共提示词 ({results.publicPrompts.total})
+                        {copy.publicPrompts} ({results.publicPrompts.total})
                       </div>
                       {results.publicPrompts.items.map((item, idx) => {
                         const globalIdx = (results?.userPrompts.items.length || 0) + idx
                         return (
                           <button
                             key={`pp-${item.id}`}
-                            onClick={() => handleSelect(`/public-prompts/${item.id}`)}
+                            onClick={() => handleSelect(withLocaleHref(`/public-prompts/${item.id}`, locale))}
                             className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
                               selectedIndex === globalIdx
                                 ? 'bg-blue-50 dark:bg-blue-900/20'
@@ -283,14 +316,14 @@ export default function GlobalSearch() {
                   {results && results.folders.items.length > 0 && (
                     <div>
                       <div className="px-4 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mt-1">
-                        文件夹
+                        {copy.folders}
                       </div>
                       {results.folders.items.map((item, idx) => {
                         const globalIdx = (results?.userPrompts.items.length || 0) + (results?.publicPrompts.items.length || 0) + idx
                         return (
                           <button
                             key={`f-${item.id}`}
-                            onClick={() => handleSelect(`/folders/${item.id}`)}
+                            onClick={() => handleSelect(withLocaleHref(`/folders/${item.id}`, locale))}
                             className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
                               selectedIndex === globalIdx
                                 ? 'bg-amber-50 dark:bg-amber-900/20'
@@ -316,13 +349,13 @@ export default function GlobalSearch() {
             {/* Footer */}
             <div className="flex items-center gap-4 px-4 py-2 border-t border-gray-200 dark:border-gray-700 text-[11px] text-gray-400 dark:text-gray-500">
               <span className="flex items-center gap-1">
-                <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">↑↓</kbd> 导航
+                <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">↑↓</kbd> {copy.nav}
               </span>
               <span className="flex items-center gap-1">
-                <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">Enter</kbd> 打开
+                <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">Enter</kbd> {copy.open}
               </span>
               <span className="flex items-center gap-1">
-                <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">Esc</kbd> 关闭
+                <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">Esc</kbd> {copy.close}
               </span>
             </div>
           </div>

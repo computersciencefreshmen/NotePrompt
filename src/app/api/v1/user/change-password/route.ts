@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 验证当前密码
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password_hash)
+    const isPasswordValid = await bcrypt.compare(currentPassword, String(user.password_hash || ''))
     if (!isPasswordValid) {
       return NextResponse.json({
         success: false,

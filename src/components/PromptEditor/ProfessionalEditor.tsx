@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Settings,
   Plus,
@@ -23,10 +22,8 @@ import {
   Eye
 } from 'lucide-react'
 import { ProfessionalModeData } from '@/types'
-import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
 import MarkdownPreview from '@/components/ui/markdown-preview'
-import { optimizePrompt as callOptimizeAPI, api } from '@/lib/api'
-import { getProviderModels } from '@/config/ai'
+import { composeProfessionalPrompt } from '@/lib/prompt-content'
 
 interface ProfessionalEditorProps {
   data: ProfessionalModeData
@@ -34,10 +31,35 @@ interface ProfessionalEditorProps {
   onPreview?: () => void
   onSave?: () => void
   loading?: boolean
-  aiOptimizing?: boolean
+  onOpenOptimizer?: () => void
   tags?: string[]
   onTagsChange?: (tags: string[]) => void
   availableTags?: string[]
+}
+
+type ProfessionalListField = 'constraints' | 'examples' | 'formatRules' | 'qualityMetrics' | 'acceptanceCriteria'
+
+const specificationPreset = {
+  formatRules: [
+    '使用 Markdown 二级标题组织内容，每个部分不超过 5 条要点',
+    '关键信息优先输出结论，再补充理由、步骤和注意事项',
+    '涉及对比、方案或指标时优先使用表格呈现',
+  ],
+  qualityMetrics: [
+    '输出至少包含 3 条可执行建议，每条建议说明预期收益',
+    '如果信息不足，先列出不超过 5 个澄清问题，不直接编造',
+    '最终答案控制在 800-1200 字，除非用户明确要求更长',
+  ],
+  acceptanceCriteria: [
+    '答案必须覆盖用户输入中的全部关键约束',
+    '每个结论必须能对应到输入信息、推理依据或明确假设',
+    '最后给出下一步行动清单，包含优先级和验收方式',
+  ],
+  constraints: [
+    '不得编造事实、数据、来源或用户未提供的背景',
+    '遇到高风险建议时必须提示风险和替代方案',
+    '避免空泛表达，所有建议必须具体到动作或判断标准',
+  ],
 }
 
 export default function ProfessionalEditor({
@@ -46,20 +68,15 @@ export default function ProfessionalEditor({
   onPreview,
   onSave,
   loading = false,
-  aiOptimizing = false,
+  onOpenOptimizer,
   tags = [],
   onTagsChange,
   availableTags = [],
 }: ProfessionalEditorProps) {
   const [showGuide, setShowGuide] = useState(true)
   const [newTag, setNewTag] = useState('')
-  const [temperature, setTemperature] = useState(0.7)
-  const [modelType, setModelType] = useState<'deepseek' | 'kimi' | 'qwen' | 'zhipu'>('qwen')
-  const [modelName, setModelName] = useState<string>('qwen3-coder-plus')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [isOptimizing, setIsOptimizing] = useState(false)
-  const [optimizedPreview, setOptimizedPreview] = useState('')
   const [showMarkdown, setShowMarkdown] = useState(false)
   const previewTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -119,6 +136,36 @@ export default function ProfessionalEditor({
     handleFieldChange('examples', newExamples)
   }
 
+  const addListItem = (field: ProfessionalListField, initialValue = '') => {
+    const currentItems = (data[field] || []) as string[]
+    handleFieldChange(field, [...currentItems, initialValue])
+  }
+
+  const updateListItem = (field: ProfessionalListField, index: number, value: string) => {
+    const currentItems = [...((data[field] || []) as string[])]
+    currentItems[index] = value
+    handleFieldChange(field, currentItems)
+  }
+
+  const removeListItem = (field: ProfessionalListField, index: number) => {
+    const currentItems = ((data[field] || []) as string[]).filter((_, itemIndex) => itemIndex !== index)
+    handleFieldChange(field, currentItems)
+  }
+
+  const applySpecificationPreset = () => {
+    onChange({
+      ...data,
+      formatRules: specificationPreset.formatRules,
+      qualityMetrics: specificationPreset.qualityMetrics,
+      acceptanceCriteria: specificationPreset.acceptanceCriteria,
+      constraints: data.constraints && data.constraints.length > 0 ? data.constraints : specificationPreset.constraints,
+    })
+  }
+
+  const syncStructuredContent = () => {
+    onChange({ ...data, content: composeProfessionalPrompt(data) })
+  }
+
   // 变量管理
   const addVariable = (key: string = '') => {
     const newVariables = { ...(data.variables || {}), [key || `变量${Object.keys(data.variables || {}).length + 1}`]: '' }
@@ -140,106 +187,10 @@ export default function ProfessionalEditor({
     handleFieldChange('variables', newVariables)
   }
 
-  const handleOptimize = async () => {
-    // 构建用户输入的提示词内容
-    let userPrompt = ''
-    
-    if (data.role) {
-      userPrompt += `角色设定：${data.role}\n`
-    }
-    if (data.background) {
-      userPrompt += `背景信息：${data.background}\n`
-    }
-    if (data.task) {
-      userPrompt += `任务描述：${data.task}\n`
-    }
-    if (data.format) {
-      userPrompt += `输出格式：${data.format}\n`
-    }
-    if (data.outputStyle) {
-      userPrompt += `输出风格：${data.outputStyle}\n`
-    }
-    if (data.constraints && data.constraints.length > 0) {
-      userPrompt += `约束条件：${data.constraints.filter(c => c.trim()).join('，')}\n`
-    }
-    if (data.examples && data.examples.length > 0) {
-      userPrompt += `示例参考：${data.examples.filter(e => e.trim()).join('\n')}\n`
-    }
-    if (data.variables && Object.keys(data.variables).length > 0) {
-      userPrompt += `变量定义：${Object.entries(data.variables).map(([k, v]) => `${k}: ${v}`).join('，')}\n`
-    }
-    
-    if (!userPrompt.trim()) {
-      setError('请至少填写一个字段后再进行AI优化')
-      setTimeout(() => setError(''), 3000)
-      return
-    }
-
-    if (userPrompt.trim().length < 10) {
-      setError('内容太短，请输入至少10个字符')
-      setTimeout(() => setError(''), 3000)
-      return
-    }
-
-    setIsOptimizing(true)
-    setError('')
-    setSuccess('')
-
-    try {
-      const result = await callOptimizeAPI({ 
-        prompt: userPrompt.trim(),
-        provider: modelType,
-        model: modelName || 'qwen3-coder-plus',
-        temperature: temperature
-      })
-      
-      if (result.success && result.optimized) {
-        setOptimizedPreview(result.optimized)
-        
-        // 记录AI使用次数
-        api.user.incrementAIUsage('ai_optimize').catch(() => {})
-        
-        setSuccess('AI优化完成！请预览后选择"应用结果"')
-        setTimeout(() => setSuccess(''), 3000)
-      } else {
-        setError(result.error || 'AI优化失败')
-        setTimeout(() => setError(''), 5000)
-      }
-    } catch (error) {
-      let errorMessage = 'AI优化失败，请稍后重试'
-      if (error instanceof Error) {
-        if (error.message.includes('500')) {
-          errorMessage = 'AI服务暂时不可用，请稍后重试'
-        } else if (error.message.includes('timeout')) {
-          errorMessage = 'AI优化超时，请稍后重试'
-        } else if (error.message.includes('network')) {
-          errorMessage = '网络连接失败，请检查网络后重试'
-        } else {
-          errorMessage = error.message
-        }
-      }
-      setError(errorMessage)
-      setTimeout(() => setError(''), 5000)
-    } finally {
-      setIsOptimizing(false)
-    }
-  }
-
   const handleSave = () => {
     if (onSave) {
       onSave()
     }
-  }
-
-  // 应用AI优化结果
-  const handleApplyOptimizedResult = () => {
-    onChange({ ...data, content: optimizedPreview })
-    setOptimizedPreview('')
-  }
-
-  // 取消AI优化预览
-  const handleCancelOptimizedPreview = () => {
-    setOptimizedPreview('')
   }
 
   // 自动调整textarea高度
@@ -254,24 +205,26 @@ export default function ProfessionalEditor({
     if (previewTextareaRef.current) {
       adjustTextareaHeight(previewTextareaRef.current, 120)
     }
-  }, [data.content, optimizedPreview])
+  }, [data.content, data.role, data.background, data.task, data.format, data.outputStyle, data.formatRules, data.qualityMetrics, data.acceptanceCriteria, data.constraints, data.examples, data.variables])
+
+  const composedContent = composeProfessionalPrompt(data)
 
   return (
     <div className="space-y-6">
       {/* 专业模式提示 */}
       {showGuide && (
-        <Card className="border-purple-200 bg-purple-50">
+        <Card className="border-teal-200 bg-teal-50">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
-                <Settings className="h-4 w-4 text-purple-600" />
-                <span className="text-purple-800">专业模式：完全自主控制，支持结构化编辑和高级功能。</span>
+                <Settings className="h-4 w-4 text-teal-700" />
+                <span className="text-teal-900">专业模式：用角色、任务、格式、指标、约束和验收标准构建可复用提示词。</span>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setShowGuide(false)}
-                className="text-purple-600 hover:text-purple-700"
+                className="text-teal-700 hover:text-teal-800"
               >
                 知道了
               </Button>
@@ -283,9 +236,14 @@ export default function ProfessionalEditor({
       {/* 基本信息 */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center">
-            <FileText className="h-5 w-5 mr-2" />
-            基本信息
+          <CardTitle className="flex items-center justify-between">
+            <span className="flex items-center">
+              <FileText className="h-5 w-5 mr-2" />
+              基本信息
+            </span>
+            <Button type="button" size="sm" variant="outline" onClick={syncStructuredContent} disabled={loading} className="border-teal-300 text-teal-700 hover:bg-teal-50">
+              同步结构化内容
+            </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -349,7 +307,7 @@ export default function ProfessionalEditor({
               <Button
                 onClick={() => addTag(newTag)}
                 disabled={!newTag || loading}
-                className="bg-purple-600 hover:bg-purple-700"
+                className="bg-teal-700 hover:bg-teal-800"
               >
                 添加
               </Button>
@@ -394,7 +352,7 @@ export default function ProfessionalEditor({
                   >
                     {tag}
                     <X
-                      className="h-3 w-3 cursor-pointer hover:text-purple-600"
+                      className="h-3 w-3 cursor-pointer hover:text-teal-700"
                       onClick={() => removeTag(tag)}
                     />
                   </Badge>
@@ -485,6 +443,57 @@ export default function ProfessionalEditor({
         </CardContent>
       </Card>
 
+      {/* 格式与验收规范 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center">
+              <CheckSquare className="h-5 w-5 mr-2" />
+              格式与验收规范
+            </div>
+            <Button size="sm" variant="outline" onClick={applySpecificationPreset} disabled={loading} className="border-teal-300 text-teal-700 hover:bg-teal-50">
+              套用专业规范
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-3">
+          {([
+            ['formatRules', '格式化规范', '例如：使用 Markdown 二级标题；方案对比使用表格'] as const,
+            ['qualityMetrics', '可量化指标', '例如：至少 3 条建议；800-1200 字；最多 5 个澄清问题'] as const,
+            ['acceptanceCriteria', '验收标准', '例如：覆盖全部约束；结论有依据；最后给行动清单'] as const,
+          ]).map(([field, title, placeholder]) => (
+            <div key={field} className="rounded-[8px] border border-teal-100 bg-teal-50/40 p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+                <Button type="button" size="sm" variant="outline" onClick={() => addListItem(field)} disabled={loading} className="h-8 border-teal-200 text-teal-700 hover:bg-white">
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {((data[field] || []) as string[]).map((item, index) => (
+                  <div key={`${field}-${index}`} className="flex gap-2">
+                    <Textarea
+                      value={item}
+                      onChange={(event) => updateListItem(field, index, event.target.value)}
+                      placeholder={placeholder}
+                      rows={2}
+                      disabled={loading}
+                      className="text-sm"
+                    />
+                    <Button type="button" size="sm" variant="outline" onClick={() => removeListItem(field, index)} disabled={loading} className="h-10 border-teal-200 text-teal-700 hover:bg-white">
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                {((data[field] || []) as string[]).length === 0 && (
+                  <p className="rounded-[8px] border border-dashed border-teal-200 bg-white/70 p-3 text-xs leading-5 text-gray-500">点击 + 添加，或套用专业规范。</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
       {/* 约束条件 */}
       <Card>
         <CardHeader>
@@ -493,7 +502,7 @@ export default function ProfessionalEditor({
               <CheckSquare className="h-5 w-5 mr-2" />
               约束条件
             </div>
-            <Button size="sm" onClick={addConstraint} disabled={loading} className="bg-purple-600 hover:bg-purple-700">
+            <Button size="sm" onClick={addConstraint} disabled={loading} className="bg-teal-700 hover:bg-teal-800">
               <Plus className="h-4 w-4 mr-1" />
               添加
             </Button>
@@ -513,7 +522,7 @@ export default function ProfessionalEditor({
                 variant="outline"
                 onClick={() => removeConstraint(index)}
                 disabled={loading}
-                className="border-purple-300 text-purple-600 hover:bg-purple-50"
+                className="border-teal-300 text-teal-700 hover:bg-teal-50"
               >
                 <Minus className="h-4 w-4" />
               </Button>
@@ -535,7 +544,7 @@ export default function ProfessionalEditor({
               <Lightbulb className="h-5 w-5 mr-2" />
               示例参考
             </div>
-            <Button size="sm" onClick={addExample} disabled={loading} className="bg-purple-600 hover:bg-purple-700">
+            <Button size="sm" onClick={addExample} disabled={loading} className="bg-teal-700 hover:bg-teal-800">
               <Plus className="h-4 w-4 mr-1" />
               添加
             </Button>
@@ -553,7 +562,7 @@ export default function ProfessionalEditor({
                   variant="outline"
                   onClick={() => removeExample(index)}
                   disabled={loading}
-                  className="border-purple-300 text-purple-600 hover:bg-purple-50"
+                  className="border-teal-300 text-teal-700 hover:bg-teal-50"
                 >
                   <Minus className="h-4 w-4" />
                 </Button>
@@ -583,7 +592,7 @@ export default function ProfessionalEditor({
               <Variable className="h-5 w-5 mr-2" />
               变量定义
             </div>
-            <Button size="sm" onClick={() => addVariable()} disabled={loading} className="bg-purple-600 hover:bg-purple-700">
+            <Button size="sm" onClick={() => addVariable()} disabled={loading} className="bg-teal-700 hover:bg-teal-800">
               <Plus className="h-4 w-4 mr-1" />
               添加
             </Button>
@@ -611,7 +620,7 @@ export default function ProfessionalEditor({
                 variant="outline"
                 onClick={() => removeVariable(key)}
                 disabled={loading}
-                className="border-purple-300 text-purple-600 hover:bg-purple-50"
+                className="border-teal-300 text-teal-700 hover:bg-teal-50"
               >
                 <Minus className="h-4 w-4" />
               </Button>
@@ -626,110 +635,23 @@ export default function ProfessionalEditor({
       </Card>
 
       {/* 预览区域 */}
-      {(data.content || optimizedPreview) && (
+      {composedContent && (
         <Card className="bg-gray-50">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">
-                {optimizedPreview ? 'AI优化预览' : '内容预览'}
-              </CardTitle>
-                              <div className="flex items-center space-x-4">
-                  {/* 模型选择 */}
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-gray-600">AI模型:</span>
-                    <Select value={modelType} onValueChange={(value: 'deepseek' | 'kimi' | 'qwen' | 'zhipu') => {
-                      setModelType(value)
-                      const providerModels = getProviderModels(value)
-                      if (providerModels.length > 0) {
-                        setModelName(providerModels[0].key)
-                      }
-                    }}>
-                      <SelectTrigger className="w-32 h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="qwen">通义千问</SelectItem>
-                        <SelectItem value="deepseek">DeepSeek</SelectItem>
-                        <SelectItem value="kimi">Kimi</SelectItem>
-                        <SelectItem value="zhipu">智谱GLM</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {/* 二级模型选择 */}
-                    <Select value={modelName} onValueChange={setModelName}>
-                      <SelectTrigger className="w-40 h-8">
-                        <SelectValue placeholder="选择具体模型" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {getProviderModels(modelType).map((model) => (
-                          <SelectItem key={model.key} value={model.key}>{model.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  {/* Temperature控制 */}
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-gray-600">创造性:</span>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={temperature}
-                        onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                        className="w-20 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                      />
-                      <span className="text-xs text-gray-500 w-8">{temperature}</span>
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {temperature <= 0.3 ? '精确' : temperature <= 0.7 ? '平衡' : '创意'}
-                    </div>
-                  </div>
-                {optimizedPreview ? (
-                  <div className="flex items-center space-x-2">
-                    <Button
-                      onClick={handleApplyOptimizedResult}
-                      size="sm"
-                      className="bg-purple-600 hover:bg-purple-700 text-white"
-                    >
-                      应用结果
-                    </Button>
-                    <Button
-                      onClick={handleCancelOptimizedPreview}
-                      size="sm"
-                      variant="outline"
-                      className="border-purple-300 text-purple-600 hover:bg-purple-50"
-                    >
-                      取消
-                    </Button>
-                  </div>
-                ) : (
-                  isOptimizing ? (
-                    <div className="flex items-center justify-center">
-                      <AIOptimizingLoading 
-                        message="AI正在优化提示词..." 
-                        size="sm" 
-                        className="text-purple-600"
-                      />
-                    </div>
-                  ) : (
-                    <Button
-                      onClick={handleOptimize}
-                      disabled={loading || !data.task}
-                      size="sm"
-                      className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white"
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      AI智能优化
-                    </Button>
-                  )
-                )}
-              </div>
+              <CardTitle className="text-lg">内容预览</CardTitle>
+              <Button
+                onClick={onOpenOptimizer}
+                disabled={loading || !onOpenOptimizer}
+                size="sm"
+                className="bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-500 dark:text-zinc-950 dark:hover:bg-teal-400"
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                在优化台打开
+              </Button>
             </div>
           </CardHeader>
           <CardContent>
-            {/* 错误/成功提示 */}
             {error && (
               <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                 {error}
@@ -740,80 +662,63 @@ export default function ProfessionalEditor({
                 {success}
               </div>
             )}
-            {isOptimizing ? (
-              <div className="bg-white p-8 rounded-lg border">
-                <AIOptimizingLoading message="AI正在优化您的提示词，请稍候..." size="md" />
-              </div>
-            ) : (
-              <div className="bg-white rounded-lg p-4 border">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm font-medium text-gray-700">
-                      {optimizedPreview ? 'AI优化结果（预览）:' : '提示词内容:'}
-                    </span>
-                    <button
-                      onClick={() => setShowMarkdown(!showMarkdown)}
-                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                        showMarkdown
-                          ? 'bg-purple-100 border-purple-300 text-purple-700'
-                          : 'bg-gray-100 border-gray-300 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {showMarkdown ? 'Markdown' : '编辑'}
-                    </button>
-                  </div>
-                  <span className="text-xs text-gray-500">
-                    {(optimizedPreview || data.content).length} 字符
-                  </span>
-                </div>
-                {showMarkdown ? (
-                  <div className="min-h-[120px] overflow-auto p-3 border border-gray-200 rounded-lg bg-white">
-                    <MarkdownPreview content={optimizedPreview || data.content} />
-                  </div>
-                ) : (
-                  <textarea
-                    ref={previewTextareaRef}
-                    value={optimizedPreview || data.content}
-                    onChange={(e) => {
-                      if (optimizedPreview) return
-                      onChange({ ...data, content: e.target.value })
-                      adjustTextareaHeight(e.target, 120)
-                    }}
-                    placeholder="在这里编辑或查看生成的提示词..."
-                    className="w-full min-h-[120px] p-3 border border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    style={{ resize: 'none', minHeight: '120px', overflow: 'hidden' }}
-                    disabled={loading || !!optimizedPreview}
-                    onInput={(e) => adjustTextareaHeight(e.target as HTMLTextAreaElement, 120)}
-                  />
-                )}
-                {optimizedPreview && (
-                  <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
-                    💡 AI优化结果预览中，点击"应用结果"将优化内容应用到原始内容，或点击"取消"保持原内容不变
-                  </div>
-                )}
-                <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                  <span>💡 提示：点击"编辑/Markdown"切换视图</span>
-                  <Button
-                    onClick={async () => {
-                      try {
-                        const textToCopy = optimizedPreview || data.content
-                        await navigator.clipboard.writeText(textToCopy)
-                        setSuccess('已复制到剪贴板')
-                        setTimeout(() => setSuccess(''), 2000)
-                      } catch {
-                        setError('复制失败，请手动复制')
-                        setTimeout(() => setError(''), 3000)
-                      }
-                    }}
-                    size="sm"
-                    variant="outline"
-                    className="border-purple-300 text-purple-600 hover:bg-purple-50"
+            <div className="bg-white rounded-lg p-4 border">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-700">提示词内容:</span>
+                  <button
+                    onClick={() => setShowMarkdown(!showMarkdown)}
+                    className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                      showMarkdown
+                        ? 'bg-teal-100 border-teal-300 text-teal-700'
+                        : 'bg-gray-100 border-gray-300 text-gray-600 hover:bg-gray-200'
+                    }`}
                   >
-                    📋 复制
-                  </Button>
+                    {showMarkdown ? 'Markdown' : '编辑'}
+                  </button>
                 </div>
+                <span className="text-xs text-gray-500">{composedContent.length} 字符</span>
               </div>
-            )}
+              {showMarkdown ? (
+                <div className="min-h-[120px] overflow-auto p-3 border border-gray-200 rounded-lg bg-white">
+                  <MarkdownPreview content={composedContent} />
+                </div>
+              ) : (
+                <textarea
+                  ref={previewTextareaRef}
+                  value={composedContent}
+                  onChange={(e) => {
+                    onChange({ ...data, content: e.target.value })
+                    adjustTextareaHeight(e.target, 120)
+                  }}
+                  placeholder="在这里编辑或查看生成的提示词..."
+                  className="w-full min-h-[120px] p-3 border border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  style={{ resize: 'none', minHeight: '120px', overflow: 'hidden' }}
+                  disabled={loading}
+                  onInput={(e) => adjustTextareaHeight(e.target as HTMLTextAreaElement, 120)}
+                />
+              )}
+              <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                <span>提示：AI 优化统一在优化台中完成，可回滚、追问和保存。</span>
+                <Button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(composedContent)
+                      setSuccess('已复制到剪贴板')
+                      setTimeout(() => setSuccess(''), 2000)
+                    } catch {
+                      setError('复制失败，请手动复制')
+                      setTimeout(() => setError(''), 3000)
+                    }
+                  }}
+                  size="sm"
+                  variant="outline"
+                  className="border-teal-300 text-teal-700 hover:bg-teal-50"
+                >
+                  复制
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}

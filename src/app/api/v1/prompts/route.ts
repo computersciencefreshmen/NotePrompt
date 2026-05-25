@@ -7,20 +7,18 @@ type DbRow = Record<string, unknown>
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('开始prompts API...')
-    
     // 获取认证用户
     const auth = await requireAuth(request)
     if ('error' in auth) {
-      console.log('认证失败:', auth.error)
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const userId = auth.user.id
-    console.log('用户ID:', userId)
     
     // 先检查用户是否存在
     const userCheck = await db.query('SELECT id, username FROM users WHERE id = ?', [userId])
-    console.log('用户检查结果:', userCheck.rows)
+    if (!Array.isArray(userCheck.rows) || userCheck.rows.length === 0) {
+      return NextResponse.json({ success: false, error: '用户不存在' }, { status: 404 })
+    }
     
     // 获取查询参数
     const { searchParams } = new URL(request.url)
@@ -38,8 +36,6 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       )
     }
-    
-    console.log('查询参数:', { search, folderId, page, limit, offset })
     
     // 简化的查询，先确保基本功能正常
     let query = `
@@ -82,18 +78,10 @@ export async function GET(request: NextRequest) {
     
     query += ` ORDER BY up.created_at DESC LIMIT ${limit} OFFSET ${offset}`
     
-    console.log('执行计数查询...')
-    console.log('计数SQL:', countQuery)
-    console.log('计数参数:', queryParams)
     const countResult = await db.query(countQuery, queryParams)
     const totalCount = (countResult.rows as Record<string, unknown>[])[0]?.total as number || 0
-    console.log('计数结果:', totalCount)
-    
-    console.log('执行主查询...')
-    console.log('主查询SQL:', query)
     const result = await db.query(query, queryParams)
     const prompts = result.rows || []
-    console.log('查询结果数量:', Array.isArray(prompts) ? prompts.length : 0)
     
     // 处理数据格式并获取标签
     const processedPrompts = await Promise.all((prompts as Record<string, unknown>[]).map(async (prompt) => {

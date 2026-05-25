@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     // 检查是否在短时间内重复发送（60秒内不能重复发送）
     const now = new Date();
     if (user.email_verify_sent_at) {
-      const lastSent = new Date(user.email_verify_sent_at);
+      const lastSent = new Date(String(user.email_verify_sent_at));
       const secondsSinceLastSent = (now.getTime() - lastSent.getTime()) / 1000;
       if (secondsSinceLastSent < 60) {
         const remainingSeconds = Math.ceil(60 - secondsSinceLastSent);
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
     try {
       await emailService.sendVerificationEmail({
         to: email,
-        username: user.username,
+        username: String(user.username || ''),
         code: verificationCode,
       });
     } catch (emailError) {

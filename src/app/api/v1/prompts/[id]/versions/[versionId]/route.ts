@@ -76,8 +76,8 @@ export async function POST(
     await db.createPromptVersion({
       prompt_id: promptId,
       user_id: auth.user.id,
-      title: prompt.title,
-      content: prompt.content,
+      title: String(prompt.title || ''),
+      content: String(prompt.content || ''),
       change_summary: '恢复前自动备份',
     })
 

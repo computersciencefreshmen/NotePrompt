@@ -14,7 +14,7 @@ export async function POST(
     }
 
     const user_id = auth.user.id
-    const { id } = params
+    const { id } = await params
     const promptId = parseInt(id)
 
     if (isNaN(promptId)) {
@@ -31,7 +31,7 @@ export async function POST(
     let targetFolderId = folder_id
     if (!targetFolderId) {
       const folders = await db.getFoldersByUserId(user_id)
-      const defaultFolder = folders[0]
+      const defaultFolder = folders[0] as Record<string, unknown> | undefined
 
       if (!defaultFolder) {
         return NextResponse.json({
@@ -39,7 +39,7 @@ export async function POST(
           error: '用户没有文件夹，请先创建文件夹'
         }, { status: 400 })
       }
-      targetFolderId = defaultFolder.id
+      targetFolderId = Number(defaultFolder.id)
     }
 
     // 检查是否是公共提示词
@@ -47,12 +47,12 @@ export async function POST(
     if (publicPrompt) {
       // 导入公共提示词
       const newPrompt = await db.createUserPrompt({
-        title: `[导入] ${publicPrompt.title}`,
-        content: publicPrompt.content,
-        description: publicPrompt.description,
+        title: `[导入] ${String(publicPrompt.title || '')}`,
+        content: String(publicPrompt.content || ''),
+        description: publicPrompt.description ? String(publicPrompt.description) : null,
         user_id: user_id,
         folder_id: targetFolderId,
-        category_id: publicPrompt.category_id
+        category_id: publicPrompt.category_id == null ? null : Number(publicPrompt.category_id)
       })
 
       // 复制标签
@@ -60,7 +60,7 @@ export async function POST(
         const tags = await db.getPublicPromptTags(promptId)
         if (tags && tags.length > 0) {
           const tagNames = tags.map((tag: Record<string, unknown>) => tag.name as string)
-          await db.addUserPromptTags(newPrompt.id, tagNames)
+          await db.addUserPromptTags(Number(newPrompt.id), tagNames)
         }
       } catch (tagError) {
         console.error('复制标签失败:', tagError)
@@ -78,12 +78,12 @@ export async function POST(
     if (otherPrompt && otherPrompt.user_id !== user_id) {
       // 导入其他用户的提示词
       const newPrompt = await db.createUserPrompt({
-        title: `[导入] ${otherPrompt.title}`,
-        content: otherPrompt.content,
-        description: otherPrompt.description,
+        title: `[导入] ${String(otherPrompt.title || '')}`,
+        content: String(otherPrompt.content || ''),
+        description: otherPrompt.description ? String(otherPrompt.description) : null,
         user_id: user_id,
         folder_id: targetFolderId,
-        category_id: otherPrompt.category_id
+        category_id: otherPrompt.category_id == null ? null : Number(otherPrompt.category_id)
       })
 
       // 复制标签
@@ -91,7 +91,7 @@ export async function POST(
         const tags = await db.getUserPromptTags(promptId)
         if (tags && tags.length > 0) {
           const tagNames = tags.map((tag: Record<string, unknown>) => tag.name as string)
-          await db.addUserPromptTags(newPrompt.id, tagNames)
+          await db.addUserPromptTags(Number(newPrompt.id), tagNames)
         }
       } catch (tagError) {
         console.error('复制标签失败:', tagError)

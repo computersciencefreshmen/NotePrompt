@@ -2,6 +2,56 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
 
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+async function getCurrentMonthUsage(userId: number) {
+  await db.ensureAIUsageDailyTable()
+  const now = new Date()
+  const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
+  const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+  const result = await db.query(
+    `SELECT COALESCE(SUM(total_count), 0) as monthly_usage
+     FROM ai_usage_daily
+     WHERE user_id = ? AND usage_date >= ? AND usage_date < ?`,
+    [userId, monthStart, nextMonthStart]
+  )
+  const row = (result.rows as { monthly_usage?: number | string }[])[0]
+  return Number(row?.monthly_usage) || 0
+}
+
+async function safeCount(label: string, getCount: () => Promise<number>) {
+  try {
+    return await getCount()
+  } catch (error) {
+    console.warn(`User stats count fallback for ${label}:`, error)
+    return 0
+  }
+}
+
+function buildStatsResponse(data: {
+  totalPrompts: number
+  totalFolders: number
+  totalFavorites: number
+  monthlyUsage: number
+  userStats?: Record<string, unknown> | null
+}) {
+  return {
+    total_prompts: data.totalPrompts,
+    total_folders: data.totalFolders,
+    total_favorites: data.totalFavorites,
+    monthly_usage: data.monthlyUsage,
+    ai_optimize_count: Number(data.userStats?.ai_optimize_count) || 0,
+    ai_generate_count: Number(data.userStats?.ai_generate_count) || 0,
+    total_ai_usage: Number(data.userStats?.total_ai_usage) || 0,
+    max_prompts: 50
+  }
+}
+
 // GET - 获取用户统计
 export async function GET(request: NextRequest) {
   try {
@@ -10,64 +60,30 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const userId = auth.user.id
-    const userStats = await db.getUserStats(userId)
+    await db.ensureAIUsageDailyTable()
+    let userStats = await db.getUserStats(userId)
     
     if (!userStats) {
-      // 如果用户没有统计记录，创建一个
       await db.createUserStats(userId)
-      const newStats = await db.getUserStats(userId)
-      
-      return NextResponse.json({
-        success: true,
-        data: {
-          total_prompts: 0,
-          total_folders: 0,
-          total_favorites: 0,
-          monthly_usage: newStats?.monthly_usage || 0,
-          ai_optimize_count: newStats?.ai_optimize_count || 0,
-          ai_generate_count: newStats?.ai_generate_count || 0,
-          total_ai_usage: newStats?.total_ai_usage || 0,
-          max_prompts: 50 // 免费用户限制
-        }
-      })
+      userStats = await db.getUserStats(userId)
     }
 
-    // 获取用户的其他统计数据
-    const totalPrompts = await db.getUserPromptCount(userId)
-    const totalFolders = await db.getUserFolderCount(userId)
-    const totalFavorites = await db.getUserFavoriteCount(userId)
-
-    // 检查是否需要月度重置
-    const now = new Date()
-    const lastReset = new Date(userStats.last_reset_date || userStats.created_at)
-    const isNewMonth = now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()
-
-    if (isNewMonth) {
-      // 重置月度使用量
-      await db.updateUserStats(userId, {
-        monthly_usage: 0,
-        last_reset_date: now.toISOString().split('T')[0]
-      })
-      userStats.monthly_usage = 0
-    }
+    const [monthlyUsage, totalPrompts, totalFolders, totalFavorites] = await Promise.all([
+      getCurrentMonthUsage(userId),
+      safeCount('prompts', () => db.getUserPromptCount(userId)),
+      safeCount('folders', () => db.getUserFolderCount(userId)),
+      safeCount('favorites', () => db.getUserFavoriteCount(userId))
+    ])
 
     return NextResponse.json({
       success: true,
-      data: {
-        total_prompts: totalPrompts,
-        total_folders: totalFolders,
-        total_favorites: totalFavorites,
-        monthly_usage: userStats.monthly_usage,
-        ai_optimize_count: userStats.ai_optimize_count || 0,
-        ai_generate_count: userStats.ai_generate_count || 0,
-        total_ai_usage: userStats.total_ai_usage || 0,
-        max_prompts: 50 // 免费用户限制
-      }
+      data: buildStatsResponse({ totalPrompts, totalFolders, totalFavorites, monthlyUsage, userStats })
     })
   } catch (error) {
     console.error('Get user stats error:', error)
+    const details = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { success: false, error: '获取统计数据失败' },
+      { success: false, error: '获取统计数据失败', details: process.env.NODE_ENV === 'development' ? details : undefined },
       { status: 500 }
     )
   }
@@ -114,7 +130,7 @@ export async function PUT(request: NextRequest) {
         total_prompts: totalPrompts,
         total_folders: totalFolders,
         total_favorites: totalFavorites,
-        monthly_usage: updatedStats?.monthly_usage || 0,
+        monthly_usage: await getCurrentMonthUsage(userId),
         ai_optimize_count: updatedStats?.ai_optimize_count || 0,
         max_prompts: 50
       }
@@ -145,6 +161,7 @@ export async function POST(request: NextRequest) {
       
       // 返回更新后的统计
       const updatedStats = await db.getUserStats(userId)
+      const monthlyUsage = await getCurrentMonthUsage(userId)
       const totalPrompts = await db.getUserPromptCount(userId)
       const totalFolders = await db.getUserFolderCount(userId)
       const totalFavorites = await db.getUserFavoriteCount(userId)
@@ -155,7 +172,7 @@ export async function POST(request: NextRequest) {
           total_prompts: totalPrompts,
           total_folders: totalFolders,
           total_favorites: totalFavorites,
-          monthly_usage: updatedStats?.monthly_usage || 0,
+          monthly_usage: monthlyUsage,
           ai_optimize_count: updatedStats?.ai_optimize_count || 0,
           ai_generate_count: updatedStats?.ai_generate_count || 0,
           total_ai_usage: updatedStats?.total_ai_usage || 0,

@@ -160,7 +160,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // 不能删除自己
-    if (userId === auth.userId) {
+    if (userId === auth.user.id) {
       return NextResponse.json(
         { success: false, error: '不能删除自己的账号' },
         { status: 400 }

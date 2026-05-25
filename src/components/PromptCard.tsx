@@ -11,6 +11,7 @@ import { PublicPrompt, Prompt } from '@/types'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
+import { Locale, withLocaleHref } from '@/lib/i18n'
 
 interface PromptCardProps {
   prompt: PublicPrompt | Prompt
@@ -29,7 +30,103 @@ interface PromptCardProps {
   onAddToFolder?: (promptId: number) => void
   showAddToFolder?: boolean
   disableFavorite?: boolean // 新增：是否禁用收藏功能
+  disableImport?: boolean
   showCopy?: boolean // 新增：是否显示复制按钮
+  deleteLabel?: string
+  deleteConfirmTitle?: string
+  deleteConfirmDescription?: string
+  locale?: Locale
+}
+
+const promptCardCopy = {
+  zh: {
+    delete: '删除',
+    loginRequired: '需要登录',
+    loginToFavorite: '请先登录才能收藏',
+    loginToImport: '请先登录才能导入',
+    unfavoriteSuccess: '取消收藏成功',
+    unfavoriteSuccessDesc: '已取消收藏该提示词',
+    favoriteSuccess: '收藏成功',
+    favoriteSuccessDesc: '已添加到收藏列表',
+    favoriteFailed: '收藏失败',
+    favoriteFailedDesc: '添加收藏失败，请稍后重试',
+    actionFailed: '操作失败',
+    favoriteActionFailedDesc: '收藏操作失败，请稍后重试',
+    importSuccess: '导入成功',
+    importSuccessDesc: '已添加到您的提示词库',
+    importFailed: '导入失败',
+    importFailedDesc: '导入失败，请稍后重试',
+    promptMissing: '该提示词已被删除或不存在',
+    ownPrompt: '不能导入自己的提示词',
+    copySuccess: '复制成功',
+    copySuccessDesc: '提示词内容已复制到剪贴板',
+    copyFailed: '复制失败',
+    copyFailedDesc: '无法复制到剪贴板，请手动复制',
+    deleteFailed: '删除失败',
+    featured: '精选',
+    updatedAt: '更新于',
+    multipleFolders: '多个文件夹',
+    folder: '文件夹',
+    favorited: '已收藏',
+    favorite: '收藏',
+    import: '导入',
+    add: '添加',
+    copy: '复制',
+    edit: '编辑',
+    publish: '发布',
+    cancel: '取消',
+    confirmUnfavorite: '确认取消收藏',
+    confirmDelete: '确认删除提示词',
+    unfavoriteDescription: (title: string) => `确定要取消收藏提示词 "${title}" 吗？`,
+    deleteDescription: (title: string) => `确定要删除提示词 "${title}" 吗？此操作不可撤销。`,
+    unfavoriting: '取消收藏中...',
+    deleting: '删除中...',
+    locale: 'zh-CN',
+  },
+  en: {
+    delete: 'Delete',
+    loginRequired: 'Login required',
+    loginToFavorite: 'Please log in before saving this prompt.',
+    loginToImport: 'Please log in before importing this prompt.',
+    unfavoriteSuccess: 'Removed from favorites',
+    unfavoriteSuccessDesc: 'This prompt has been removed from your favorites.',
+    favoriteSuccess: 'Saved to favorites',
+    favoriteSuccessDesc: 'This prompt has been added to your favorites.',
+    favoriteFailed: 'Unable to save',
+    favoriteFailedDesc: 'Could not add this prompt to favorites. Please try again.',
+    actionFailed: 'Action failed',
+    favoriteActionFailedDesc: 'Could not update the favorite state. Please try again.',
+    importSuccess: 'Imported',
+    importSuccessDesc: 'The prompt has been added to your workspace.',
+    importFailed: 'Import failed',
+    importFailedDesc: 'Could not import this prompt. Please try again.',
+    promptMissing: 'This prompt was deleted or no longer exists.',
+    ownPrompt: 'You cannot import your own prompt.',
+    copySuccess: 'Copied',
+    copySuccessDesc: 'Prompt content copied to clipboard.',
+    copyFailed: 'Copy failed',
+    copyFailedDesc: 'Could not copy to clipboard. Please copy manually.',
+    deleteFailed: 'Delete failed',
+    featured: 'Featured',
+    updatedAt: 'Updated',
+    multipleFolders: 'Folders',
+    folder: 'Folder',
+    favorited: 'Saved',
+    favorite: 'Save',
+    import: 'Import',
+    add: 'Add',
+    copy: 'Copy',
+    edit: 'Edit',
+    publish: 'Publish',
+    cancel: 'Cancel',
+    confirmUnfavorite: 'Remove from favorites?',
+    confirmDelete: 'Delete prompt?',
+    unfavoriteDescription: (title: string) => `Remove "${title}" from your favorites?`,
+    deleteDescription: (title: string) => `Delete "${title}"? This action cannot be undone.`,
+    unfavoriting: 'Removing...',
+    deleting: 'Deleting...',
+    locale: 'en-US',
+  },
 }
 
 export default function PromptCard({
@@ -49,10 +146,16 @@ export default function PromptCard({
   onAddToFolder,
   showAddToFolder = false,
   disableFavorite = false,
-  showCopy = false
+  disableImport = false,
+  showCopy = false,
+  deleteLabel = '删除',
+  deleteConfirmTitle,
+  deleteConfirmDescription,
+  locale = 'zh',
 }: PromptCardProps) {
   const { user } = useAuth()
   const { toast } = useToast()
+  const copy = promptCardCopy[locale]
   const [loading, setLoading] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   
@@ -86,8 +189,8 @@ export default function PromptCard({
   const handleFavorite = async () => {
     if (!user) {
       toast({
-        title: '需要登录',
-        description: '请先登录才能收藏',
+        title: copy.loginRequired,
+        description: copy.loginToFavorite,
         variant: 'warning',
       })
       return
@@ -108,8 +211,8 @@ export default function PromptCard({
           }
           
           toast({
-            title: '取消收藏成功',
-            description: '已取消收藏该提示词',
+            title: copy.unfavoriteSuccess,
+            description: copy.unfavoriteSuccessDesc,
             variant: 'success',
           })
           
@@ -131,8 +234,8 @@ export default function PromptCard({
             }
             
             toast({
-              title: '收藏成功',
-              description: '已添加到收藏列表',
+              title: copy.favoriteSuccess,
+              description: copy.favoriteSuccessDesc,
               variant: 'success',
             })
             
@@ -140,19 +243,19 @@ export default function PromptCard({
             onFavoriteChange?.()
           }
         } catch (addError) {
-          console.error('添加收藏失败:', addError)
+          console.error('Add favorite failed:', addError)
           toast({
-            title: '收藏失败',
-            description: '添加收藏失败，请稍后重试',
+            title: copy.favoriteFailed,
+            description: copy.favoriteFailedDesc,
             variant: 'destructive',
           })
         }
       }
     } catch (error) {
-      console.error('收藏操作失败:', error)
+      console.error('Favorite action failed:', error)
       toast({
-        title: '操作失败',
-        description: '收藏操作失败，请稍后重试',
+        title: copy.actionFailed,
+        description: copy.favoriteActionFailedDesc,
         variant: 'destructive',
       })
     }
@@ -161,14 +264,14 @@ export default function PromptCard({
   const handleImport = async () => {
     if (!user) {
       toast({
-        title: '需要登录',
-        description: '请先登录才能导入',
+        title: copy.loginRequired,
+        description: copy.loginToImport,
         variant: 'warning',
       })
       // 3秒后跳转到登录页
       setTimeout(() => {
         if (typeof window !== 'undefined') {
-          window.location.href = '/login'
+          window.location.href = withLocaleHref('/login', locale)
         }
       }, 2000)
       return
@@ -178,24 +281,24 @@ export default function PromptCard({
     try {
       await api.publicPrompts.import(prompt.id)
       toast({
-        title: '导入成功',
-        description: '已添加到您的提示词库',
+        title: copy.importSuccess,
+        description: copy.importSuccessDesc,
         variant: 'success',
       })
     } catch (error) {
       console.error('Import error:', error)
-      let errorMessage = '导入失败，请稍后重试'
+      let errorMessage = copy.importFailedDesc
       if (error instanceof Error) {
         if (error.message.includes('提示词不存在')) {
-          errorMessage = '该提示词已被删除或不存在'
+          errorMessage = copy.promptMissing
         } else if (error.message.includes('不能导入自己的提示词')) {
-          errorMessage = '不能导入自己的提示词'
+          errorMessage = copy.ownPrompt
         } else {
           errorMessage = error.message
         }
       }
       toast({
-        title: '导入失败',
+        title: copy.importFailed,
         description: errorMessage,
         variant: 'destructive',
       })
@@ -215,15 +318,15 @@ export default function PromptCard({
       await navigator.clipboard.writeText(contentToCopy)
       
       toast({
-        title: '复制成功',
-        description: '提示词内容已复制到剪贴板',
+        title: copy.copySuccess,
+        description: copy.copySuccessDesc,
         variant: 'success',
       })
     } catch (error) {
-      console.error('复制失败:', error)
+      console.error('Copy failed:', error)
       toast({
-        title: '复制失败',
-        description: '无法复制到剪贴板，请手动复制',
+        title: copy.copyFailed,
+        description: copy.copyFailedDesc,
         variant: 'destructive',
       })
     }
@@ -237,8 +340,8 @@ export default function PromptCard({
       setShowDeleteDialog(false)
     } catch (error) {
       toast({
-        title: '删除失败',
-        description: error instanceof Error ? error.message : '删除失败',
+        title: copy.deleteFailed,
+        description: error instanceof Error ? error.message : copy.deleteFailed,
         variant: 'destructive',
       })
     } finally {
@@ -248,7 +351,7 @@ export default function PromptCard({
 
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleDateString('zh-CN', {
+      return new Date(dateString).toLocaleDateString(copy.locale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
@@ -286,7 +389,7 @@ export default function PromptCard({
             {isPublicPrompt && publicPrompt.is_featured && (
               <div className="flex items-center px-2 py-1 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-xs font-medium rounded-full">
                 <Star className="h-3 w-3 mr-1 fill-current" />
-                精选
+                {copy.featured}
               </div>
             )}
           </div>
@@ -330,7 +433,7 @@ export default function PromptCard({
         {!isPublicPrompt && userPrompt.updated_at && (
           <div className="flex items-center space-x-1 text-sm text-gray-500 dark:text-gray-400">
             <Calendar className="h-3 w-3" />
-            <span>更新于 {formatDate(userPrompt.updated_at)}</span>
+            <span>{copy.updatedAt} {formatDate(userPrompt.updated_at)}</span>
           </div>
         )}
 
@@ -340,8 +443,8 @@ export default function PromptCard({
             <Folder className="h-3 w-3" />
             <span>
               {hasMultipleFolders 
-                ? `多个文件夹: ${folderNames.slice(0, 2).join(', ')}${folderNames.length > 2 ? ` +${folderNames.length - 2}` : ''}`
-                : `文件夹: ${folderNames[0] || `ID: ${userPrompt.folder_id}`}`
+                ? `${copy.multipleFolders}: ${folderNames.slice(0, 2).join(', ')}${folderNames.length > 2 ? ` +${folderNames.length - 2}` : ''}`
+                : `${copy.folder}: ${folderNames[0] || `ID: ${userPrompt.folder_id}`}`
               }
             </span>
           </div>
@@ -428,21 +531,37 @@ export default function PromptCard({
                       className={isFavorited ? "bg-yellow-500 hover:bg-yellow-600" : "text-yellow-600 hover:text-yellow-700 hover:border-yellow-300"}
                     >
                       <Star className={`h-4 w-4 mr-1 ${isFavorited ? 'fill-current' : ''}`} />
-                      {isFavorited ? '已收藏' : '收藏'}
+                      {isFavorited ? copy.favorited : copy.favorite}
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleImport()
-                    }}
-                    disabled={loading}
-                    className="bg-teal-600 hover:bg-teal-700 text-white"
-                  >
-                    <Download className="h-4 w-4 mr-1" />
-                    导入
-                  </Button>
+                  {disableImport ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleCopy()
+                      }}
+                      disabled={loading}
+                      className="text-teal-700 hover:text-teal-800 hover:border-teal-300"
+                    >
+                      <Copy className="h-4 w-4 mr-1" />
+                      Copy
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleImport()
+                      }}
+                      disabled={loading}
+                      className="bg-teal-600 hover:bg-teal-700 text-white"
+                    >
+                      <Download className="h-4 w-4 mr-1" />
+                      {copy.import}
+                    </Button>
+                  )}
                 </>
               ) : (
                 <>
@@ -458,7 +577,7 @@ export default function PromptCard({
                       className="text-blue-600 hover:text-blue-700 hover:border-blue-300"
                     >
                       <Folder className="h-4 w-4 mr-1" />
-                      添加
+                      {copy.add}
                     </Button>
                   )}
                   {showCopy && (
@@ -473,7 +592,7 @@ export default function PromptCard({
                       className="text-gray-600 hover:text-gray-700 hover:border-gray-300"
                     >
                       <Copy className="h-4 w-4 mr-1" />
-                      复制
+                      {copy.copy}
                     </Button>
                   )}
                   <Button
@@ -486,7 +605,7 @@ export default function PromptCard({
                     disabled={loading}
                   >
                     <Edit className="h-4 w-4 mr-1" />
-                    编辑
+                    {copy.edit}
                   </Button>
                   <Button
                     size="sm"
@@ -499,7 +618,7 @@ export default function PromptCard({
                     className="text-teal-600 hover:text-teal-700 hover:border-teal-300"
                   >
                     <Upload className="h-4 w-4 mr-1" />
-                    发布
+                    {copy.publish}
                   </Button>
                   <Button
                     size="sm"
@@ -512,7 +631,7 @@ export default function PromptCard({
                     className="text-red-600 hover:text-red-700 hover:border-red-300"
                   >
                     <Trash2 className="h-4 w-4 mr-1" />
-                    删除
+                    {deleteLabel === '删除' ? copy.delete : deleteLabel}
                   </Button>
                 </>
               )}
@@ -529,15 +648,15 @@ export default function PromptCard({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {type === 'public' ? '确认取消收藏' : '确认删除提示词'}
+            {deleteConfirmTitle || (type === 'public' ? copy.confirmUnfavorite : copy.confirmDelete)}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
             <p className="text-gray-600 dark:text-gray-300">
-            {type === 'public' 
-              ? `确定要取消收藏提示词 "${prompt.title}" 吗？`
-              : `确定要删除提示词 "${prompt.title}" 吗？此操作不可撤销。`
-            }
+            {deleteConfirmDescription || (type === 'public'
+              ? copy.unfavoriteDescription(prompt.title)
+              : copy.deleteDescription(prompt.title)
+            )}
           </p>
           <div className="flex justify-end space-x-2">
             <Button
@@ -545,7 +664,7 @@ export default function PromptCard({
               onClick={() => setShowDeleteDialog(false)}
               disabled={loading}
             >
-              取消
+              {copy.cancel}
             </Button>
             <Button
               variant="destructive"
@@ -553,8 +672,8 @@ export default function PromptCard({
               disabled={loading}
             >
               {loading 
-                ? (type === 'public' ? '取消收藏中...' : '删除中...') 
-                : (type === 'public' ? '确认取消收藏' : '确认删除')
+                ? (type === 'public' ? copy.unfavoriting : copy.deleting)
+                : (type === 'public' ? copy.confirmUnfavorite : (deleteLabel === '删除' ? copy.delete : deleteLabel))
               }
             </Button>
           </div>
@@ -562,5 +681,39 @@ export default function PromptCard({
       </DialogContent>
     </Dialog>
   </>
+  )
+}
+
+export function PromptCardSkeleton() {
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-3 flex-1">
+            <div className="h-5 w-3/4 animate-pulse rounded bg-muted" />
+            <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="h-8 w-8 animate-pulse rounded-md bg-muted" />
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="space-y-4">
+          <div className="space-y-2 rounded-md bg-muted/50 p-3">
+            <div className="h-4 w-full animate-pulse rounded bg-muted" />
+            <div className="h-4 w-5/6 animate-pulse rounded bg-muted" />
+            <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="flex gap-2">
+            <div className="h-6 w-14 animate-pulse rounded-full bg-muted" />
+            <div className="h-6 w-20 animate-pulse rounded-full bg-muted" />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <div className="h-8 w-16 animate-pulse rounded bg-muted" />
+            <div className="h-8 w-16 animate-pulse rounded bg-muted" />
+            <div className="h-8 w-16 animate-pulse rounded bg-muted" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

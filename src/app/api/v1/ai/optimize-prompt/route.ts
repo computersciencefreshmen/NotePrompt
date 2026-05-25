@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAIRequestConfig, AI_MODELS } from '@/config/ai'
 import { validateAIModel, formatAIError } from '@/lib/ai-utils'
+import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+
+type RequestedAttachment = {
+  name: string
+  type: string
+  size: number
+  textPreview: string
+}
 
 /**
 * 提示词优化API
@@ -13,10 +21,32 @@ export async function POST(request: NextRequest) {
 
     // 兼容两种字段命名：prompt/originalPrompt, provider/modelType, model/modelName
     const prompt = body.prompt || body.originalPrompt
-    const provider = body.provider || body.modelType || 'qwen'
-    const model = body.model || body.modelName || 'qwen3.5-plus'
+    const provider = body.provider || body.modelType || 'deepseek'
+    const model = body.model || body.modelName || 'deepseek-v4-flash'
     const temperatureOverride = body.temperature as number | undefined
-    const requestedMode = body.mode as string | undefined // professional/normal
+    const topPOverride = (body.topP ?? body.top_p) as number | undefined
+    const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
+    const requestedMode = body.mode as string | undefined // simple/pro/professional/normal
+    const requestedStyle = typeof body.style === 'string' ? body.style : ''
+    const requestedTone = typeof body.tone === 'string' ? body.tone : ''
+    const requestedOutputFormat = typeof body.outputFormat === 'string' ? body.outputFormat : ''
+    const requestedConstraints = Array.isArray(body.constraints)
+      ? body.constraints
+          .filter((item: unknown) => typeof item === 'string' && item.trim())
+          .slice(0, 12)
+          .map((item: string) => item.trim().slice(0, 500))
+      : []
+    const requestedAttachments: RequestedAttachment[] = Array.isArray(body.attachments)
+      ? body.attachments
+          .filter((item: unknown) => item && typeof item === 'object')
+          .slice(0, 12)
+          .map((item: { name?: unknown; type?: unknown; size?: unknown; textPreview?: unknown }) => ({
+            name: typeof item.name === 'string' ? item.name.slice(0, 120) : 'unnamed',
+            type: typeof item.type === 'string' ? item.type.slice(0, 80) : 'application/octet-stream',
+            size: typeof item.size === 'number' ? item.size : 0,
+            textPreview: typeof item.textPreview === 'string' ? item.textPreview.slice(0, 4000) : '',
+          }))
+      : []
 
     // 输入长度限制
     const MAX_INPUT_LENGTH = 10000;
@@ -46,11 +76,25 @@ export async function POST(request: NextRequest) {
     const aiConfig = validation.config!
     
     // 根据请求的mode确定优化模式指令
-    const modeInstruction = requestedMode === 'professional'
+    const modeInstruction = requestedMode === 'professional' || requestedMode === 'pro'
       ? '\n\n**⚠️ 用户已显式选择【专业模式】，必须使用专业模式的完整 Role-Profile-Skills-Rules-Workflow-OutputFormat 结构输出。**'
-      : requestedMode === 'normal'
-        ? '\n\n**⚠️ 用户已选择【普通模式】，请根据提示词长度和复杂度自动判断使用简洁/专业/创意模式。**'
+      : requestedMode === 'normal' || requestedMode === 'simple'
+        ? '\n\n**⚠️ 用户已选择【简洁模式】，请保留必要结构，但避免过度展开。输出应短、清晰、可直接复制使用。**'
         : ''
+
+    const preferenceInstruction = [
+      requestedStyle ? `- 优化风格：${requestedStyle}` : '',
+      requestedTone ? `- 语调：${requestedTone}` : '',
+      requestedOutputFormat ? `- 输出格式：${requestedOutputFormat}` : '',
+      requestedConstraints.length > 0 ? `- 约束条件：${requestedConstraints.join('；')}` : '',
+    ].filter(Boolean).join('\n')
+
+    const attachmentInstruction = requestedAttachments.length > 0
+      ? requestedAttachments.map((attachment, index) => {
+          const preview = attachment.textPreview ? `\n摘录：${attachment.textPreview}` : ''
+          return `${index + 1}. ${attachment.name} (${attachment.type}, ${attachment.size} bytes)${preview}`
+        }).join('\n\n')
+      : ''
 
     // 构建优化提示词 - 改进版元提示词 v2
     const systemPrompt = `你是世界顶级的提示词工程专家。你的唯一任务是：将用户的原始提示词优化为结构化、高效能的版本。
@@ -123,7 +167,11 @@ export async function POST(request: NextRequest) {
 
 现在，基于以下原始提示词进行智能优化：`
 
+    const contextInstruction = `${preferenceInstruction ? `**用户偏好：**\n${preferenceInstruction}\n` : ''}${attachmentInstruction ? `**附件上下文：**\n${attachmentInstruction}\n` : ''}`
+
     const userMessage = `**原始提示词：** ${prompt}
+
+${contextInstruction}
 
 **优化要求：**
 1. 完整保留原始提示词中的所有细节、要点和重要信息
@@ -173,10 +221,6 @@ export async function POST(request: NextRequest) {
         const timeoutId = setTimeout(() => controller.abort(), 30000) // 30秒超时
         
         try {
-          console.log('发送请求到本地AI服务:', `${aiConfig.baseURL}/api/generate`)
-          console.log('模型:', aiConfig.model)
-          console.log('提示词长度:', `${systemPrompt}\n\n${userMessage}`.length)
-          
           const response = await fetch(`${aiConfig.baseURL}/api/generate`, {
             method: 'POST',
             headers: {
@@ -187,8 +231,9 @@ export async function POST(request: NextRequest) {
               prompt: `${systemPrompt}\n\n${userMessage}`,
               stream: false,
               options: {
-                temperature: aiConfig.temperature,
-                num_predict: Math.min(aiConfig.max_tokens, 4000) // 限制最大token数
+                temperature: Math.min(Math.max(temperatureOverride ?? aiConfig.temperature, 0), 2),
+                top_p: Math.min(Math.max(topPOverride ?? 0.9, 0.1), 1),
+                num_predict: Math.min(Math.max(maxTokensOverride ?? aiConfig.max_tokens, 512), 8192)
               }
             }),
             signal: controller.signal
@@ -250,7 +295,16 @@ export async function POST(request: NextRequest) {
         // 根据不同提供商处理模型名称和参数
         let requestModel = aiConfig.model
         // temperature 优先使用用户滑块传入的值，否则用默认值 0.7
-        let requestTemperature = temperatureOverride ?? aiConfig.temperature
+        const isMiniMaxProvider = effectiveProvider === 'minimax'
+        const isXiaomiProvider = effectiveProvider === 'xiaomi'
+        const usesCompletionTokensParam = isMiniMaxProvider || isXiaomiProvider
+        const requestTemperature = isMiniMaxProvider
+          ? Math.min(Math.max(temperatureOverride ?? aiConfig.temperature, 0.01), 1)
+          : Math.min(Math.max(temperatureOverride ?? aiConfig.temperature, 0), 2)
+        const requestTopP = Math.min(Math.max(topPOverride ?? 0.9, 0.1), 1)
+        const requestMaxTokens = isMiniMaxProvider
+          ? Math.min(Math.max(maxTokensOverride ?? aiConfig.max_tokens, 1), 2048)
+          : Math.min(Math.max(maxTokensOverride ?? aiConfig.max_tokens, 512), 8192)
 
         try {
           // DeepSeek reasoner 不支持 system 角色，需要合并到 user 消息
@@ -267,11 +321,15 @@ export async function POST(request: NextRequest) {
           const bodyObj: Record<string, unknown> = {
             model: requestModel,
             messages,
-            max_tokens: Math.min(aiConfig.max_tokens, 8192),
+            top_p: requestTopP,
             stream: false
           }
+          bodyObj[usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens'] = requestMaxTokens
           if (!isFixedTempModel) {
             bodyObj.temperature = requestTemperature
+          }
+          if (isXiaomiProvider) {
+            bodyObj.thinking = { type: 'disabled' }
           }
 
           const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
@@ -285,8 +343,9 @@ export async function POST(request: NextRequest) {
 
           if (!response.ok) {
             const errorText = await response.text()
-            console.error(`${effectiveProvider} API错误 (${response.status}):`, errorText)
-            throw new Error(`${effectiveProvider} API请求失败: ${response.status} - ${errorText}`)
+            const safeErrorText = sanitizeAIProviderError(errorText)
+            console.error(`${effectiveProvider} API错误 (${response.status}):`, safeErrorText)
+            throw new Error(`${effectiveProvider} API请求失败: ${response.status} - ${safeErrorText}`)
           }
 
           const data = await response.json()

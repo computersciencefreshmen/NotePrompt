@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyApiKey } from '@/lib/auth'
-import { db } from '@/lib/db'
+import db from '@/lib/mysql-database'
 
 // API密钥验证中间件
 async function validateApiKey(request: NextRequest) {

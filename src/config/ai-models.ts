@@ -35,7 +35,7 @@ export const AI_PROVIDER_MODEL_OPTIONS = {
     },
   },
   zhipu: {
-    name: '智谱 GLM',
+    name: 'Zhipu GLM',
     models: {
       'glm-5.1': 'GLM-5.1',
       'glm-5': 'GLM-5',
@@ -56,7 +56,7 @@ export const AI_PROVIDER_MODEL_OPTIONS = {
     },
   },
   xiaomi: {
-    name: '小米 MiMo',
+    name: 'Xiaomi MiMo',
     models: {
       'mimo-v2.5-pro': 'MiMo V2.5 Pro',
       'mimo-v2.5': 'MiMo V2.5',

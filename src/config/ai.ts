@@ -78,7 +78,7 @@ export const AI_MODELS = {
     }
   },
   zhipu: {
-    name: '智谱GLM',
+    name: 'Zhipu GLM',
     apiKey: process.env.ZHIPU_API_KEY,
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     models: {
@@ -103,7 +103,7 @@ export const AI_MODELS = {
     }
   },
   xiaomi: {
-    name: '小米 MiMo',
+    name: 'Xiaomi MiMo',
     apiKey: process.env.XIAOMI_API_KEY,
     baseURL: process.env.XIAOMI_BASE_URL || 'https://token-plan-ams.xiaomimimo.com/v1',
     models: {

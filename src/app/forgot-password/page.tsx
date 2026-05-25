@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -90,7 +90,7 @@ const forgotPasswordCopy = {
 export default function ForgotPasswordPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [locale] = useState<Locale>(() => detectLocaleFromSearch());
+  const [locale, setLocale] = useState<Locale>('zh');
   const copy = forgotPasswordCopy[locale];
   const href = (path: string) => withLocaleHref(path, locale);
 
@@ -106,6 +106,10 @@ export default function ForgotPasswordPage() {
   const [countdown, setCountdown] = useState(0);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error' | ''>('');
+
+  useEffect(() => {
+    setLocale(detectLocaleFromSearch());
+  }, []);
 
   // 发送验证码
   const sendResetCode = async () => {

@@ -66,7 +66,7 @@ const publicFolderCopy = {
 }
 
 export default function PublicFoldersPage() {
-  const [locale, setLocale] = useState<Locale>('zh')
+  const [locale, setLocale] = useState<Locale>(() => detectLocaleFromSearch())
   const [folders, setFolders] = useState<PublicFolder[]>([])
   const [localeReady, setLocaleReady] = useState(false)
   const [loading, setLoading] = useState(false)

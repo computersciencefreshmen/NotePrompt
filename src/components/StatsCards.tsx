@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { FileText, Folder as FolderIcon, Sparkles, Heart } from 'lucide-react'
 import AIUsageHeatmap from '@/components/AIUsageHeatmap'
+import { Locale, withLocaleHref } from '@/lib/i18n'
 
 interface UserStats {
   total_prompts: number
@@ -22,6 +23,32 @@ interface UserStats {
 
 interface StatsCardsProps {
   stats: UserStats | null
+  locale?: Locale
+}
+
+const statsCopy = {
+  zh: {
+    totalPrompts: '总提示词',
+    viewPrompts: '点击查看提示词',
+    folders: '文件夹',
+    viewFolders: '点击查看文件夹',
+    monthlyAI: '本月 AI 使用',
+    viewHeatmap: '点击查看热力图',
+    favorites: '收藏数',
+    viewFavorites: '点击查看收藏',
+    aiStats: 'AI 使用统计',
+  },
+  en: {
+    totalPrompts: 'Total prompts',
+    viewPrompts: 'View prompts',
+    folders: 'Folders',
+    viewFolders: 'View folders',
+    monthlyAI: 'AI usage this month',
+    viewHeatmap: 'View heatmap',
+    favorites: 'Favorites',
+    viewFavorites: 'View favorites',
+    aiStats: 'AI usage stats',
+  },
 }
 
 const cardBase = 'cursor-pointer hover:shadow-md transition-all group'
@@ -33,9 +60,10 @@ function scrollToSection(id: string) {
   }
 }
 
-export default function StatsCards({ stats }: StatsCardsProps) {
+export default function StatsCards({ stats, locale = 'zh' }: StatsCardsProps) {
   const [heatmapOpen, setHeatmapOpen] = useState(false)
   const router = useRouter()
+  const copy = statsCopy[locale]
 
   if (!stats) return null
 
@@ -50,9 +78,9 @@ export default function StatsCards({ stats }: StatsCardsProps) {
             <div className="flex items-center">
               <FileText className="h-8 w-8 text-blue-600 group-hover:scale-110 transition-transform" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">总提示词</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{copy.totalPrompts}</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.total_prompts}</p>
-                <p className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5">点击查看提示词</p>
+                <p className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5">{copy.viewPrompts}</p>
               </div>
             </div>
           </CardContent>
@@ -66,9 +94,9 @@ export default function StatsCards({ stats }: StatsCardsProps) {
             <div className="flex items-center">
               <FolderIcon className="h-8 w-8 text-green-600 group-hover:scale-110 transition-transform" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">文件夹</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{copy.folders}</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.total_folders}</p>
-                <p className="text-[10px] text-green-500 dark:text-green-400 mt-0.5">点击查看文件夹</p>
+                <p className="text-[10px] text-green-500 dark:text-green-400 mt-0.5">{copy.viewFolders}</p>
               </div>
             </div>
           </CardContent>
@@ -82,9 +110,9 @@ export default function StatsCards({ stats }: StatsCardsProps) {
             <div className="flex items-center">
               <Sparkles className="h-8 w-8 text-purple-600 group-hover:scale-110 transition-transform" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">本月 AI 使用</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{copy.monthlyAI}</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.monthly_usage || 0}</p>
-                <p className="text-[10px] text-purple-500 dark:text-purple-400 mt-0.5">点击查看热力图</p>
+                <p className="text-[10px] text-purple-500 dark:text-purple-400 mt-0.5">{copy.viewHeatmap}</p>
               </div>
             </div>
           </CardContent>
@@ -92,15 +120,15 @@ export default function StatsCards({ stats }: StatsCardsProps) {
 
         <Card
           className={`${cardBase} hover:border-orange-300`}
-          onClick={() => router.push('/favorites')}
+          onClick={() => router.push(withLocaleHref('/favorites', locale))}
         >
           <CardContent className="p-6">
             <div className="flex items-center">
               <Heart className="h-8 w-8 text-orange-600 group-hover:scale-110 transition-transform" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">收藏数</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{copy.favorites}</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.total_favorites}</p>
-                <p className="text-[10px] text-orange-500 dark:text-orange-400 mt-0.5">点击查看收藏</p>
+                <p className="text-[10px] text-orange-500 dark:text-orange-400 mt-0.5">{copy.viewFavorites}</p>
               </div>
             </div>
           </CardContent>
@@ -113,7 +141,7 @@ export default function StatsCards({ stats }: StatsCardsProps) {
           <DialogHeader>
             <DialogTitle className="flex items-center">
               <Sparkles className="h-5 w-5 mr-2 text-purple-600" />
-              AI 使用统计
+              {copy.aiStats}
             </DialogTitle>
           </DialogHeader>
           <AIUsageHeatmap />

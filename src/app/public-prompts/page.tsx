@@ -27,6 +27,7 @@ const publicPromptCopy = {
     emptyTitle: '未找到相关提示词',
     emptyText: '尝试调整搜索条件或浏览其他分类',
     loadingMore: '加载更多...',
+    loadingLabel: '正在加载公共提示词',
     author: '作者',
     publishedAt: '发布时间',
     description: '描述',
@@ -53,6 +54,7 @@ const publicPromptCopy = {
     emptyTitle: 'No prompts found',
     emptyText: 'Try another search term or tag.',
     loadingMore: 'Loading more...',
+    loadingLabel: 'Loading public prompts',
     author: 'Author',
     publishedAt: 'Published',
     description: 'Description',
@@ -69,7 +71,7 @@ const publicPromptCopy = {
 }
 
 export default function PublicPromptsPage() {
-  const [locale, setLocale] = useState<Locale>('zh')
+  const [locale, setLocale] = useState<Locale>(() => detectLocaleFromSearch())
   const [localeReady, setLocaleReady] = useState(false)
   const [prompts, setPrompts] = useState<PublicPrompt[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -393,7 +395,7 @@ export default function PublicPromptsPage() {
 
         {/* 提示词网格 */}
         {loading && prompts.length === 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8" aria-label="正在加载公共提示词">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8" aria-label={copy.loadingLabel}>
             {Array.from({ length: 6 }).map((_, index) => (
               <PromptCardSkeleton key={index} />
             ))}

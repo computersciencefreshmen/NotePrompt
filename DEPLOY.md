@@ -354,3 +354,79 @@ curl -I https://noteprompt.cn/
 - 安全组只应开放 80、443 和受限来源的 SSH 端口。
 - MySQL 3306 不应公网开放；当前线上健康访问依赖 Docker 内网访问 `docker_mysql8`。
 - 如再次出现异常进程告警，先停止可疑应用容器、保留日志和镜像信息，再重建容器。
+
+---
+
+## 九、回滚与应急排查
+
+### 9.1 回滚点
+
+| 用途 | Git ref | Commit |
+|------|---------|--------|
+| 当前 V2 部署分支 | release/noteprompt-v2-local-2026-05-25 | 以 GitHub 最新提交为准 |
+| 2026-05-25 Docker/网络修复 | release/noteprompt-v2-local-2026-05-25 | c64954d |
+| V2 前线上版本 | noteprompt-prod-before-v2-2026-05-25 | 07a24b9 |
+
+### 9.2 回滚命令
+
+```bash
+cd /opt/note-prompt
+git fetch origin --tags
+git reset --hard noteprompt-prod-before-v2-2026-05-25
+docker compose up -d note-prompt-app nginx
+curl -k -fsS --max-time 15 https://127.0.0.1/api/v1/health-check
+```
+
+如果需要恢复到最新 V2：
+
+```bash
+cd /opt/note-prompt
+git fetch origin release/noteprompt-v2-local-2026-05-25
+git reset --hard origin/release/noteprompt-v2-local-2026-05-25
+cp -a .env.local .env
+sed -i 's/^MYSQL_HOST=.*/MYSQL_HOST=docker_mysql8/' .env .env.local
+docker compose up -d note-prompt-app nginx
+```
+
+### 9.3 SSH 不可用
+
+本地先测端口：
+
+```powershell
+Test-NetConnection 8.138.176.174 -Port 22
+```
+
+如果 22 不通，优先在阿里云 ECS 当前实例已绑定的安全组中临时放行当前公网 IP 的 `TCP 22/22`，不要新建未绑定的安全组。如果安全组已放通仍不通，用云助手执行：
+
+```bash
+systemctl status sshd
+systemctl restart sshd
+ss -tlnp | grep -E ':22|:2233'
+```
+
+### 9.4 数据库连接异常
+
+线上应用通过 Docker 网络访问现有 MySQL 容器 `docker_mysql8`。重点检查：
+
+```bash
+cd /opt/note-prompt
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}'
+docker inspect note-prompt-note-prompt-app-1 --format '{{json .NetworkSettings.Networks}}'
+docker inspect docker_mysql8 --format '{{json .NetworkSettings.Networks}}'
+docker exec note-prompt-note-prompt-app-1 env | grep '^MYSQL_HOST='
+```
+
+预期 `MYSQL_HOST=docker_mysql8`，且应用容器应同时连接 `note-prompt_note-prompt-network` 和 `mysql8_default`。
+
+### 9.5 阿里云异常进程告警
+
+如果安全中心再次出现 `SuspiciousProcess` 告警：
+
+```bash
+docker ps
+docker logs --tail 200 note-prompt-note-prompt-app-1
+ps aux --sort=-%cpu | head -30
+last -a | head -20
+```
+
+先保留日志和容器信息，再停止可疑容器。不要直接删除现场；确认原因后再重建镜像和容器。

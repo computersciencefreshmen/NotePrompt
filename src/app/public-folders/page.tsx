@@ -10,15 +10,78 @@ import { api } from '@/lib/api'
 import { Filter, Loader2, Folder, User, Calendar, FileText, Download, Check, X, Star } from 'lucide-react'
 import { SearchInput } from '@/components/ui/search-input'
 import { useToast } from '@/hooks/use-toast'
+import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
+
+const publicFolderCopy = {
+  zh: {
+    fetchFailedTitle: '获取失败',
+    fetchFailedDesc: '获取文件夹列表失败',
+    importSuccessTitle: '导入成功',
+    importSuccessDesc: '文件夹导入成功',
+    importFailedTitle: '导入失败',
+    importFailedDesc: '导入失败，请稍后重试',
+    title: '公共文件夹库',
+    subtitle: '发现和导入由社区贡献的优质AI提示词文件夹，快速构建您的提示词库',
+    create: '+ 创建新提示词',
+    mine: '我的提示词',
+    searchTitle: '搜索文件夹',
+    searchPlaceholder: '搜索文件夹名称、描述...',
+    clear: '清除筛选',
+    loading: '正在加载文件夹...',
+    featured: '精选',
+    promptCount: (count: number) => `${count} 个提示词`,
+    importFolder: '导入文件夹',
+    viewFolder: '查看文件夹',
+    emptyTitle: '未找到相关文件夹',
+    emptyText: '尝试调整搜索条件或浏览其他分类',
+    loadingMore: '加载中...',
+    loadMore: '加载更多',
+    dateLocale: 'zh-CN',
+  },
+  en: {
+    fetchFailedTitle: 'Could not load folders',
+    fetchFailedDesc: 'The folder library could not be loaded.',
+    importSuccessTitle: 'Imported',
+    importSuccessDesc: 'Folder imported successfully.',
+    importFailedTitle: 'Import failed',
+    importFailedDesc: 'Import failed. Please try again later.',
+    title: 'Public Folder Library',
+    subtitle: 'Browse curated prompt collections for strategy, product, marketing, engineering, research, and operations.',
+    create: '+ Create Prompt',
+    mine: 'My Prompts',
+    searchTitle: 'Search folders',
+    searchPlaceholder: 'Search folder names and descriptions...',
+    clear: 'Clear filters',
+    loading: 'Loading folders...',
+    featured: 'Featured',
+    promptCount: (count: number) => `${count} prompt${count === 1 ? '' : 's'}`,
+    importFolder: 'Import folder',
+    viewFolder: 'View folder',
+    emptyTitle: 'No folders found',
+    emptyText: 'Try another search term or browse all collections.',
+    loadingMore: 'Loading...',
+    loadMore: 'Load more',
+    dateLocale: 'en-US',
+  },
+}
 
 export default function PublicFoldersPage() {
+  const [locale, setLocale] = useState<Locale>('zh')
   const [folders, setFolders] = useState<PublicFolder[]>([])
+  const [localeReady, setLocaleReady] = useState(false)
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [hasMore, setHasMore] = useState(false)
   const { toast } = useToast()
+  const copy = publicFolderCopy[locale]
+  const href = (path: string) => withLocaleHref(path, locale)
+
+  useEffect(() => {
+    setLocale(detectLocaleFromSearch())
+    setLocaleReady(true)
+  }, [])
 
   const fetchFolders = async (params: { page?: number; search?: string } = {}) => {
     setLoading(true)
@@ -26,6 +89,7 @@ export default function PublicFoldersPage() {
       const response = await api.publicFolders.list({
         page: page,
         limit: 12,
+        lang: locale,
         ...params
       })
 
@@ -41,8 +105,8 @@ export default function PublicFoldersPage() {
     } catch (error) {
       console.error('Failed to fetch folders:', error)
       toast({
-        title: '获取失败',
-        description: '获取文件夹列表失败',
+        title: copy.fetchFailedTitle,
+        description: copy.fetchFailedDesc,
         variant: 'destructive',
       })
     } finally {
@@ -50,15 +114,11 @@ export default function PublicFoldersPage() {
     }
   }
 
-  // 初始加载文件夹
-  useEffect(() => {
-    fetchFolders({ page: 1 })
-  }, [])
-
   // 搜索条件变化时重新加载
   useEffect(() => {
+    if (!localeReady) return
     fetchFolders({ page: 1, search: searchTerm })
-  }, [searchTerm])
+  }, [searchTerm, locale, localeReady])
 
   // 搜索处理
   const handleSearch = (value: string) => {
@@ -82,7 +142,7 @@ export default function PublicFoldersPage() {
   // 显示文件夹详情
   const handleFolderClick = async (folder: PublicFolder) => {
     // 跳转到文件夹详情页面
-    window.location.href = `/public-folders/${folder.id}`
+    window.location.href = href(`/public-folders/${folder.id}`)
   }
 
   // 导入文件夹到我的提示词
@@ -91,27 +151,27 @@ export default function PublicFoldersPage() {
       const response = await api.publicFolders.import(folderId)
       if (response.success) {
         toast({
-          title: '导入成功',
-          description: (response as any).message || '文件夹导入成功',
+          title: copy.importSuccessTitle,
+          description: (response as any).message || copy.importSuccessDesc,
           variant: 'success',
         })
         
         // 导入成功后跳转到用户的提示词页面
         setTimeout(() => {
-          window.location.href = '/prompts'
+          window.location.href = href('/prompts')
         }, 1500)
       } else {
         toast({
-          title: '导入失败',
-          description: response.error || '导入失败，请稍后重试',
+          title: copy.importFailedTitle,
+          description: response.error || copy.importFailedDesc,
           variant: 'destructive',
         })
       }
     } catch (error) {
       console.error('Failed to import folder:', error)
       toast({
-        title: '导入失败',
-        description: '导入失败，请稍后重试',
+        title: copy.importFailedTitle,
+        description: copy.importFailedDesc,
         variant: 'destructive',
       })
     }
@@ -119,7 +179,7 @@ export default function PublicFoldersPage() {
 
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleDateString('zh-CN', {
+      return new Date(dateString).toLocaleDateString(copy.dateLocale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
@@ -137,32 +197,34 @@ export default function PublicFoldersPage() {
         {/* 页面标题和操作区 */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-            公共文件夹库
+            {copy.title}
           </h1>
           <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-6">
-            发现和导入由社区贡献的优质AI提示词文件夹，快速构建您的提示词库          </p>
+            {copy.subtitle}
+          </p>
           <div className="flex justify-center gap-4">
             <Button
-              onClick={() => window.location.href = '/prompts/new'}
+              onClick={() => window.location.href = href('/prompts/new')}
               className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 text-lg"
               size="lg"
             >
-              + 创建新提示词
+              {copy.create}
             </Button>
             <Button
-              onClick={() => window.location.href = '/prompts'}
+              onClick={() => window.location.href = href('/prompts')}
               variant="outline"
               className="border-teal-600 text-teal-600 hover:bg-teal-50 px-6 py-3 text-lg"
               size="lg"
             >
-              我的提示词            </Button>
+              {copy.mine}
+            </Button>
           </div>
         </div>
 
         {/* 搜索区域 */}
         <Card className="mb-8">
           <CardHeader>
-            <CardTitle className="text-lg">搜索文件夹</CardTitle>
+            <CardTitle className="text-lg">{copy.searchTitle}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-col md:flex-row gap-4">
@@ -171,7 +233,7 @@ export default function PublicFoldersPage() {
                 <SearchInput
                   value={searchTerm}
                   onChange={handleSearch}
-                  placeholder="搜索文件夹名称、描述.."
+                  placeholder={copy.searchPlaceholder}
                   debounceMs={500}
                   onClear={() => setSearchTerm('')}
                 />
@@ -185,7 +247,8 @@ export default function PublicFoldersPage() {
                     variant="outline"
                     size="sm"
                   >
-                    清除筛选                  </Button>
+                    {copy.clear}
+                  </Button>
                 </div>
               )}
             </div>
@@ -196,7 +259,7 @@ export default function PublicFoldersPage() {
         {loading && folders.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600 dark:text-gray-400">正在加载文件夹..</span>
+            <span className="ml-2 text-gray-600 dark:text-gray-400">{copy.loading}</span>
           </div>
         ) : (
           <>
@@ -217,7 +280,8 @@ export default function PublicFoldersPage() {
                         {folder.is_featured && (
                           <div className="flex items-center px-2 py-1 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-xs font-medium rounded-full">
                             <Star className="h-3 w-3 mr-1 fill-current" />
-                            精选                          </div>
+                            {copy.featured}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -229,7 +293,7 @@ export default function PublicFoldersPage() {
                       </div>
                       <div className="flex items-center space-x-2">
                         <FileText className="h-3 w-3" />
-                        <span>{folder.prompt_count || 0} 个提示词</span>
+                        <span>{copy.promptCount(folder.prompt_count || 0)}</span>
                         <Calendar className="h-3 w-3" />
                         <span>{formatDate(folder.created_at)}</span>
                       </div>
@@ -251,12 +315,17 @@ export default function PublicFoldersPage() {
                         size="sm"
                         onClick={(e) => {
                           e.stopPropagation()
+                          if (locale === 'en') {
+                            handleFolderClick(folder)
+                            return
+                          }
                           handleImportFolder(folder.id)
                         }}
                         className="bg-teal-600 hover:bg-teal-700 text-white"
                       >
                         <Download className="h-4 w-4 mr-1" />
-                        导入文件夹                      </Button>
+                        {locale === 'en' ? copy.viewFolder : copy.importFolder}
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -270,10 +339,11 @@ export default function PublicFoldersPage() {
                   <Filter className="h-16 w-16 mx-auto" />
                 </div>
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-                  未找到相关文件夹
+                  {copy.emptyTitle}
                 </h3>
                 <p className="text-gray-600 dark:text-gray-400">
-                  尝试调整搜索条件或浏览其他分类                </p>
+                  {copy.emptyText}
+                </p>
               </div>
             )}
 
@@ -289,10 +359,10 @@ export default function PublicFoldersPage() {
                   {loading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      加载中..
+                      {copy.loadingMore}
                     </>
                   ) : (
-                    '加载更多'
+                    copy.loadMore
                   )}
                 </Button>
               </div>

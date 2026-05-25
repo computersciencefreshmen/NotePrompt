@@ -470,8 +470,10 @@ export const publicPrompts = {
   },
 
   // 获取单个公共提示词详情
-  get: async (id: number): Promise<ApiResponse<PublicPrompt>> => {
-    return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}`)
+  get: async (id: number, lang?: string): Promise<ApiResponse<PublicPrompt>> => {
+    const queryParams = new URLSearchParams()
+    if (lang) queryParams.append('lang', lang)
+    return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}${queryParams.toString() ? `?${queryParams}` : ''}`)
   },
 
   // 导入提示词到用户库（支持公共提示词和用户提示词）
@@ -975,24 +977,29 @@ export const api = {
   publicPrompts,
   publicFolders: {
     // 获取公共文件夹列表
-    list: async (params?: { page?: number; limit?: number; search?: string }): Promise<PaginatedResponse<PublicFolder>> => {
+    list: async (params?: { page?: number; limit?: number; search?: string; lang?: string }): Promise<PaginatedResponse<PublicFolder>> => {
       const queryParams = new URLSearchParams()
       if (params?.page) queryParams.append('page', params.page.toString())
       if (params?.limit) queryParams.append('limit', params.limit.toString())
       if (params?.search) queryParams.append('search', params.search)
+      if (params?.lang) queryParams.append('lang', params.lang)
 
       const endpoint = `/public-folders${queryParams.toString() ? `?${queryParams}` : ''}`
       return apiRequest<PaginatedResponse<PublicFolder>>(endpoint)
     },
 
     // 获取公共文件夹详情
-    get: async (id: number): Promise<ApiResponse<PublicFolder>> => {
-      return apiRequest<ApiResponse<PublicFolder>>(`/public-folders/${id}`)
+    get: async (id: number, lang?: string): Promise<ApiResponse<PublicFolder>> => {
+      const queryParams = new URLSearchParams()
+      if (lang) queryParams.append('lang', lang)
+      return apiRequest<ApiResponse<PublicFolder>>(`/public-folders/${id}${queryParams.toString() ? `?${queryParams}` : ''}`)
     },
 
     // 获取公共文件夹的提示词
-    getPrompts: async (id: number): Promise<ApiResponse<PublicPrompt[]>> => {
-      return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts`)
+    getPrompts: async (id: number, lang?: string): Promise<ApiResponse<PublicPrompt[]>> => {
+      const queryParams = new URLSearchParams()
+      if (lang) queryParams.append('lang', lang)
+      return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts${queryParams.toString() ? `?${queryParams}` : ''}`)
     },
 
     // 导入公共文件夹

@@ -22,12 +22,74 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
+
+const folderDetailCopy = {
+  zh: {
+    promptImportSuccessTitle: '导入成功',
+    promptImportSuccessDesc: '提示词已导入到您的个人提示词库',
+    promptImportFailedTitle: '导入失败',
+    promptImportFailedDesc: '导入提示词失败，请稍后重试',
+    folderImportSuccessTitle: '导入成功',
+    folderImportSuccessDesc: '文件夹已成功导入到您的个人文件夹',
+    folderImportFailedTitle: '导入失败',
+    folderImportFailedDesc: '导入失败，请稍后重试',
+    copiedTitle: '复制成功',
+    copiedDesc: '提示词内容已复制到剪贴板',
+    loading: '正在加载文件夹详情...',
+    notFound: '文件夹不存在',
+    back: '返回文件夹列表',
+    promptCount: (count: number) => `${count} 个提示词`,
+    importing: '导入中...',
+    importFolder: '导入文件夹',
+    includedPrompts: (count: number) => `包含的提示词 (${count})`,
+    emptyTitle: '暂无提示词',
+    emptyText: '这个文件夹中还没有公开的提示词',
+    viewDetail: '查看详情',
+    copied: '已复制',
+    copy: '复制',
+    description: '描述',
+    content: '提示词内容',
+    dateLocale: 'zh-CN',
+  },
+  en: {
+    promptImportSuccessTitle: 'Imported',
+    promptImportSuccessDesc: 'Prompt imported to your library.',
+    promptImportFailedTitle: 'Import failed',
+    promptImportFailedDesc: 'Prompt import failed. Please try again later.',
+    folderImportSuccessTitle: 'Imported',
+    folderImportSuccessDesc: 'Folder imported to your workspace.',
+    folderImportFailedTitle: 'Import failed',
+    folderImportFailedDesc: 'Import failed. Please try again later.',
+    copiedTitle: 'Copied',
+    copiedDesc: 'Prompt content copied to clipboard.',
+    loading: 'Loading folder details...',
+    notFound: 'Folder not found',
+    back: 'Back to folder library',
+    promptCount: (count: number) => `${count} prompt${count === 1 ? '' : 's'}`,
+    importing: 'Importing...',
+    importFolder: 'Copy prompts',
+    includedPrompts: (count: number) => `Included prompts (${count})`,
+    emptyTitle: 'No prompts yet',
+    emptyText: 'This collection does not contain public prompts yet.',
+    viewDetail: 'View details',
+    copied: 'Copied',
+    copy: 'Copy',
+    description: 'Description',
+    content: 'Prompt content',
+    dateLocale: 'en-US',
+  },
+}
 
 export default function PublicFolderDetailPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
   const folderId = parseInt(params.id as string)
+  const [locale, setLocale] = useState<Locale>('zh')
+  const [localeReady, setLocaleReady] = useState(false)
+  const copy = folderDetailCopy[locale]
+  const href = (path: string) => withLocaleHref(path, locale)
   
   const [folder, setFolder] = useState<PublicFolder | null>(null)
   const [prompts, setPrompts] = useState<PublicPrompt[]>([])
@@ -38,10 +100,15 @@ export default function PublicFolderDetailPage() {
   const [showPromptDialog, setShowPromptDialog] = useState(false)
 
   useEffect(() => {
-    if (folderId) {
+    setLocale(detectLocaleFromSearch())
+    setLocaleReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (folderId && localeReady) {
       fetchFolderDetail()
     }
-  }, [folderId])
+  }, [folderId, locale, localeReady])
 
   useEffect(() => {
     if (folder) {
@@ -52,11 +119,8 @@ export default function PublicFolderDetailPage() {
   const fetchFolderDetail = async () => {
     setLoading(true)
     try {
-      const response = await api.publicFolders.get(folderId)
-      console.log('Public folder detail response:', response)
+      const response = await api.publicFolders.get(folderId, locale)
       if (response.success && response.data) {
-        console.log('Folder data:', response.data)
-        console.log('Folder description:', response.data.description)
         setFolder(response.data)
       }
     } catch (error) {
@@ -69,11 +133,11 @@ export default function PublicFolderDetailPage() {
   const fetchFolderPrompts = async () => {
     try {
       // 使用apiRequest函数来确保添加认证头
-      const response = await api.publicFolders.getPrompts(folderId)
+      const response = await api.publicFolders.getPrompts(folderId, locale)
       if (response.success && response.data) {
         setPrompts(response.data)
       } else {
-        console.error('获取公共文件夹提示词失败:', response.error)
+        console.error('Failed to fetch public folder prompts:', response.error)
       }
     } catch (error) {
       console.error('Failed to fetch folder prompts:', error)
@@ -97,20 +161,26 @@ export default function PublicFolderDetailPage() {
   }
 
   const handleImportPrompt = async (promptId: number) => {
+    if (locale === 'en') {
+      const prompt = prompts.find(item => item.id === promptId)
+      if (prompt) await handleCopyPrompt(prompt)
+      return
+    }
+
     try {
       // 导入公共提示词到用户的个人提示词库
       const response = await api.publicPrompts.import(promptId)
       if (response.success) {
         toast({
-          title: '导入成功',
-          description: '提示词已导入到您的个人提示词库',
+          title: copy.promptImportSuccessTitle,
+          description: copy.promptImportSuccessDesc,
           variant: 'success',
         })
       } else {
         console.error('导入提示词失败:', response.error)
         toast({
-          title: '导入失败',
-          description: response.error || '导入提示词失败，请稍后重试',
+          title: copy.promptImportFailedTitle,
+          description: response.error || copy.promptImportFailedDesc,
           variant: 'destructive',
         })
       }
@@ -120,32 +190,45 @@ export default function PublicFolderDetailPage() {
   }
 
   const handleImportFolder = async () => {
+    if (locale === 'en') {
+      const content = prompts.map(prompt => `# ${prompt.title}\n\n${prompt.content}`).join('\n\n---\n\n')
+      if (content) {
+        await navigator.clipboard.writeText(content)
+        toast({
+          title: copy.copiedTitle,
+          description: copy.copiedDesc,
+          variant: 'success',
+        })
+      }
+      return
+    }
+
     setImporting(true)
     try {
       const response = await api.publicFolders.import(folderId)
       if (response.success) {
         toast({
-          title: '导入成功',
-          description: (response as any).message || '文件夹已成功导入到您的个人文件夹',
+          title: copy.folderImportSuccessTitle,
+          description: (response as any).message || copy.folderImportSuccessDesc,
           variant: 'success',
         })
         
         // 导入成功后跳转到用户的提示词页面
         setTimeout(() => {
-          router.push('/prompts')
+          router.push(href('/prompts'))
         }, 1500)
       } else {
         toast({
-          title: '导入失败',
-          description: response.error || '导入失败，请稍后重试',
+          title: copy.folderImportFailedTitle,
+          description: response.error || copy.folderImportFailedDesc,
           variant: 'destructive',
         })
       }
     } catch (error) {
       console.error('Failed to import folder:', error)
       toast({
-        title: '导入失败',
-        description: '导入失败，请稍后重试',
+        title: copy.folderImportFailedTitle,
+        description: copy.folderImportFailedDesc,
         variant: 'destructive',
       })
     } finally {
@@ -155,7 +238,7 @@ export default function PublicFolderDetailPage() {
 
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleDateString('zh-CN', {
+      return new Date(dateString).toLocaleDateString(copy.dateLocale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
@@ -172,7 +255,7 @@ export default function PublicFolderDetailPage() {
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600">正在加载文件夹详情...</span>
+            <span className="ml-2 text-gray-600">{copy.loading}</span>
           </div>
         </main>
       </div>
@@ -185,10 +268,10 @@ export default function PublicFolderDetailPage() {
         <Header />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">文件夹不存在</h1>
-            <Button onClick={() => router.push('/public-folders')}>
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">{copy.notFound}</h1>
+            <Button onClick={() => router.push(href('/public-folders'))}>
               <ArrowLeft className="h-4 w-4 mr-2" />
-              返回文件夹列表
+              {copy.back}
             </Button>
           </div>
         </main>
@@ -204,12 +287,12 @@ export default function PublicFolderDetailPage() {
         {/* 返回按钮 */}
         <div className="mb-6">
           <Button
-            onClick={() => router.push('/public-folders')}
+            onClick={() => router.push(href('/public-folders'))}
             variant="outline"
             className="mb-4"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
-            返回文件夹列表
+            {copy.back}
           </Button>
         </div>
 
@@ -228,7 +311,7 @@ export default function PublicFolderDetailPage() {
                     </div>
                     <div className="flex items-center space-x-1">
                       <FileText className="h-4 w-4" />
-                      <span>{prompts.length} 个提示词</span>
+                      <span>{copy.promptCount(prompts.length)}</span>
                     </div>
                     <div className="flex items-center space-x-1">
                       <Calendar className="h-4 w-4" />
@@ -247,7 +330,7 @@ export default function PublicFolderDetailPage() {
                 ) : (
                   <Download className="h-4 w-4 mr-2" />
                 )}
-                {importing ? '导入中...' : '导入文件夹'}
+                {importing ? copy.importing : copy.importFolder}
               </Button>
             </div>
           </CardHeader>
@@ -263,17 +346,17 @@ export default function PublicFolderDetailPage() {
         {/* 提示词列表 */}
         <div className="mb-8">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">
-            包含的提示词 ({prompts.length})
+            {copy.includedPrompts(prompts.length)}
           </h2>
           
           {prompts.length === 0 ? (
             <div className="text-center py-12">
               <FileText className="h-16 w-16 mx-auto text-gray-400 mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">
-                暂无提示词
+                {copy.emptyTitle}
               </h3>
               <p className="text-gray-600">
-                这个文件夹中还没有公开的提示词
+                {copy.emptyText}
               </p>
             </div>
           ) : (
@@ -321,7 +404,7 @@ export default function PublicFolderDetailPage() {
                           }}
                         >
                           <Eye className="h-4 w-4 mr-1" />
-                          查看详情
+                          {copy.viewDetail}
                         </Button>
                         <Button
                           size="sm"
@@ -336,7 +419,7 @@ export default function PublicFolderDetailPage() {
                           ) : (
                             <Copy className="h-4 w-4 mr-1" />
                           )}
-                          {copiedPromptId === prompt.id ? '已复制' : '复制'}
+                          {copiedPromptId === prompt.id ? copy.copied : copy.copy}
                         </Button>
                       </div>
                     </div>
@@ -374,7 +457,7 @@ export default function PublicFolderDetailPage() {
               {/* 描述 */}
               {selectedPrompt.description && (
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-2">描述</h3>
+                  <h3 className="font-semibold text-gray-900 mb-2">{copy.description}</h3>
                   <p className="text-gray-700 leading-relaxed">
                     {selectedPrompt.description}
                   </p>
@@ -384,13 +467,13 @@ export default function PublicFolderDetailPage() {
               {/* 提示词内容 */}
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-gray-900">提示词内容</h3>
+                  <h3 className="font-semibold text-gray-900">{copy.content}</h3>
                   <Button
                     onClick={() => {
                       navigator.clipboard.writeText(selectedPrompt.content)
                       toast({
-                        title: '复制成功',
-                        description: '提示词内容已复制到剪贴板',
+                        title: copy.copiedTitle,
+                        description: copy.copiedDesc,
                         variant: 'success',
                       })
                     }}
@@ -398,7 +481,7 @@ export default function PublicFolderDetailPage() {
                     className="bg-blue-600 hover:bg-blue-700 text-white"
                   >
                     <Copy className="h-4 w-4 mr-1" />
-                    复制
+                    {copy.copy}
                   </Button>
                 </div>
                 <div className="bg-gray-50 p-4 rounded-lg border">

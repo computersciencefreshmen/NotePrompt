@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { englishFeaturedPrompts } from '@/data/english-featured-prompts'
 
 // GET - 获取公共提示词详情
 export async function GET(
@@ -10,16 +11,31 @@ export async function GET(
   try {
     const { id: idStr } = await params
     const id = parseInt(idStr)
+    const { searchParams } = new URL(request.url)
+    const lang = searchParams.get('lang') || 'zh'
 
     // 验证ID是否为有效数字
     if (isNaN(id) || id <= 0) {
       return NextResponse.json(
-        { success: false, error: '无效的提示词ID' },
+        { success: false, error: lang === 'en' ? 'Invalid prompt ID' : '无效的提示词ID' },
         { status: 400 }
       )
     }
 
-    console.log('获取公共提示词详情 - ID:', id)
+    if (lang === 'en') {
+      const prompt = englishFeaturedPrompts.find(item => item.id === id)
+      if (!prompt) {
+        return NextResponse.json(
+          { success: false, error: 'Prompt not found' },
+          { status: 404 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: prompt,
+      })
+    }
 
     // 获取提示词详情
     const prompt = await db.getPublicPromptById(id)
@@ -34,7 +50,7 @@ export async function GET(
     try {
       await db.incrementPromptViews(id)
     } catch (error) {
-      console.error('增加浏览次数失败:', error)
+      console.error('Failed to increment prompt views:', error)
       // 不影响主要功能，继续执行
     }
 
@@ -45,7 +61,7 @@ export async function GET(
   } catch (error) {
     console.error('Get public prompt error:', error)
     return NextResponse.json(
-      { success: false, error: '获取提示词失败', details: error instanceof Error ? error.message : 'Unknown error' },
+      { success: false, error: 'Failed to fetch prompt', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }

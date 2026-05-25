@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findEnglishFeaturedFolder } from '@/data/english-featured-folders'
 
 // GET - 获取公共文件夹详情
 export async function GET(
@@ -10,13 +11,30 @@ export async function GET(
   try {
     const { id: idStr } = await params
     const id = parseInt(idStr)
+    const { searchParams } = new URL(request.url)
+    const lang = searchParams.get('lang') || 'zh'
 
     // 验证ID是否为有效数字
     if (isNaN(id) || id <= 0) {
       return NextResponse.json(
-        { success: false, error: '无效的文件夹ID' },
+        { success: false, error: lang === 'en' ? 'Invalid folder ID' : '无效的文件夹ID' },
         { status: 400 }
       )
+    }
+
+    if (lang === 'en') {
+      const folder = findEnglishFeaturedFolder(id)
+      if (!folder) {
+        return NextResponse.json(
+          { success: false, error: 'Folder not found' },
+          { status: 404 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: folder,
+      })
     }
 
     // 获取文件夹详情
@@ -35,7 +53,7 @@ export async function GET(
   } catch (error) {
     console.error('Get public folder error:', error)
     return NextResponse.json(
-      { success: false, error: '获取文件夹失败' },
+      { success: false, error: 'Failed to fetch folder' },
       { status: 500 }
     )
   }

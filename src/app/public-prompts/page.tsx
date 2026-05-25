@@ -70,6 +70,7 @@ const publicPromptCopy = {
 
 export default function PublicPromptsPage() {
   const [locale, setLocale] = useState<Locale>('zh')
+  const [localeReady, setLocaleReady] = useState(false)
   const [prompts, setPrompts] = useState<PublicPrompt[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
@@ -93,6 +94,7 @@ export default function PublicPromptsPage() {
 
   useEffect(() => {
     setLocale(detectLocaleFromSearch())
+    setLocaleReady(true)
   }, [])
 
   const mergeUniquePrompts = (current: PublicPrompt[], incoming: PublicPrompt[]) => {
@@ -146,15 +148,11 @@ export default function PublicPromptsPage() {
     }
   }
 
-  // 初始加载提示词
-  useEffect(() => {
-    fetchPrompts({ page: 1 })
-  }, [])
-
   // 排序、搜索、标签变化时自动刷新
   useEffect(() => {
+    if (!localeReady) return
     fetchPrompts({ page: 1 })
-  }, [searchTerm, selectedTag, sort, locale])
+  }, [searchTerm, selectedTag, sort, locale, localeReady])
 
   const handleLocaleChange = (nextLocale: Locale) => {
     setLocale(nextLocale)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
+import { getEnglishFeaturedFolderPrompts } from '@/data/english-featured-folders'
 
 export async function GET(
   request: NextRequest,
@@ -8,15 +9,30 @@ export async function GET(
   try {
     const { id: idStr } = await params
     const id = parseInt(idStr)
+    const { searchParams } = new URL(request.url)
+    const lang = searchParams.get('lang') || 'zh'
 
     if (isNaN(id)) {
       return NextResponse.json(
-        { success: false, error: '无效的文件夹ID' },
+        { success: false, error: lang === 'en' ? 'Invalid folder ID' : '无效的文件夹ID' },
         { status: 400 }
       )
     }
 
-    console.log('获取公共文件夹提示词，文件夹ID:', id)
+    if (lang === 'en') {
+      const prompts = getEnglishFeaturedFolderPrompts(id)
+      if (!prompts) {
+        return NextResponse.json(
+          { success: false, error: 'Folder not found' },
+          { status: 404 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: prompts,
+      })
+    }
 
     // 获取公共文件夹信息
     const publicFolder = await db.getPublicFolderById(id)
@@ -44,17 +60,15 @@ export async function GET(
     const result = await db.query(query, [originalFolderId])
     const prompts = (result.rows as Record<string, unknown>[]) || []
 
-    console.log('查询到的提示词数量:', prompts.length)
-
     return NextResponse.json({
       success: true,
       data: prompts
     })
 
   } catch (error) {
-    console.error('获取公共文件夹提示词失败:', error)
+    console.error('Failed to fetch public folder prompts:', error)
     return NextResponse.json(
-      { success: false, error: '获取文件夹提示词失败' },
+      { success: false, error: 'Failed to fetch folder prompts' },
       { status: 500 }
     )
   }

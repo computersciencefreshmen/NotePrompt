@@ -1,16 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
+import { englishFeaturedFolders } from '@/data/english-featured-folders'
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('开始处理公共文件夹列表请求...')
-    
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '10')
     const search = searchParams.get('search') || ''
-    
-    console.log('请求参数:', { page, limit, search })
+    const lang = searchParams.get('lang') || 'zh'
+
+    if (lang === 'en') {
+      const normalizedSearch = search.trim().toLowerCase()
+      const filteredItems = englishFeaturedFolders.filter(folder => {
+        if (!normalizedSearch) return true
+        return [folder.name, folder.description, folder.author].join(' ').toLowerCase().includes(normalizedSearch)
+      })
+      const offset = (page - 1) * limit
+      const pagedItems = filteredItems.slice(offset, offset + limit)
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          items: pagedItems,
+          total: filteredItems.length,
+          page,
+          limit,
+          totalPages: Math.ceil(filteredItems.length / limit),
+        },
+      })
+    }
     
     // 构建查询条件
     const whereConditions: string[] = []
@@ -52,15 +71,11 @@ export async function GET(request: NextRequest) {
       ${whereClause}
     `
     
-    console.log('执行计数查询...')
     const countResult = await db.query(countQuery, queryParams)
     const total = (countResult.rows as { total: number }[])[0]?.total || 0
-    console.log('总数:', total)
-    
-    console.log('执行主查询...')
+
     const result = await db.query(query, queryParams)
     const items = result.rows || []
-    console.log('查询结果数量:', Array.isArray(items) ? items.length : 0)
     
     // 处理数据，确保返回正确的字段
     const processedItems = (items as Array<{
@@ -89,14 +104,6 @@ export async function GET(request: NextRequest) {
     
     const totalPages = Math.ceil(total / limit)
     
-    console.log('返回数据:', { 
-      itemsCount: processedItems.length, 
-      total, 
-      page, 
-      limit, 
-      totalPages 
-    })
-    
     return NextResponse.json({
       success: true,
       data: { 
@@ -108,8 +115,8 @@ export async function GET(request: NextRequest) {
       }
     })
   } catch (error) {
-    console.error('获取公共文件夹失败:', error)
-    console.error('错误详情:', {
+    console.error('Failed to fetch public folders:', error)
+    console.error('Public folders error details:', {
       message: error instanceof Error ? error.message : '未知错误',
       stack: error instanceof Error ? error.stack : undefined,
       name: error instanceof Error ? error.name : undefined
@@ -117,8 +124,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { 
         success: false, 
-        error: '获取公共文件夹列表失败',
-        details: error instanceof Error ? error.message : '未知错误'
+        error: 'Failed to fetch public folder list',
+        details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     )

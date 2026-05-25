@@ -21,12 +21,64 @@ import {
   Heart,
   Download
 } from 'lucide-react'
+import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
+
+const promptDetailCopy = {
+  zh: {
+    loginToFavorite: '请先登录后再收藏',
+    unfavorited: '已取消收藏',
+    favorited: '收藏成功',
+    favoriteFailed: '收藏失败',
+    actionFailed: '操作失败，请稍后重试',
+    loading: '正在加载提示词详情...',
+    notFound: '提示词不存在',
+    back: '返回提示词列表',
+    views: (count: number) => `${count} 次浏览`,
+    processing: '处理中...',
+    favoritedButton: '已收藏',
+    favorite: '收藏',
+    copied: '已复制',
+    copy: '复制',
+    description: '描述',
+    content: '提示词内容',
+    favoritesStat: (count: number) => `收藏: ${count}`,
+    viewsStat: (count: number) => `浏览: ${count}`,
+    tags: '标签:',
+    dateLocale: 'zh-CN',
+  },
+  en: {
+    loginToFavorite: 'Log in before saving prompts.',
+    unfavorited: 'Removed from favorites',
+    favorited: 'Saved to favorites',
+    favoriteFailed: 'Could not save favorite',
+    actionFailed: 'Action failed. Please try again later.',
+    loading: 'Loading prompt details...',
+    notFound: 'Prompt not found',
+    back: 'Back to prompt library',
+    views: (count: number) => `${count} view${count === 1 ? '' : 's'}`,
+    processing: 'Processing...',
+    favoritedButton: 'Saved',
+    favorite: 'Save',
+    copied: 'Copied',
+    copy: 'Copy',
+    description: 'Description',
+    content: 'Prompt content',
+    favoritesStat: (count: number) => `Saves: ${count}`,
+    viewsStat: (count: number) => `Views: ${count}`,
+    tags: 'Tags:',
+    dateLocale: 'en-US',
+  },
+}
 
 export default function PublicPromptDetailPage() {
   const params = useParams()
   const router = useRouter()
   const { user } = useAuth()
   const promptId = parseInt(params.id as string)
+  const [locale, setLocale] = useState<Locale>('zh')
+  const [localeReady, setLocaleReady] = useState(false)
+  const copy = promptDetailCopy[locale]
+  const href = (path: string) => withLocaleHref(path, locale)
   
   const [prompt, setPrompt] = useState<PublicPrompt | null>(null)
   const [loading, setLoading] = useState(true)
@@ -35,10 +87,15 @@ export default function PublicPromptDetailPage() {
   const [favoriting, setFavoriting] = useState(false)
 
   useEffect(() => {
-    if (promptId) {
+    setLocale(detectLocaleFromSearch())
+    setLocaleReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (promptId && localeReady) {
       fetchPromptDetail()
     }
-  }, [promptId])
+  }, [promptId, locale, localeReady])
 
   // 检查当前用户是否已收藏
   useEffect(() => {
@@ -62,7 +119,7 @@ export default function PublicPromptDetailPage() {
   const fetchPromptDetail = async () => {
     setLoading(true)
     try {
-      const response = await api.publicPrompts.get(promptId)
+      const response = await api.publicPrompts.get(promptId, locale)
       if (response.success && response.data) {
         setPrompt(response.data)
       }
@@ -89,8 +146,8 @@ export default function PublicPromptDetailPage() {
     if (!prompt) return
 
     if (!user) {
-      toast({ description: '请先登录后再收藏', variant: 'destructive' })
-      router.push('/login')
+      toast({ description: copy.loginToFavorite, variant: 'destructive' })
+      router.push(href('/login'))
       return
     }
 
@@ -101,21 +158,21 @@ export default function PublicPromptDetailPage() {
         if (response.success) {
           setIsFavorited(false)
           setPrompt({ ...prompt, favorites_count: Math.max(0, (prompt.favorites_count || 0) - 1) })
-          toast({ description: '已取消收藏' })
+          toast({ description: copy.unfavorited })
         }
       } else {
         const response = await api.favorites.add(prompt.id)
         if (response.success) {
           setIsFavorited(true)
           setPrompt({ ...prompt, favorites_count: (prompt.favorites_count || 0) + 1 })
-          toast({ description: '收藏成功' })
+          toast({ description: copy.favorited })
         } else {
-          toast({ description: ('error' in response ? response.error : '收藏失败') || '收藏失败', variant: 'destructive' })
+          toast({ description: ('error' in response ? response.error : copy.favoriteFailed) || copy.favoriteFailed, variant: 'destructive' })
         }
       }
     } catch (error) {
       console.error('Failed to favorite prompt:', error)
-      toast({ description: '操作失败，请稍后重试', variant: 'destructive' })
+      toast({ description: copy.actionFailed, variant: 'destructive' })
     } finally {
       setFavoriting(false)
     }
@@ -123,7 +180,7 @@ export default function PublicPromptDetailPage() {
 
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleDateString('zh-CN', {
+      return new Date(dateString).toLocaleDateString(copy.dateLocale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
@@ -140,7 +197,7 @@ export default function PublicPromptDetailPage() {
         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600">正在加载提示词详情...</span>
+            <span className="ml-2 text-gray-600">{copy.loading}</span>
           </div>
         </main>
       </div>
@@ -153,10 +210,10 @@ export default function PublicPromptDetailPage() {
         <Header />
         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">提示词不存在</h1>
-            <Button onClick={() => router.push('/public-prompts')}>
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">{copy.notFound}</h1>
+            <Button onClick={() => router.push(href('/public-prompts'))}>
               <ArrowLeft className="h-4 w-4 mr-2" />
-              返回提示词列表
+              {copy.back}
             </Button>
           </div>
         </main>
@@ -172,12 +229,12 @@ export default function PublicPromptDetailPage() {
         {/* 返回按钮 */}
         <div className="mb-6">
           <Button
-            onClick={() => router.push('/public-prompts')}
+            onClick={() => router.push(href('/public-prompts'))}
             variant="outline"
             className="mb-4"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
-            返回提示词列表
+            {copy.back}
           </Button>
         </div>
 
@@ -200,22 +257,24 @@ export default function PublicPromptDetailPage() {
                     </div>
                     <div className="flex items-center space-x-1">
                       <Eye className="h-4 w-4" />
-                      <span>{prompt.views_count || 0} 次浏览</span>
+                      <span>{copy.views(prompt.views_count || 0)}</span>
                     </div>
                   </div>
                 </div>
               </div>
               <div className="flex items-center space-x-2">
-                <Button
-                  onClick={handleFavorite}
-                  variant={isFavorited ? 'default' : 'outline'}
-                  size="sm"
-                  disabled={favoriting}
-                  className={isFavorited ? 'bg-red-500 hover:bg-red-600 text-white' : ''}
-                >
-                  <Heart className={`h-4 w-4 mr-1 ${isFavorited ? 'fill-current' : ''}`} />
-                  {favoriting ? '处理中...' : isFavorited ? '已收藏' : '收藏'}
-                </Button>
+                {locale === 'zh' && (
+                  <Button
+                    onClick={handleFavorite}
+                    variant={isFavorited ? 'default' : 'outline'}
+                    size="sm"
+                    disabled={favoriting}
+                    className={isFavorited ? 'bg-red-500 hover:bg-red-600 text-white' : ''}
+                  >
+                    <Heart className={`h-4 w-4 mr-1 ${isFavorited ? 'fill-current' : ''}`} />
+                    {favoriting ? copy.processing : isFavorited ? copy.favoritedButton : copy.favorite}
+                  </Button>
+                )}
                 <Button
                   onClick={handleCopyPrompt}
                   className="bg-blue-600 hover:bg-blue-700 text-white"
@@ -226,7 +285,7 @@ export default function PublicPromptDetailPage() {
                   ) : (
                     <Copy className="h-4 w-4 mr-1" />
                   )}
-                  {copied ? '已复制' : '复制'}
+                  {copied ? copy.copied : copy.copy}
                 </Button>
               </div>
             </div>
@@ -235,7 +294,7 @@ export default function PublicPromptDetailPage() {
             {/* 描述 */}
             {prompt.description && (
               <div>
-                <h3 className="font-semibold text-gray-900 mb-2">描述</h3>
+                <h3 className="font-semibold text-gray-900 mb-2">{copy.description}</h3>
                 <p className="text-gray-700 leading-relaxed">
                   {prompt.description}
                 </p>
@@ -245,7 +304,7 @@ export default function PublicPromptDetailPage() {
             {/* 提示词内容 */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-gray-900">提示词内容</h3>
+                <h3 className="font-semibold text-gray-900">{copy.content}</h3>
                 <Button
                   onClick={handleCopyPrompt}
                   size="sm"
@@ -256,7 +315,7 @@ export default function PublicPromptDetailPage() {
                   ) : (
                     <Copy className="h-4 w-4 mr-1" />
                   )}
-                  {copied ? '已复制' : '复制'}
+                  {copied ? copy.copied : copy.copy}
                 </Button>
               </div>
               <div className="bg-gray-50 p-6 rounded-lg border">
@@ -270,18 +329,18 @@ export default function PublicPromptDetailPage() {
             <div className="flex items-center space-x-6 text-sm text-gray-600 pt-4 border-t">
               <div className="flex items-center space-x-1">
                 <Heart className="h-4 w-4" />
-                <span>收藏: {prompt.favorites_count || 0}</span>
+                <span>{copy.favoritesStat(prompt.favorites_count || 0)}</span>
               </div>
               <div className="flex items-center space-x-1">
                 <Eye className="h-4 w-4" />
-                <span>浏览: {prompt.views_count || 0}</span>
+                <span>{copy.viewsStat(prompt.views_count || 0)}</span>
               </div>
             </div>
 
             {/* 标签 */}
             {prompt.tags && prompt.tags.length > 0 && (
               <div className="flex items-center space-x-2 pt-4 border-t">
-                <span className="text-sm font-medium text-gray-700">标签:</span>
+                <span className="text-sm font-medium text-gray-700">{copy.tags}</span>
                 {prompt.tags.map((tag, index) => (
                   <span
                     key={`public-detail-tag-${prompt.id}-${index}`}

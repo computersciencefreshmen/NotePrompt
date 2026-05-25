@@ -132,7 +132,7 @@ function LoginContent() {
         }
         toast({
           title: copy.failed,
-          description: result.error || copy.wrongCredentials,
+          description: locale === 'en' ? copy.wrongCredentials : result.error || copy.wrongCredentials,
           variant: 'destructive',
         });
       }

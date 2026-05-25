@@ -74,7 +74,7 @@ export default function Header() {
   const { user, logout, loading } = useAuth()
   const { visualStyle, setVisualStyle } = useUISettings()
   const router = useRouter()
-  const [locale, setLocale] = useState<Locale>(() => detectLocaleFromSearch())
+  const [locale, setLocale] = useState<Locale>('zh')
   const copy = headerCopy[locale]
 
   useEffect(() => {

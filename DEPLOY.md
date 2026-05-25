@@ -200,6 +200,49 @@ echo "0 3 * * 1 certbot renew --quiet && cp /etc/letsencrypt/live/noteprompt.cn/
 
 > **注意**：不要开放 3306/6379 端口到公网！
 
+### 5.1 临时放通 SSH 部署入口
+
+如果本地执行 `node deploy-latest.js` 报错：
+
+```text
+connect ECONNREFUSED 8.138.176.174:22
+```
+
+优先检查阿里云安全组，而不是改代码或重置服务器。当前实例的 SSH 配置是：
+
+| 项目 | 值 |
+|------|-----|
+| 实例 | i-7xvi62v5d8qzevu0cs84 |
+| 公网 IP | 8.138.176.174 |
+| 地域 | 华南3（广州） |
+| SSH 用户 | root |
+| SSH 端口 | 22 |
+| 项目目录 | /opt/note-prompt |
+
+手机端阿里云 App 操作步骤：
+
+1. 进入 ECS 实例详情页。
+2. 切到 **安全组** 标签页。
+3. 进入当前实例已经绑定的安全组，选择 **配置规则**。
+4. 添加入方向规则：
+	- 授权策略：允许
+	- 协议类型：自定义 TCP
+	- 端口范围：22/22
+	- 授权对象：当前本机公网 IP `/32`，例如 `210.79.151.21/32`
+	- 优先级：1 或默认高优先级
+	- 描述：Temporary SSH deploy access
+5. 保存后在本地验证：
+
+```powershell
+Test-NetConnection 8.138.176.174 -Port 22
+```
+
+看到 `TcpTestSucceeded : True` 后再运行部署脚本。
+
+> 不要在“创建安全组”页面新建安全组。新建安全组需要选择当前实例所在 VPC，容易出现 `NotFoundSelectVpc`，而且新建后还要再绑定到实例。部署时最快、风险最低的做法是修改当前实例已绑定的安全组入方向规则。
+
+部署结束后建议把 22 端口规则删除，或继续限制为个人固定公网 IP，不要设置为 `0.0.0.0/0`。
+
 ---
 
 ## 六、常用运维命令
@@ -229,6 +272,117 @@ systemctl status mysqld
 mysqldump -u root -p agent_report > backup_$(date +%Y%m%d).sql
 ```
 
+### 6.1 V2 标准部署命令
+
+当 SSH 已放通后，本地推荐直接运行：
+
+```powershell
+cd C:\Users\Henry\Desktop\毕业设计\note-prompt
+node deploy-latest.js
+```
+
+如果使用阿里云 Workbench 登录服务器，也可以在服务器执行：
+
+```bash
+cd /opt/note-prompt
+git fetch origin
+git checkout main
+git reset --hard origin/main
+docker compose build note-prompt-app
+docker compose up -d
+sleep 30
+curl -sk https://noteprompt.cn/api/v1/health-check
+curl -sk "https://noteprompt.cn/api/v1/public-prompts?lang=en&page=1&limit=3"
+curl -sk "https://noteprompt.cn/api/v1/public-folders?lang=en&page=1&limit=3"
+```
+
+### 6.2 V2 回滚命令
+
+V2 上线前已在 GitHub 保留回滚点：
+
+| 用途 | Git ref | Commit |
+|------|---------|--------|
+| 当前部署分支 | main | 以 GitHub 最新 `origin/main` 为准 |
+| V2 功能发布标签 | noteprompt-v2-local-2026-05-25 | d144739 |
+| V2 前线上版本分支 | rollback/noteprompt-prod-before-v2-2026-05-25 | 07a24b9 |
+| V2 前线上版本标签 | noteprompt-prod-before-v2-2026-05-25 | 07a24b9 |
+
+如需回滚：
+
+```bash
+cd /opt/note-prompt
+git fetch origin --tags
+git checkout main
+git reset --hard noteprompt-prod-before-v2-2026-05-25
+docker compose build note-prompt-app
+docker compose up -d
+curl -sk https://noteprompt.cn/api/v1/health-check
+```
+
+如果确认要让 GitHub `main` 也回退：
+
+```powershell
+cd C:\Users\Henry\Desktop\毕业设计\note-prompt
+git push origin noteprompt-prod-before-v2-2026-05-25:main --force-with-lease
+```
+
+### 6.3 V2 上线后验证清单
+
+```bash
+curl -sk https://noteprompt.cn/api/v1/health-check
+curl -sk "https://noteprompt.cn/api/v1/public-prompts?lang=en&page=1&limit=3"
+curl -sk "https://noteprompt.cn/api/v1/public-prompts/900001?lang=en"
+curl -sk "https://noteprompt.cn/api/v1/public-folders?lang=en&page=1&limit=3"
+curl -sk "https://noteprompt.cn/api/v1/public-folders/910001?lang=en"
+curl -sk "https://noteprompt.cn/api/v1/public-folders/910001/prompts?lang=en"
+```
+
+浏览器验证：
+
+- `https://noteprompt.cn/?lang=en`
+- `https://noteprompt.cn/login?lang=en`
+- `https://noteprompt.cn/register?lang=en`
+- `https://noteprompt.cn/public-prompts?lang=en`
+- `https://noteprompt.cn/public-prompts/900001?lang=en`
+- `https://noteprompt.cn/public-folders?lang=en`
+- `https://noteprompt.cn/public-folders/910001?lang=en`
+- `https://noteprompt.cn/optimizer?lang=en`
+
+英文页面重点检查：公共提示词、公共文件夹、文件夹详情、提示词详情不应再显示中文模板内容。
+
+### 6.4 部署记录模板
+
+每次公网部署成功后，在这里追加一条记录，方便回滚和复盘：
+
+```text
+日期：YYYY-MM-DD HH:mm
+部署人：
+部署方式：deploy-latest.js / Workbench 手动命令 / 其他
+Git commit：
+Git tag：
+服务器目录：/opt/note-prompt
+部署命令：
+验证结果：
+- health-check：通过/失败
+- public-prompts English API：通过/失败
+- public-folders English API：通过/失败
+- 关键页面：通过/失败
+异常与处理：
+是否清理 SSH 22 临时放通规则：是/否
+回滚点：
+```
+
+#### 2026-05-25 V2 待部署记录
+
+```text
+状态：代码已推送 GitHub，公网部署待 SSH 放通后执行
+部署分支：origin/main
+V2 功能 tag：noteprompt-v2-local-2026-05-25
+回滚 tag：noteprompt-prod-before-v2-2026-05-25
+阻塞原因：8.138.176.174:22 当前不可达，80/443 正常
+下一步：在当前 ECS 已绑定安全组中临时允许当前公网 IP 访问 TCP 22，然后运行 deploy-latest.js
+```
+
 ---
 
 ## 七、问题排查
@@ -247,6 +401,42 @@ netstat -tlnp | grep -E '80|443|3000'
 # 检查安全组
 # 登录阿里云控制台检查安全组规则
 ```
+
+### SSH 无法连接
+
+本地检查：
+
+```powershell
+Test-NetConnection 8.138.176.174 -Port 22
+```
+
+如果返回 `False`，通常是安全组没有放通当前公网 IP，或服务器 `sshd` 未运行。优先处理安全组：
+
+1. 阿里云 ECS → 实例 → 安全组 → 配置规则。
+2. 入方向临时添加 `TCP 22`，授权对象填写当前公网 IP `/32`。
+3. 再次测试 `Test-NetConnection`。
+
+如果 22 端口已放通但仍不可达，使用阿里云控制台 **Workbench远程连接** 登录服务器检查：
+
+```bash
+systemctl status sshd
+systemctl restart sshd
+ss -tlnp | grep ':22'
+```
+
+### 阿里云提示 SuspiciousProcess
+
+安全中心出现 `Suspicious:SuspiciousProcess:serious` 时，不要直接忽略。先登录服务器检查最近进程和容器：
+
+```bash
+ps aux --sort=-%cpu | head -30
+docker ps
+docker logs --tail 100 note-prompt-app
+docker logs --tail 100 note-prompt-nginx
+last -a | head -20
+```
+
+如果告警时间正好对应部署构建，且进程为 `node`、`npm`、`next build`、`docker build` 等构建行为，可以在阿里云安全中心标记为误报；如果出现陌生下载命令、矿池地址、异常二进制文件，应先停机隔离并备份日志。
 
 ### 邮件发送失败
 ```bash

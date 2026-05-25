@@ -9,8 +9,9 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - HOSTNAME=0.0.0.0
       # MySQL数据库配置
-      - MYSQL_HOST=192.168.3.13
+      - MYSQL_HOST=${MYSQL_HOST:-docker_mysql8}
       - MYSQL_PORT=3306
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
@@ -45,6 +46,7 @@ services:
     restart: unless-stopped
     networks:
       - note-prompt-network
+      - mysql8_default
 
   # Redis缓存服务
   redis:
@@ -79,3 +81,5 @@ volumes:
 networks:
   note-prompt-network:
     driver: bridge
+  mysql8_default:
+    external: true

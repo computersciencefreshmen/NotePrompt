@@ -24,7 +24,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const body: LoginRequest = await request.json()
+    let body: LoginRequest
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json<AuthResponse>({
+        success: false,
+        error: 'Invalid JSON request body'
+      }, { status: 400 })
+    }
     const { username, password } = body
 
     if (!username || !password) {

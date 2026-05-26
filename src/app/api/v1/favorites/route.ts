@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { ensureCuratedPublicPromptPersisted, getCuratedPublicPromptById } from '@/lib/curated-public-prompts'
 
 // GET - 获取收藏列表（需要认证）
 export async function GET(request: NextRequest) {
@@ -102,8 +103,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const publicPromptId = Number(public_prompt_id)
+    if (!Number.isInteger(publicPromptId) || publicPromptId <= 0) {
+      return NextResponse.json(
+        { success: false, error: '无效的提示词ID' },
+        { status: 400 }
+      )
+    }
+
+    const curatedPrompt = getCuratedPublicPromptById(publicPromptId)
+    if (curatedPrompt) {
+      await ensureCuratedPublicPromptPersisted(curatedPrompt)
+    }
+
     // 先检查是否已经收藏
-    const isAlreadyFavorited = await db.isFavoritedByUser(user_id, public_prompt_id)
+    const isAlreadyFavorited = await db.isFavoritedByUser(user_id, publicPromptId)
     
     if (isAlreadyFavorited) {
       return NextResponse.json(
@@ -113,7 +127,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 添加收藏
-    const success = await db.addFavorite(user_id, public_prompt_id)
+    const success = await db.addFavorite(user_id, publicPromptId)
     
     if (!success) {
       return NextResponse.json(

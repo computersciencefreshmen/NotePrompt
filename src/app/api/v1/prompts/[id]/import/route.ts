@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import db from '@/lib/mysql-database'
+import { ensureCuratedPublicPromptPersisted, getCuratedPublicPromptById } from '@/lib/curated-public-prompts'
 
 // POST - 导入单个提示词到用户库
 export async function POST(
@@ -26,6 +27,11 @@ export async function POST(
 
     const body = await request.json()
     const { folder_id } = body
+
+    const curatedPrompt = getCuratedPublicPromptById(promptId)
+    if (curatedPrompt) {
+      await ensureCuratedPublicPromptPersisted(curatedPrompt)
+    }
 
     // 获取用户的默认文件夹
     let targetFolderId = folder_id

@@ -2,7 +2,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { englishFeaturedPrompts } from '@/data/english-featured-prompts'
+import { getCuratedPublicPrompts, hydrateCuratedPublicPrompts } from '@/lib/curated-public-prompts'
+
+function sortPublicPrompts<T extends { created_at: string; favorites_count: number; views_count: number }>(items: T[], sort: string) {
+  return [...items].sort((a, b) => {
+    if (sort === 'latest') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    return (b.favorites_count - a.favorites_count) || (b.views_count - a.views_count) || (new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  })
+}
+
+async function getOptionalUserId(request: NextRequest) {
+  try {
+    const auth = await requireAuth(request)
+    if (!('error' in auth)) return auth.user.id
+  } catch {
+    return null
+  }
+  return null
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,10 +31,12 @@ export async function GET(request: NextRequest) {
     const lang = searchParams.get('lang') || 'zh'
     const sort = searchParams.get('sort') || 'latest'
 
+    const userId = await getOptionalUserId(request)
+
     if (lang === 'en') {
       const normalizedSearch = search.trim().toLowerCase()
       const normalizedTag = tag.trim().toLowerCase()
-      const filteredItems = englishFeaturedPrompts.filter(prompt => {
+      const filteredItems = getCuratedPublicPrompts('en').filter(prompt => {
         const matchesSearch = !normalizedSearch || [prompt.title, prompt.description || '', prompt.content, prompt.category, ...prompt.tags]
           .join(' ')
           .toLowerCase()
@@ -25,10 +44,8 @@ export async function GET(request: NextRequest) {
         const matchesTag = !normalizedTag || prompt.tags.some(item => item.toLowerCase() === normalizedTag) || prompt.category.toLowerCase() === normalizedTag
         return matchesSearch && matchesTag
       })
-      const sortedItems = [...filteredItems].sort((a, b) => {
-        if (sort === 'latest') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        return (b.favorites_count + b.views_count) - (a.favorites_count + a.views_count)
-      })
+      const hydratedItems = await hydrateCuratedPublicPrompts(filteredItems, userId)
+      const sortedItems = sortPublicPrompts(hydratedItems, sort)
       const offset = (page - 1) * limit
       const pagedItems = sortedItems.slice(offset, offset + limit)
       const total = sortedItems.length
@@ -45,19 +62,8 @@ export async function GET(request: NextRequest) {
       })
     }
     
-    // 尝试获取用户信息（可选）
-    let userId: number | null = null
-    try {
-      const auth = await requireAuth(request)
-      if (!('error' in auth)) {
-        userId = auth.user.id
-      }
-    } catch (authError) {
-      // 用户未登录，继续执行
-    }
-    
     // 构建查询条件
-    const whereConditions: string[] = []
+    const whereConditions: string[] = ['pp.id < 900000']
     const queryParams: (string | number)[] = []
     
     if (search) {
@@ -73,15 +79,6 @@ export async function GET(request: NextRequest) {
     
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : ''
     
-    // 排序
-    let orderClause = 'ORDER BY pp.created_at DESC'
-    if (sort === 'favorites') {
-      orderClause = 'ORDER BY pp.views_count DESC, pp.created_at DESC'
-    }
-    
-    // 分页计算
-    const offset = (page - 1) * limit
-    
     // 主查询
     const query = `
       SELECT pp.id, pp.title, pp.content, pp.description, pp.views_count,
@@ -90,20 +87,8 @@ export async function GET(request: NextRequest) {
       FROM public_prompts pp
       JOIN users u ON pp.author_id = u.id
       ${whereClause}
-      ${orderClause}
-      LIMIT ${limit} OFFSET ${offset}
     `
     
-    // 计数查询
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM public_prompts pp
-      JOIN users u ON pp.author_id = u.id
-      ${whereClause}
-    `
-    
-    const countResult = await db.query(countQuery, queryParams)
-    const total = (countResult.rows as { total: number }[])[0]?.total || 0
     const result = await db.query(query, queryParams)
     const items = result.rows || []
     
@@ -150,13 +135,29 @@ export async function GET(request: NextRequest) {
         is_favorited: isFavorited
       }
     }))
+    const normalizedSearch = search.trim().toLowerCase()
+    const normalizedTag = tag.trim().toLowerCase()
+    const curatedItems = getCuratedPublicPrompts('zh').filter(prompt => {
+      const matchesSearch = !normalizedSearch || [prompt.title, prompt.description || '', prompt.content, prompt.category, ...prompt.tags]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedSearch)
+      const matchesTag = !normalizedTag || prompt.tags.some(item => item.toLowerCase() === normalizedTag) || prompt.category.toLowerCase() === normalizedTag
+      return matchesSearch && matchesTag
+    })
+    const hydratedCuratedItems = await hydrateCuratedPublicPrompts(curatedItems, userId)
+    const allItems = sortPublicPrompts([...processedItems, ...hydratedCuratedItems], sort)
+
+    const offset = (page - 1) * limit
+    const pagedItems = allItems.slice(offset, offset + limit)
+    const total = allItems.length
     
     const totalPages = Math.ceil(total / limit)
     
     return NextResponse.json({
       success: true,
       data: { 
-        items: processedItems, 
+        items: pagedItems,
         total, 
         page, 
         limit, 

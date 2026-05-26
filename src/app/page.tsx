@@ -26,8 +26,8 @@ const homeCopy = {
   zh: {
     nav: { product: '产品', library: '提示词库', pricing: '价格', optimizer: '优化台', login: '登录', register: '免费注册', workspace: '进入工作台' },
     heroBadge: '为提示词资产、模型成本和团队复用而设计',
-    heroTitle: '把零散提示词，升级成可复用的 AI 生产系统',
-    heroSubtitle: 'Note Prompt 将提示词优化、知识库管理、公共模板、模型选择、使用统计和版本回滚放进一个专业工作台。少烧额度，多产出可复用资产。',
+    heroTitle: '提示词，从此复用升级',
+    heroSubtitle: 'Note Prompt 把提示词优化、复用、收藏、版本和公共模板放进一个专业工作台，让每一次 AI 对话都沉淀成资产。',
     primaryCta: '免费开始',
     libraryCta: '浏览 50+ 精选模板',
     v2Eyebrow: 'Noteprompt V2',
@@ -69,8 +69,8 @@ const homeCopy = {
   en: {
     nav: { product: 'Product', library: 'Prompt Library', pricing: 'Pricing', optimizer: 'Optimizer', login: 'Log in', register: 'Get started', workspace: 'Workspace' },
     heroBadge: 'Built for prompt assets, model cost control, and team reuse',
-    heroTitle: 'Turn scattered prompts into a reusable AI production system',
-    heroSubtitle: 'Note Prompt brings prompt optimization, knowledge management, curated templates, model selection, usage analytics, and version rollback into one professional workspace.',
+    heroTitle: 'Prompts, Reused Better',
+    heroSubtitle: 'Optimize, save, reuse, and version your best AI prompts in one focused workspace.',
     primaryCta: 'Get started',
     libraryCta: 'Browse English templates',
     v2Eyebrow: 'Noteprompt V2',
@@ -208,7 +208,7 @@ export default function Home() {
         params.delete('lang')
       }
       const query = params.toString()
-      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
+      window.location.assign(`${window.location.pathname}${query ? `?${query}` : ''}`)
     }
   }
 

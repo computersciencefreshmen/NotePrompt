@@ -28,6 +28,7 @@ export function updateLocaleInAddressBar(locale: Locale) {
   }
 
   const nextQuery = params.toString()
-  window.history.replaceState(null, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`)
+  const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`
   document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN'
+  window.location.assign(nextUrl)
 }

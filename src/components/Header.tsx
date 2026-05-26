@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/contexts/AuthContext'
-import { User, Settings, LogOut, Star, FileText, Shield, Palette } from 'lucide-react'
+import { User, Settings, LogOut, Star, FileText, Shield, Palette, Wand2 } from 'lucide-react'
 import ThemeToggle from '@/components/ThemeToggle'
 import GlobalSearch from '@/components/GlobalSearch'
 import { visualStyleOptions, VisualStyle } from '@/config/visual-styles'
@@ -128,6 +128,14 @@ export default function Header() {
               >
                 {copy.publicFolders}
               </Link>
+              {featureFlags.promptOptimizerV2 && (
+                <Link
+                  href={href('/optimizer')}
+                  className={navLinkClass}
+                >
+                  {copy.optimizer}
+                </Link>
+              )}
               {user && (
                 <>
                   <Link
@@ -136,14 +144,6 @@ export default function Header() {
                   >
                     {copy.myPrompts}
                   </Link>
-                  {featureFlags.promptOptimizerV2 && (
-                    <Link
-                      href={href('/optimizer')}
-                      className={navLinkClass}
-                    >
-                      {copy.optimizer}
-                    </Link>
-                  )}
                   <Link
                     href={href('/favorites')}
                     className={navLinkClass}
@@ -215,7 +215,7 @@ export default function Header() {
                   {featureFlags.promptOptimizerV2 && (
                     <DropdownMenuItem asChild>
                       <Link href={href('/optimizer')} className="cursor-pointer">
-                        <FileText className="mr-2 h-4 w-4" />
+                        <Wand2 className="mr-2 h-4 w-4" />
                         <span>{copy.optimizer}</span>
                       </Link>
                     </DropdownMenuItem>

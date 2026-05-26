@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AI_MODELS } from '@/config/ai'
+import { requireAdminAuth } from '@/lib/auth'
 import { maskSecret, readProviderConfig, writeProviderConfig } from '@/lib/provider-runtime-config'
 
 type ProviderKey = keyof typeof AI_MODELS
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = await requireAdminAuth(request)
+  if ('error' in auth) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
+  }
+
   const localConfig = readProviderConfig()
   const providers = Object.entries(AI_MODELS).map(([provider, config]) => {
     const key = provider as ProviderKey
@@ -27,6 +33,11 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAdminAuth(request)
+    if ('error' in auth) {
+      return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
+    }
+
     const body = await request.json()
     const provider = typeof body.provider === 'string' ? body.provider : ''
     if (!Object.prototype.hasOwnProperty.call(AI_MODELS, provider)) {

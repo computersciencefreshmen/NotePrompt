@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ArrowLeft, CheckCircle2, KeyRound, Loader2, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useAuth } from '@/contexts/AuthContext'
 
 type ProviderConfigRow = {
   provider: string
@@ -20,14 +22,18 @@ type ProviderConfigRow = {
 type ProviderFormState = Record<string, { apiKey: string; baseURL: string }>
 
 export default function ProviderSettingsPage() {
+  const { user, loading: authLoading } = useAuth()
+  const router = useRouter()
   const [providers, setProviders] = useState<ProviderConfigRow[]>([])
   const [formState, setFormState] = useState<ProviderFormState>({})
   const [loading, setLoading] = useState(true)
   const [savingProvider, setSavingProvider] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const isAdmin = Boolean(user?.is_admin || user?.user_type === 'admin')
 
   const loadProviders = async () => {
+    if (!isAdmin) return
     setLoading(true)
     setError('')
     try {
@@ -49,10 +55,21 @@ export default function ProviderSettingsPage() {
   }
 
   useEffect(() => {
+    if (authLoading) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (!isAdmin) {
+      setLoading(false)
+      setError('只有管理员可以配置全局模型供应商 Key。普通用户不能覆盖平台 Key，也不会影响其他用户的 token 消耗。')
+      return
+    }
     loadProviders()
-  }, [])
+  }, [authLoading, user, isAdmin])
 
   const saveProvider = async (provider: string) => {
+    if (!isAdmin) return
     setSavingProvider(provider)
     setMessage('')
     setError('')
@@ -67,7 +84,7 @@ export default function ProviderSettingsPage() {
         setError(payload.error || '保存失败')
         return
       }
-      setMessage('配置已保存，模型检测会优先读取本地配置文件。')
+      setMessage('配置已保存。该配置是管理员管理的全局模型供应商 Key，不是用户个人 Key。')
       await loadProviders()
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '保存失败')
@@ -85,7 +102,7 @@ export default function ProviderSettingsPage() {
               <Link href="/optimizer"><ArrowLeft className="mr-2 h-4 w-4" />返回优化器</Link>
             </Button>
             <h1 className="text-3xl font-semibold tracking-tight">模型供应商配置</h1>
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">保存到本地 `.provider-config.local.json`，不会提交到 Git。输入新 Key 后不会在页面回显明文。</p>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">仅管理员可配置全局模型供应商 Key。普通用户无法填写或覆盖这里的 Key，也不会把个人 Key 变成全站共享额度。</p>
           </div>
           <Button type="button" variant="outline" onClick={loadProviders} disabled={loading} className="rounded-[8px]">
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}

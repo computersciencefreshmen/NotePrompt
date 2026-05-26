@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { englishFeaturedPrompts } from '@/data/english-featured-prompts'
+import { getCuratedPublicPromptById, hydrateCuratedPublicPrompt } from '@/lib/curated-public-prompts'
+
+async function getOptionalUserId(request: NextRequest) {
+  try {
+    const auth = await requireAuth(request)
+    if (!('error' in auth)) return auth.user.id
+  } catch {
+    return null
+  }
+  return null
+}
 
 // GET - 获取公共提示词详情
 export async function GET(
@@ -22,18 +32,13 @@ export async function GET(
       )
     }
 
-    if (lang === 'en') {
-      const prompt = englishFeaturedPrompts.find(item => item.id === id)
-      if (!prompt) {
-        return NextResponse.json(
-          { success: false, error: 'Prompt not found' },
-          { status: 404 }
-        )
-      }
+    const curatedPrompt = getCuratedPublicPromptById(id)
+    if (curatedPrompt && (lang === 'en' || id >= 910000)) {
+      const hydratedPrompt = await hydrateCuratedPublicPrompt(curatedPrompt, await getOptionalUserId(request))
 
       return NextResponse.json({
         success: true,
-        data: prompt,
+        data: hydratedPrompt,
       })
     }
 

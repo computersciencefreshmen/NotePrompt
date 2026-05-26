@@ -75,6 +75,8 @@ const englishProviderNames: Record<string, string> = {
 const englishMessages: Record<string, string> = {
   '配置已就绪，未发起真实模型调用': 'Configuration is ready. No real model call was made.',
   '配置不可用': 'Configuration is unavailable.',
+  '低成本探针调用成功': 'Low-cost probe succeeded.',
+  '检测失败': 'Diagnostics failed.',
 }
 
 function localizedProviderName(provider: DiagnosticProvider, locale: Locale) {
@@ -84,6 +86,10 @@ function localizedProviderName(provider: DiagnosticProvider, locale: Locale) {
 
 function localizedDiagnosticMessage(message: string, locale: Locale) {
   if (locale !== 'en') return message
+  const missingKeyMatch = message.match(/^未配置(.+)的API密钥/)
+  if (missingKeyMatch) return `${missingKeyMatch[1]} API key is not configured. Set ${missingKeyMatch[1].toUpperCase()}_API_KEY in the environment.`
+  const missingBaseUrlMatch = message.match(/^未配置(.+)的API地址/)
+  if (missingBaseUrlMatch) return `${missingBaseUrlMatch[1]} API base URL is not configured.`
   return englishMessages[message] || message
 }
 

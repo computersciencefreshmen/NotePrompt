@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AI_MODELS } from '@/config/ai'
+import { requireAuth } from '@/lib/auth'
 import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
 import { validateAIModel } from '@/lib/ai-utils'
+import { getUserProviderRuntimeConfig, UserProviderRuntimeConfig } from '@/lib/user-provider-config'
 
 type DiagnosticStatus = 'ready' | 'configured' | 'missing-key' | 'missing-base-url' | 'rate-limited' | 'billing' | 'error'
 type DiagnosticMode = 'config' | 'probe'
@@ -69,9 +71,9 @@ function getDiagnosticModel(provider: string, models: Record<string, unknown>) {
   return preferred.find(model => model in models) || Object.keys(models)[0]
 }
 
-function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS]): CachedDiagnostic {
+function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], runtimeConfig?: UserProviderRuntimeConfig | null): CachedDiagnostic {
   const model = getDiagnosticModel(provider, config.models)
-  const validation = validateAIModel(provider, model)
+  const validation = validateAIModel(provider, model, runtimeConfig || undefined)
   const missingBaseUrl = validation.error?.includes('API地址')
   const missingKey = validation.error?.includes('API密钥')
 
@@ -88,10 +90,10 @@ function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof ty
   }
 }
 
-async function probeProvider(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], force: boolean): Promise<CachedDiagnostic> {
+async function probeProvider(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], force: boolean, userId?: number | null, runtimeConfig?: UserProviderRuntimeConfig | null): Promise<CachedDiagnostic> {
   const model = getDiagnosticModel(provider, config.models)
-  const validation = validateAIModel(provider, model)
-  const cacheKey = `${provider}:${model}`
+  const validation = validateAIModel(provider, model, runtimeConfig || undefined)
+  const cacheKey = `${userId ? `user:${userId}` : 'platform'}:${provider}:${model}`
   const cached = probeCache.get(cacheKey)
 
   if (!force && cached && Date.now() - new Date(cached.checkedAt).getTime() < PROBE_CACHE_TTL_MS) {
@@ -180,13 +182,21 @@ async function probeProvider(provider: string, config: typeof AI_MODELS[keyof ty
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
-  const body = await request.json().catch(() => ({})) as { mode?: DiagnosticMode; force?: boolean }
+  const body = await request.json().catch(() => ({})) as { mode?: DiagnosticMode; force?: boolean; confirmed?: boolean }
   const mode: DiagnosticMode = body.mode === 'probe' ? 'probe' : 'config'
   const force = Boolean(body.force)
+  if (mode === 'probe' && body.confirmed !== true) {
+    return NextResponse.json({ success: false, error: '实际调用探针需要用户确认' }, { status: 400 })
+  }
+  const auth = await requireAuth(request)
+  const userId = 'error' in auth ? null : auth.user.id
 
-  const providers = await Promise.all(Object.entries(AI_MODELS).map(([provider, config]) => (
-    mode === 'probe' ? probeProvider(provider, config, force) : Promise.resolve(getConfigOnlyResult(provider, config))
-  )))
+  const providers = await Promise.all(Object.entries(AI_MODELS).map(async ([provider, config]) => {
+    const runtimeConfig = await getUserProviderRuntimeConfig(userId, provider)
+    return mode === 'probe'
+      ? probeProvider(provider, config, force, userId, runtimeConfig)
+      : getConfigOnlyResult(provider, config, runtimeConfig)
+  }))
 
   return NextResponse.json({
     success: true,

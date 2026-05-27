@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validateAIModel, formatAIError } from '@/lib/ai-utils'
 import { FALLBACK_AI_MODEL, FALLBACK_AI_PROVIDER } from '@/config/ai'
+import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER } from '@/config/ai-models'
 import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+import { requireAuth } from '@/lib/auth'
+import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
 
 type RequestedAttachment = {
   name: string
@@ -164,8 +167,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     const prompt = body.prompt || body.originalPrompt
-    const provider = body.provider || body.modelType || 'deepseek'
-    const model = body.model || body.modelName || 'deepseek-v4-flash'
+    const provider = body.provider || body.modelType || DEFAULT_PUBLIC_AI_PROVIDER
+    const model = body.model || body.modelName || DEFAULT_PUBLIC_AI_MODEL
     const temperatureOverride = body.temperature as number | undefined
     const topPOverride = (body.topP ?? body.top_p) as number | undefined
     const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
@@ -206,9 +209,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: '提示词内容不能为空' }, { status: 400 })
     }
 
+    const auth = await requireAuth(request)
+    const userId = 'error' in auth ? null : auth.user.id
     const effectiveProvider = provider === 'local' ? 'qwen' : provider
+    const resolveValidation = async (providerKey: string, modelKey: string) => {
+      const userRuntimeConfig = await getUserProviderRuntimeConfig(userId, providerKey)
+      return validateAIModel(providerKey, modelKey, userRuntimeConfig || undefined)
+    }
 
-    const validation = validateAIModel(effectiveProvider, model)
+    const validation = await resolveValidation(effectiveProvider, model)
     if (!validation.isValid) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 })
     }
@@ -410,7 +419,7 @@ export async function POST(request: NextRequest) {
 
             let fallbackError = errorText
             for (const candidate of fallbackCandidates) {
-              const fallbackValidation = validateAIModel(candidate.provider, candidate.model)
+              const fallbackValidation = await resolveValidation(candidate.provider, candidate.model)
               if (!fallbackValidation.isValid || !fallbackValidation.config) continue
 
               activeProvider = candidate.provider

@@ -20,7 +20,7 @@ function getProviderConfig(provider: string) {
 }
 
 // 验证AI模型配置
-export function validateAIModel(provider: string, modelId: string): {
+export function validateAIModel(provider: string, modelId: string, runtimeOverride?: { apiKey?: string; baseURL?: string }): {
   isValid: boolean;
   error?: string;
   config?: {
@@ -50,10 +50,14 @@ export function validateAIModel(provider: string, modelId: string): {
       };
     }
 
-    const runtimeConfig = getProviderRuntimeConfig(provider, {
+    const globalRuntimeConfig = getProviderRuntimeConfig(provider, {
       apiKey: providerConfig.apiKey,
       baseURL: providerConfig.baseURL,
     });
+    const runtimeConfig = {
+      apiKey: runtimeOverride?.apiKey || globalRuntimeConfig.apiKey,
+      baseURL: runtimeOverride?.baseURL || globalRuntimeConfig.baseURL,
+    }
 
     if (!runtimeConfig.apiKey) {
       return {

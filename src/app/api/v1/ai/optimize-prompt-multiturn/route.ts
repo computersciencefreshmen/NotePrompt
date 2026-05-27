@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAIRequestConfig, aiConfig } from '@/config/ai'
+import { requireAuth } from '@/lib/auth'
+import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { ConversationMessage } from '@/types'
 
 function buildLocalRefinement({
@@ -101,8 +103,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const auth = await requireAuth(request)
+    const userId = 'error' in auth ? null : auth.user.id
+    const userRuntimeConfig = await getUserProviderRuntimeConfig(userId, provider)
+
     // 获取AI配置
-    const config = getAIRequestConfig(provider, model)
+    const config = getAIRequestConfig(provider, model, userRuntimeConfig || undefined)
     const systemPrompt = aiConfig.prompts.multiTurn
     const requestTemperature = Math.min(Math.max(temperatureOverride ?? config.temperature, 0), 2)
     const requestTopP = Math.min(Math.max(topPOverride ?? config.top_p, 0.1), 1)

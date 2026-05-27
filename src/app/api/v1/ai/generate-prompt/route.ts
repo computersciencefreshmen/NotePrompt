@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getAIRequestConfig, AI_MODELS } from "@/config/ai"
+import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER } from "@/config/ai-models"
 import { validateAIModel, formatAIError } from "@/lib/ai-utils"
+import { requireAuth } from "@/lib/auth"
+import { getUserProviderRuntimeConfig } from "@/lib/user-provider-config"
 
 /**
  * 提示词生成API
@@ -18,8 +20,8 @@ export async function POST(request: NextRequest) {
       outputFormat,
       examples,
       tags,
-      provider = "deepseek",
-      model = "deepseek-v4-flash"
+      provider = DEFAULT_PUBLIC_AI_PROVIDER,
+      model = DEFAULT_PUBLIC_AI_MODEL
     } = await request.json()
 
     // 输入长度限制
@@ -37,9 +39,12 @@ export async function POST(request: NextRequest) {
 
     // 如果是local则重定向到qwen
     const effectiveProvider = provider === "local" ? "qwen" : provider
+    const auth = await requireAuth(request)
+    const userId = 'error' in auth ? null : auth.user.id
+    const userRuntimeConfig = await getUserProviderRuntimeConfig(userId, effectiveProvider)
 
     // 验证AI模型配置
-    const validation = validateAIModel(effectiveProvider, model);
+    const validation = validateAIModel(effectiveProvider, model, userRuntimeConfig || undefined);
     if (!validation.isValid) {
       return NextResponse.json(
         { success: false, error: validation.error },
@@ -148,18 +153,23 @@ export async function POST(request: NextRequest) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000);
 
+        const requestBody: Record<string, unknown> = {
+          model: aiConfig.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage }
+          ],
+          temperature: aiConfig.temperature,
+        }
+        requestBody[effectiveProvider === 'minimax' || effectiveProvider === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens'] = aiConfig.max_tokens
+        if (effectiveProvider === 'xiaomi') {
+          requestBody.thinking = { type: 'disabled' }
+        }
+
         const response = await fetch(aiConfig.baseURL + "/chat/completions", {
           method: "POST",
           headers,
-          body: JSON.stringify({
-            model: aiConfig.model,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage }
-            ],
-            temperature: aiConfig.temperature,
-            max_tokens: aiConfig.max_tokens
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal
         })
         clearTimeout(timeoutId)

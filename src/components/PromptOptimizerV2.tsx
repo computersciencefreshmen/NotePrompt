@@ -184,6 +184,8 @@ const optimizerCopy = {
     proHint: '专业模式会合并提示词、约束条件和附件上下文进行优化。模型与执行入口在下方统一控制。',
     modelExecution: '模型与执行',
     modelExecutionDesc: '选择供应商和模型后，直接对上方输入内容发起优化。',
+    modelStatus: '模型状态',
+    hideModelStatus: '隐藏模型状态',
     providerAria: '模型提供商',
     modelAria: '模型',
     optimize: '优化',
@@ -284,6 +286,8 @@ const optimizerCopy = {
     proHint: 'Pro mode combines the prompt, constraints, and attachment context. Model selection and execution are controlled below.',
     modelExecution: 'Model & execution',
     modelExecutionDesc: 'Choose a provider and model, then optimize the input above.',
+    modelStatus: 'Model status',
+    hideModelStatus: 'Hide model status',
     providerAria: 'Model provider',
     modelAria: 'Model',
     optimize: 'Optimize',
@@ -501,6 +505,7 @@ export default function PromptOptimizerV2() {
   const [parsingFiles, setParsingFiles] = useState(false)
   const [parseProgress, setParseProgress] = useState('')
   const [showAdvancedParams, setShowAdvancedParams] = useState(false)
+  const [showModelDiagnostics, setShowModelDiagnostics] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -871,7 +876,20 @@ export default function PromptOptimizerV2() {
         </div>
 
         <div className="mb-5">
-          <ModelDiagnosticsPanel locale={locale} />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowModelDiagnostics(current => !current)}
+            className="rounded-[8px] border-[#ded6c8] bg-[#fbfaf7] dark:border-[#3a342c] dark:bg-[#1d1a16]"
+          >
+            <SlidersHorizontal className="mr-2 h-4 w-4" />
+            {showModelDiagnostics ? copy.hideModelStatus : copy.modelStatus}
+          </Button>
+          {showModelDiagnostics && (
+            <div className="mt-3">
+              <ModelDiagnosticsPanel locale={locale} />
+            </div>
+          )}
         </div>
 
         <div className="grid gap-5 lg:grid-cols-2 lg:items-stretch">

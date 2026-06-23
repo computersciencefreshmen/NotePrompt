@@ -26,6 +26,13 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 > 🌐 **Live at [noteprompt.cn](https://noteprompt.cn)** — Deployed on Alibaba Cloud with Docker, Nginx reverse proxy, and SSL.
 
+## Portfolio Highlights
+
+- Built as a complete SaaS-style product rather than a single-page demo: authentication, personal workspace, public library, admin dashboard, deployment scripts, and production reverse proxy are all included.
+- Designed around a real prompt-management workflow: users can draft, organize, optimize, publish, search, and reuse prompts across multiple model providers.
+- Shows full-stack engineering range: Next.js App Router, TypeScript, MySQL, Redis, JWT auth, Docker Compose, Nginx, email verification, and rate limiting.
+- Useful as a portfolio project because it demonstrates product thinking, backend API design, AI-provider integration, and deployable infrastructure in one repository.
+
 ---
 
 ## 🎯 Key Features

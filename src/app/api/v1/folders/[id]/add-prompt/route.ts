@@ -1,27 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    console.log('开始添加提示词到文件夹...')
-    
-    // 验证用户认证
     const auth = await requireAuth(request)
     if ('error' in auth) {
-      console.log('认证失败:', auth.error)
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const userId = auth.user.id
     
     const { id } = await context.params
-    const folderId = parseInt(id)
+    const folderId = parsePositiveResourceId(id)
     const { prompt_id } = await request.json()
-    
-    console.log('用户ID:', userId, '文件夹ID:', folderId, '提示词ID:', prompt_id)
+    const promptId = parsePositiveResourceId(prompt_id)
     
     // 验证参数
-    if (!prompt_id || isNaN(folderId)) {
+    if (promptId == null) {
       return NextResponse.json({ 
         success: false, 
         error: '参数无效' 
@@ -29,27 +25,33 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     
     // 检查文件夹是否属于当前用户
-    const folder = await db.getFolderById(folderId)
-    if (!folder || folder.user_id !== userId) {
+    const folder = folderId == null
+      ? null
+      : await findOwnedResource(resourceId => db.getFolderById(resourceId), folderId, userId)
+    if (!folder) {
       return NextResponse.json({ 
         success: false, 
-        error: '文件夹不存在或无权限' 
-      }, { status: 403 })
+        error: '文件夹不存在'
+      }, { status: 404 })
     }
     
     // 检查提示词是否属于当前用户
-    const prompt = await db.getUserPromptById(prompt_id)
-    if (!prompt || prompt.user_id !== userId) {
+    const prompt = await findOwnedResource(
+      resourceId => db.getUserPromptById(resourceId),
+      promptId,
+      userId
+    )
+    if (!prompt) {
       return NextResponse.json({ 
         success: false, 
-        error: '提示词不存在或无权限' 
-      }, { status: 403 })
+        error: '提示词不存在'
+      }, { status: 404 })
     }
     
     // 检查提示词是否已经在该文件夹中（防止重复）
     const existingResult = await db.query(
       'SELECT COUNT(*) as count FROM user_prompt_folders WHERE user_prompt_id = ? AND folder_id = ?',
-      [prompt_id, folderId]
+      [promptId, folderId]
     );
     
     if (Number((existingResult.rows as Record<string, unknown>[])[0]?.count) > 0) {
@@ -62,10 +64,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     // 添加到关联表
     await db.query(
       'INSERT INTO user_prompt_folders (user_prompt_id, folder_id) VALUES (?, ?)',
-      [prompt_id, folderId]
+      [promptId, folderId]
     );
     
-    console.log('成功添加提示词到文件夹')
     return NextResponse.json({ 
       success: true, 
       message: '添加成功' 
@@ -77,4 +78,4 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       error: error instanceof Error ? error.message : '添加失败，请稍后重试' 
     }, { status: 500 })
   }
-} 
+}

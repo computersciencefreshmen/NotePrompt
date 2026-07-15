@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validateAIModel, getRecommendedModels } from '@/lib/ai-utils'
+import { requireAIUser } from '@/lib/ai-runtime-security'
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAIUser(request)
+  if (!auth.ok) return auth.response
+
   try {
     const { searchParams } = new URL(request.url)
     const provider = searchParams.get('provider') || 'deepseek'
@@ -36,4 +40,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

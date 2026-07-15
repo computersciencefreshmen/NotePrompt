@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AI_MODELS } from '@/config/ai'
-import { requireAuth } from '@/lib/auth'
 import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
 import { validateAIModel } from '@/lib/ai-utils'
 import { getUserProviderRuntimeConfig, UserProviderRuntimeConfig } from '@/lib/user-provider-config'
+import { requireAIUser, reserveAIUsage, requestPolicyResponse, AIUsageReservation } from '@/lib/ai-runtime-security'
+import { readLimitedJson } from '@/lib/ai-runtime-policy'
 
 type DiagnosticStatus = 'ready' | 'configured' | 'missing-key' | 'missing-base-url' | 'rate-limited' | 'billing' | 'error'
 type DiagnosticMode = 'config' | 'probe'
@@ -122,6 +123,7 @@ async function probeProvider(provider: string, config: typeof AI_MODELS[keyof ty
   try {
     const response = await fetch(`${validation.config.baseURL}/chat/completions`, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
         Authorization: validation.config.headers.Authorization,
@@ -181,31 +183,50 @@ async function probeProvider(provider: string, config: typeof AI_MODELS[keyof ty
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAIUser(request)
+  if (!auth.ok) return auth.response
+
   const startedAt = Date.now()
-  const body = await request.json().catch(() => ({})) as { mode?: DiagnosticMode; force?: boolean; confirmed?: boolean }
-  const mode: DiagnosticMode = body.mode === 'probe' ? 'probe' : 'config'
-  const force = Boolean(body.force)
-  if (mode === 'probe' && body.confirmed !== true) {
-    return NextResponse.json({ success: false, error: '实际调用探针需要用户确认' }, { status: 400 })
-  }
-  const auth = await requireAuth(request)
-  const userId = 'error' in auth ? null : auth.user.id
+  let reservation: AIUsageReservation | undefined
 
-  const providers = await Promise.all(Object.entries(AI_MODELS).map(async ([provider, config]) => {
-    const runtimeConfig = await getUserProviderRuntimeConfig(userId, provider)
-    return mode === 'probe'
-      ? probeProvider(provider, config, force, userId, runtimeConfig)
-      : getConfigOnlyResult(provider, config, runtimeConfig)
-  }))
-
-  return NextResponse.json({
-    success: true,
-    data: {
-      mode,
-      checkedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAt,
-      cacheTtlMs: PROBE_CACHE_TTL_MS,
-      providers,
+  try {
+    const body = await readLimitedJson<{ mode?: DiagnosticMode; force?: boolean; confirmed?: boolean }>(request)
+    const mode: DiagnosticMode = body.mode === 'probe' ? 'probe' : 'config'
+    const force = Boolean(body.force)
+    if (mode === 'probe' && body.confirmed !== true) {
+      return NextResponse.json({ success: false, error: '实际调用探针需要用户确认' }, { status: 400 })
     }
-  })
+
+    if (mode === 'probe') {
+      const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+      if (!quota.ok) return quota.response
+      reservation = quota.reservation
+    }
+
+    const providers = await Promise.all(Object.entries(AI_MODELS).map(async ([provider, config]) => {
+      const runtimeConfig = await getUserProviderRuntimeConfig(auth.user.id, provider)
+      return mode === 'probe'
+        ? probeProvider(provider, config, force, auth.user.id, runtimeConfig)
+        : getConfigOnlyResult(provider, config, runtimeConfig)
+    }))
+
+    if (reservation) {
+      if (providers.some(provider => provider.callable)) reservation.commit()
+      else await reservation.rollback()
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        mode,
+        checkedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        cacheTtlMs: PROBE_CACHE_TTL_MS,
+        providers,
+      }
+    })
+  } catch (error) {
+    await reservation?.rollback()
+    return requestPolicyResponse(error)
+  }
 }

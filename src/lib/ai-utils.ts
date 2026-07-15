@@ -1,5 +1,6 @@
 import { AI_MODELS } from '@/config/ai'
 import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
+import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
 
 type AIProviderKey = keyof typeof AI_MODELS
 type AIModelConfig = {
@@ -54,9 +55,13 @@ export function validateAIModel(provider: string, modelId: string, runtimeOverri
       apiKey: providerConfig.apiKey,
       baseURL: providerConfig.baseURL,
     });
+    const userBaseURL = runtimeOverride?.baseURL
+      ? normalizeProviderBaseURL(provider, runtimeOverride.baseURL)
+      : undefined;
+    const globalBaseURL = normalizeProviderBaseURL(provider, globalRuntimeConfig.baseURL);
     const runtimeConfig = {
       apiKey: runtimeOverride?.apiKey || globalRuntimeConfig.apiKey,
-      baseURL: runtimeOverride?.baseURL || globalRuntimeConfig.baseURL,
+      baseURL: userBaseURL || globalBaseURL || '',
     }
 
     if (!runtimeConfig.apiKey) {

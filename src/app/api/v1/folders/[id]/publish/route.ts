@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
 
 // POST - 发布文件夹到公共库（需要认证）
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -11,18 +12,25 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
 
     const { id } = await context.params
-    const folderId = parseInt(id)
+    const folderId = parsePositiveResourceId(id)
     const userId = auth.user.id
+    if (folderId == null) {
+      return NextResponse.json(
+        { success: false, error: '文件夹不存在' },
+        { status: 404 }
+      )
+    }
 
     // 获取请求体
     const body = await request.json()
     const { description } = body
 
     // 检查文件夹是否存在且属于当前用户
-    const folder = await db.getFolderById(folderId)
-    console.log('获取到的文件夹:', folder)
-    console.log('当前用户ID:', userId)
-    
+    const folder = await findOwnedResource(
+      resourceId => db.getFolderById(resourceId),
+      folderId,
+      userId
+    )
     if (!folder) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
@@ -30,30 +38,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       )
     }
 
-    if ((folder as any).user_id !== userId) {
-      console.log('权限检查失败:', { folderUserId: (folder as any).user_id, currentUserId: userId })
-      return NextResponse.json(
-        { success: false, error: '无权限发布此文件夹' },
-        { status: 403 }
-      )
-    }
-
     // 创建公共文件夹
-    console.log('创建公共文件夹，参数:', {
-      name: (folder as any).name,
-      description: description || '',
-      user_id: userId,
-      original_folder_id: folderId
-    })
-    
     const publicFolder = await db.createPublicFolder({
-      name: (folder as any).name,
+      name: String(folder.name || ''),
       description: description || '',
       user_id: userId,
       original_folder_id: folderId
     })
-
-    console.log('公共文件夹创建成功:', publicFolder)
 
     return NextResponse.json({
       success: true,
@@ -72,4 +63,4 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       { status: 500 }
     )
   }
-} 
+}

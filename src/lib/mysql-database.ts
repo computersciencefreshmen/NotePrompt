@@ -1,8 +1,27 @@
 
 import mysql from 'mysql2/promise';
+import { hasCompleteOwnership } from './resource-authorization';
 
 type DbRow = Record<string, unknown>;
+type OwnedDbRow = DbRow & { id: unknown; user_id: unknown };
+type MySQLParameter = string | number | bigint | boolean | Date | null | Buffer | Uint8Array;
 const MYSQL_DB_INSTANCE_VERSION = 4;
+
+function normalizeMySQLParameter(value: unknown): MySQLParameter {
+  if (value === undefined || value === null) return null;
+  if (
+    typeof value === 'string'
+    || typeof value === 'number'
+    || typeof value === 'bigint'
+    || typeof value === 'boolean'
+    || value instanceof Date
+    || Buffer.isBuffer(value)
+    || value instanceof Uint8Array
+  ) {
+    return value;
+  }
+  throw new TypeError('Unsupported database parameter type');
+}
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -19,8 +38,8 @@ class MySQLDB {
     this.pool = mysql.createPool({
       host: process.env.MYSQL_HOST || 'localhost',
       port: parseInt(process.env.MYSQL_PORT || '3306'),
-      user: process.env.MYSQL_USER || 'root',
-      password: process.env.MYSQL_PASSWORD || 'root',
+      user: process.env.MYSQL_USER || '',
+      password: process.env.MYSQL_PASSWORD || '',
       database: process.env.MYSQL_DATABASE || 'agent_report',
       waitForConnections: true,
       connectionLimit: 50,
@@ -42,10 +61,7 @@ class MySQLDB {
         connection = await this.pool.getConnection();
         
         // 简化参数处理
-        const cleanParams = params ? params.map(p => {
-          if (p === undefined || p === null) return null;
-          return p;
-        }) : [];
+        const cleanParams = params?.map(normalizeMySQLParameter) || [];
         
         const [rows, fields] = await connection.execute(sql, cleanParams);
         return { rows, fields };
@@ -375,6 +391,97 @@ class MySQLDB {
     return newPrompt;
   }
 
+  async publishOwnedUserPrompts(userId: number, promptIds: number[]): Promise<DbRow[] | null> {
+    if (promptIds.length === 0) return [];
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const placeholders = promptIds.map(() => '?').join(', ');
+      const [promptRowsResult] = await connection.execute(
+        `SELECT id, title, content, description, user_id, category_id
+         FROM user_prompts
+         WHERE user_id = ? AND id IN (${placeholders})
+         FOR UPDATE`,
+        [userId, ...promptIds]
+      );
+      const prompts = promptRowsResult as OwnedDbRow[];
+
+      if (!hasCompleteOwnership(prompts, promptIds, userId)) {
+        await connection.rollback();
+        return null;
+      }
+
+      const promptsById = new Map(prompts.map(prompt => [Number(prompt.id), prompt]));
+      const publishedPrompts: DbRow[] = [];
+
+      for (const promptId of promptIds) {
+        const prompt = promptsById.get(promptId);
+        if (!prompt) {
+          throw new Error('事务中的提示词所有权校验结果不一致');
+        }
+
+        const [existingRowsResult] = await connection.execute(
+          `SELECT id
+           FROM public_prompts
+           WHERE title = ? AND author_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [String(prompt.title || ''), userId]
+        );
+        const existingPublicPrompt = (existingRowsResult as DbRow[])[0];
+        let publicPromptId = existingPublicPrompt ? Number(existingPublicPrompt.id) : null;
+
+        if (!publicPromptId) {
+          const [insertResult] = await connection.execute(
+            `INSERT INTO public_prompts (title, content, description, author_id, category_id)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              String(prompt.title || ''),
+              String(prompt.content || ''),
+              prompt.description == null ? null : String(prompt.description),
+              userId,
+              prompt.category_id == null ? null : Number(prompt.category_id),
+            ]
+          );
+          publicPromptId = Number((insertResult as { insertId?: number }).insertId);
+        }
+
+        if (!Number.isSafeInteger(publicPromptId) || publicPromptId <= 0) {
+          throw new Error('公共提示词创建失败：无法获取有效 ID');
+        }
+
+        await connection.execute(
+          `INSERT IGNORE INTO public_prompt_tags (public_prompt_id, tag_id)
+           SELECT ?, tag_id FROM user_prompt_tags WHERE user_prompt_id = ?`,
+          [publicPromptId, promptId]
+        );
+
+        const [publishedRowsResult] = await connection.execute(
+          `SELECT pp.*, u.username, u.avatar_url
+           FROM public_prompts pp
+           JOIN users u ON pp.author_id = u.id
+           WHERE pp.id = ?`,
+          [publicPromptId]
+        );
+        const publishedPrompt = (publishedRowsResult as DbRow[])[0];
+        if (!publishedPrompt) {
+          throw new Error('公共提示词创建后无法读取');
+        }
+        publishedPrompts.push(publishedPrompt);
+      }
+
+      await connection.commit();
+      return publishedPrompts;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
   async getPublicPromptById(id: number) {
     try {
       const result = await this.query(
@@ -611,6 +718,127 @@ class MySQLDB {
          WHERE user_id = ?`,
         [optimizeInc, generateInc, userId, monthStart, nextMonthStart, monthStart, userId]
       )
+      await connection.commit()
+    } catch (error) {
+      await connection.rollback()
+      throw error
+    } finally {
+      connection.release()
+    }
+  }
+
+  async reserveAIUsage(
+    userId: number,
+    aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize',
+    monthlyLimit = -1,
+  ): Promise<{ allowed: boolean; monthlyUsage: number; usageDate: string }> {
+    const now = new Date()
+    const today = formatLocalDate(now)
+    const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+    const optimizeInc = aiMode === 'ai_generate' ? 0 : 1
+    const generateInc = aiMode === 'ai_generate' ? 1 : 0
+    await this.ensureAIUsageDailyTable()
+
+    const connection = await this.pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      await connection.execute('INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)', [userId])
+      await connection.execute('SELECT id FROM user_usage_stats WHERE user_id = ? FOR UPDATE', [userId])
+
+      const [usageRows] = await connection.execute(
+        `SELECT COALESCE(SUM(total_count), 0) AS monthly_usage
+         FROM ai_usage_daily
+         WHERE user_id = ? AND usage_date >= ? AND usage_date < ?`,
+        [userId, monthStart, nextMonthStart]
+      )
+      const currentUsage = Number((usageRows as Array<{ monthly_usage?: number | string }>)[0]?.monthly_usage) || 0
+
+      if (monthlyLimit >= 0 && currentUsage >= monthlyLimit) {
+        await connection.commit()
+        return { allowed: false, monthlyUsage: currentUsage, usageDate: today }
+      }
+
+      await connection.execute(
+        `INSERT INTO ai_usage_daily (user_id, usage_date, optimize_count, generate_count, total_count)
+         VALUES (?, ?, ?, ?, 1)
+         ON DUPLICATE KEY UPDATE
+           optimize_count = optimize_count + VALUES(optimize_count),
+           generate_count = generate_count + VALUES(generate_count),
+           total_count = total_count + 1`,
+        [userId, today, optimizeInc, generateInc]
+      )
+      await connection.execute(
+        `UPDATE user_usage_stats
+         SET ai_optimize_count = ai_optimize_count + ?,
+             ai_generate_count = ai_generate_count + ?,
+             total_ai_usage = total_ai_usage + 1,
+             monthly_usage = ?,
+             last_reset_date = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [optimizeInc, generateInc, currentUsage + 1, monthStart, userId]
+      )
+      await connection.commit()
+      return { allowed: true, monthlyUsage: currentUsage + 1, usageDate: today }
+    } catch (error) {
+      await connection.rollback()
+      throw error
+    } finally {
+      connection.release()
+    }
+  }
+
+  async rollbackAIUsage(
+    userId: number,
+    aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize',
+    usageDate?: string,
+  ) {
+    const now = new Date()
+    const today = formatLocalDate(now)
+    const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+    const optimizeDec = aiMode === 'ai_generate' ? 0 : 1
+    const generateDec = aiMode === 'ai_generate' ? 1 : 0
+    await this.ensureAIUsageDailyTable()
+
+    const connection = await this.pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      await connection.execute('INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)', [userId])
+      await connection.execute('SELECT id FROM user_usage_stats WHERE user_id = ? FOR UPDATE', [userId])
+      const [dailyResult] = await connection.execute(
+        `UPDATE ai_usage_daily
+         SET optimize_count = GREATEST(optimize_count - ?, 0),
+             generate_count = GREATEST(generate_count - ?, 0),
+             total_count = GREATEST(total_count - 1, 0)
+         WHERE user_id = ? AND usage_date = ?
+           AND total_count > 0
+           AND ((? = 1 AND optimize_count > 0) OR (? = 1 AND generate_count > 0))`,
+        [optimizeDec, generateDec, userId, usageDate || today, optimizeDec, generateDec]
+      )
+
+      if (Number((dailyResult as { affectedRows?: number }).affectedRows) > 0) {
+        const [usageRows] = await connection.execute(
+          `SELECT COALESCE(SUM(total_count), 0) AS monthly_usage
+           FROM ai_usage_daily
+           WHERE user_id = ? AND usage_date >= ? AND usage_date < ?`,
+          [userId, monthStart, nextMonthStart]
+        )
+        const monthlyUsage = Number((usageRows as Array<{ monthly_usage?: number | string }>)[0]?.monthly_usage) || 0
+        await connection.execute(
+          `UPDATE user_usage_stats
+           SET ai_optimize_count = GREATEST(ai_optimize_count - ?, 0),
+               ai_generate_count = GREATEST(ai_generate_count - ?, 0),
+               total_ai_usage = GREATEST(total_ai_usage - 1, 0),
+               monthly_usage = ?,
+               last_reset_date = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = ?`,
+          [optimizeDec, generateDec, monthlyUsage, monthStart, userId]
+        )
+      }
+
       await connection.commit()
     } catch (error) {
       await connection.rollback()

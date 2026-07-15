@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
 
 // GET - 获取单个用户提示词
 export async function GET(
@@ -8,10 +9,26 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireAuth(request)
+    if ('error' in auth) {
+      return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+    }
+    const userId = auth.user.id
+
     const { id: idStr } = await params
-    const id = parseInt(idStr)
-    
-    const prompt = await db.getUserPromptById(id)
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json(
+        { success: false, error: '提示词不存在' },
+        { status: 404 }
+      )
+    }
+
+    const prompt = await findOwnedResource(
+      resourceId => db.getUserPromptById(resourceId),
+      id,
+      userId
+    )
 
     if (!prompt) {
       return NextResponse.json(
@@ -53,11 +70,21 @@ export async function PUT(
     const userId = auth.user.id
     
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json(
+        { success: false, error: '提示词不存在' },
+        { status: 404 }
+      )
+    }
     const body = await request.json()
 
-    // 检查提示词是否存在
-    const existingPrompt = await db.getUserPromptById(id)
+    // 对不存在和越权资源统一返回 404，避免泄露提示词是否存在
+    const existingPrompt = await findOwnedResource(
+      resourceId => db.getUserPromptById(resourceId),
+      id,
+      userId
+    )
     if (!existingPrompt) {
       return NextResponse.json(
         { success: false, error: '提示词不存在' },
@@ -65,12 +92,32 @@ export async function PUT(
       )
     }
 
-    // 检查权限 - 只能更新自己的提示词
-    if (existingPrompt.user_id !== userId) {
-      return NextResponse.json(
-        { success: false, error: '没有权限更新此提示词' },
-        { status: 403 }
-      )
+    let folderIdUpdate: number | null | undefined
+    if (body.folder_id !== undefined) {
+      if (body.folder_id === null || body.folder_id === '') {
+        folderIdUpdate = null
+      } else {
+        const folderId = parsePositiveResourceId(body.folder_id)
+        if (folderId == null) {
+          return NextResponse.json(
+            { success: false, error: '无效的文件夹ID' },
+            { status: 400 }
+          )
+        }
+
+        const folder = await findOwnedResource(
+          resourceId => db.getFolderById(resourceId),
+          folderId,
+          userId
+        )
+        if (!folder) {
+          return NextResponse.json(
+            { success: false, error: '文件夹不存在' },
+            { status: 404 }
+          )
+        }
+        folderIdUpdate = folderId
+      }
     }
 
     // 自动保存版本历史（仅当 title 或 content 发生变化时）
@@ -100,7 +147,7 @@ export async function PUT(
       title: body.title,
       content: body.content,
       description: body.description,
-      folder_id: body.folder_id,
+      folder_id: folderIdUpdate,
       category_id: body.category_id,
       is_public: body.is_public,
     })
@@ -147,22 +194,24 @@ export async function DELETE(
     const userId = auth.user.id
     
     const { id: idStr } = await params
-    const id = parseInt(idStr)
-
-    // 检查提示词是否存在
-    const existingPrompt = await db.getUserPromptById(id)
-    if (!existingPrompt) {
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
       return NextResponse.json(
         { success: false, error: '提示词不存在' },
         { status: 404 }
       )
     }
 
-    // 检查权限 - 只能删除自己的提示词
-    if (existingPrompt.user_id !== userId) {
+    // 对不存在和越权资源统一返回 404
+    const existingPrompt = await findOwnedResource(
+      resourceId => db.getUserPromptById(resourceId),
+      id,
+      userId
+    )
+    if (!existingPrompt) {
       return NextResponse.json(
-        { success: false, error: '没有权限删除此提示词' },
-        { status: 403 }
+        { success: false, error: '提示词不存在' },
+        { status: 404 }
       )
     }
 

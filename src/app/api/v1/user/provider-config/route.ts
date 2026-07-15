@@ -7,6 +7,11 @@ import {
   listUserProviderConfigs,
   upsertUserProviderConfig,
 } from '@/lib/user-provider-config'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+const MAX_PROVIDER_CONFIG_BODY_BYTES = 32 * 1024
+const MAX_PROVIDER_API_KEY_CHARS = 4096
+const MAX_PROVIDER_BASE_URL_CHARS = 500
 
 function isSupportedProvider(provider: unknown): provider is keyof typeof AI_MODELS {
   return typeof provider === 'string' && Object.prototype.hasOwnProperty.call(AI_MODELS, provider)
@@ -42,7 +47,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(createRateLimitResponse(rateCheck.resetAt), { status: 429 })
     }
 
-    const body = await request.json().catch(() => ({})) as { provider?: unknown; apiKey?: unknown; baseURL?: unknown }
+    const body = await readLimitedJson<{ provider?: unknown; apiKey?: unknown; baseURL?: unknown }>(
+      request,
+      MAX_PROVIDER_CONFIG_BODY_BYTES,
+    )
     if (!isSupportedProvider(body.provider)) {
       return NextResponse.json({ success: false, error: '不支持的模型供应商' }, { status: 400 })
     }
@@ -51,14 +59,23 @@ export async function POST(request: NextRequest) {
     if (!apiKey) {
       return NextResponse.json({ success: false, error: '请输入 API Key' }, { status: 400 })
     }
+    if (apiKey.length > MAX_PROVIDER_API_KEY_CHARS) {
+      return NextResponse.json({ success: false, error: 'API Key 过长' }, { status: 413 })
+    }
 
     const baseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : ''
+    if (baseURL.length > MAX_PROVIDER_BASE_URL_CHARS) {
+      return NextResponse.json({ success: false, error: 'API 地址过长' }, { status: 413 })
+    }
     await upsertUserProviderConfig(auth.user.id, body.provider, apiKey, baseURL)
     const providers = await listUserProviderConfigs(auth.user.id)
 
     return NextResponse.json({ success: true, data: { providers } })
   } catch (error) {
     console.error('Failed to save user provider config:', error)
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.status })
+    }
     return NextResponse.json({ success: false, error: '保存个人模型配置失败' }, { status: 500 })
   }
 }

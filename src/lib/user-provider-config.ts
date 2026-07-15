@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { AI_MODELS } from '@/config/ai'
 import db from '@/lib/mysql-database'
 import { maskSecret } from '@/lib/provider-runtime-config'
+import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
 
 type AIProviderKey = keyof typeof AI_MODELS
 
@@ -112,7 +113,13 @@ export async function listUserProviderConfigs(userId: number) {
       name: config.name,
       keyConfigured: Boolean(row?.encrypted_api_key && row.is_active),
       keyPreview,
-      baseURL: row?.base_url || '',
+      baseURL: (() => {
+        try {
+          return normalizeProviderBaseURL(provider, row?.base_url) || ''
+        } catch {
+          return ''
+        }
+      })(),
       defaultBaseURL: config.baseURL,
       modelCount: Object.keys(config.models).length,
       updatedAt: row?.updated_at || null,
@@ -131,7 +138,7 @@ export async function upsertUserProviderConfig(userId: number, provider: string,
   }
 
   await ensureUserProviderConfigTable()
-  const trimmedBaseURL = baseURL?.trim() || null
+  const trimmedBaseURL = normalizeProviderBaseURL(provider, baseURL) || null
   await db.query(
     `INSERT INTO user_provider_configs (user_id, provider, encrypted_api_key, base_url, is_active)
      VALUES (?, ?, ?, ?, true)
@@ -159,9 +166,16 @@ export async function getUserProviderRuntimeConfig(userId: number | null | undef
   const row = await getStoredConfig(userId, provider)
   if (!row?.encrypted_api_key) return null
 
+  let baseURL: string | undefined
+  try {
+    baseURL = normalizeProviderBaseURL(provider, row.base_url)
+  } catch {
+    baseURL = undefined
+  }
+
   return {
     apiKey: decryptSecret(row.encrypted_api_key),
-    baseURL: row.base_url || undefined,
+    baseURL,
     source: 'user',
   }
 }

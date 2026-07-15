@@ -6,7 +6,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import mammoth from 'mammoth'
-import * as XLSX from 'xlsx'
+import { readSheet } from 'read-excel-file/node'
 
 export type ParsedAttachment = {
   id: string
@@ -23,8 +23,12 @@ const TEXT_EXTENSIONS = /\.(txt|md|csv|json|xml|log|yaml|yml|ini|html|css|js|ts|
 const WORD_EXTENSIONS = /\.(docx)$/i
 const PDF_EXTENSIONS = /\.(pdf)$/i
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|webp|bmp|tif|tiff)$/i
-const SPREADSHEET_EXTENSIONS = /\.(xlsx|xls|csv|tsv)$/i
+const SPREADSHEET_EXTENSIONS = /\.(xlsx|csv|tsv)$/i
 const execFileAsync = promisify(execFile)
+const MAX_ARCHIVE_ENTRIES = 256
+const MAX_ARCHIVE_ENTRY_BYTES = 10 * 1024 * 1024
+const MAX_ARCHIVE_TOTAL_BYTES = 25 * 1024 * 1024
+const MAX_ARCHIVE_COMPRESSION_RATIO = 200
 
 const normalizeText = (value: string) => value
   .replace(/\u0000/g, '')
@@ -34,6 +38,113 @@ const normalizeText = (value: string) => value
   .slice(0, MAX_PREVIEW_LENGTH)
 
 const getExtension = (fileName: string) => fileName.toLowerCase().split('.').pop() || ''
+
+const hasPrefix = (buffer: Buffer, signature: readonly number[]) =>
+  signature.every((byte, index) => buffer[index] === byte)
+
+const assertPdfSignature = (buffer: Buffer) => {
+  if (buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+    throw new Error('文件内容与 PDF 类型不匹配。')
+  }
+}
+
+const assertImageSignature = (buffer: Buffer, extension: string) => {
+  const signatures = {
+    png: hasPrefix(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    jpg: hasPrefix(buffer, [0xff, 0xd8, 0xff]),
+    webp: buffer.subarray(0, 4).toString('ascii') === 'RIFF'
+      && buffer.subarray(8, 12).toString('ascii') === 'WEBP',
+    bmp: buffer.subarray(0, 2).toString('ascii') === 'BM',
+    tiff: hasPrefix(buffer, [0x49, 0x49, 0x2a, 0x00]) || hasPrefix(buffer, [0x4d, 0x4d, 0x00, 0x2a]),
+  }
+  const normalizedExtension = extension === 'jpeg' ? 'jpg' : extension === 'tif' ? 'tiff' : extension
+  const expected = signatures[normalizedExtension as keyof typeof signatures]
+  if (expected === false || (expected === undefined && !Object.values(signatures).some(Boolean))) {
+    throw new Error('文件内容与图片类型不匹配。')
+  }
+}
+
+const inspectOfficeArchive = (buffer: Buffer) => {
+  const minimumEocdSize = 22
+  const eocdSearchStart = Math.max(0, buffer.length - 65_557)
+  let eocdOffset = -1
+  for (let offset = buffer.length - minimumEocdSize; offset >= eocdSearchStart; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) {
+      eocdOffset = offset
+      break
+    }
+  }
+  if (eocdOffset < 0) throw new Error('Office 文件不是有效的 ZIP 容器。')
+
+  const diskNumber = buffer.readUInt16LE(eocdOffset + 4)
+  const centralDiskNumber = buffer.readUInt16LE(eocdOffset + 6)
+  const entryCount = buffer.readUInt16LE(eocdOffset + 10)
+  const centralSize = buffer.readUInt32LE(eocdOffset + 12)
+  const centralOffset = buffer.readUInt32LE(eocdOffset + 16)
+  if (diskNumber !== 0 || centralDiskNumber !== 0 || entryCount === 0 || entryCount > MAX_ARCHIVE_ENTRIES) {
+    throw new Error('Office 文件的压缩结构不受支持。')
+  }
+  if (centralOffset + centralSize > eocdOffset || centralOffset >= buffer.length) {
+    throw new Error('Office 文件的中央目录无效。')
+  }
+
+  const entries = new Set<string>()
+  let totalUncompressedBytes = 0
+  let offset = centralOffset
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) {
+      throw new Error('Office 文件的压缩条目无效。')
+    }
+
+    const flags = buffer.readUInt16LE(offset + 8)
+    const compressedBytes = buffer.readUInt32LE(offset + 20)
+    const uncompressedBytes = buffer.readUInt32LE(offset + 24)
+    const fileNameLength = buffer.readUInt16LE(offset + 28)
+    const extraLength = buffer.readUInt16LE(offset + 30)
+    const commentLength = buffer.readUInt16LE(offset + 32)
+    const nextOffset = offset + 46 + fileNameLength + extraLength + commentLength
+    if (
+      nextOffset > buffer.length
+      || (flags & 0x1) !== 0
+      || compressedBytes === 0xffffffff
+      || uncompressedBytes === 0xffffffff
+      || uncompressedBytes > MAX_ARCHIVE_ENTRY_BYTES
+    ) {
+      throw new Error('Office 文件包含不安全或不受支持的压缩条目。')
+    }
+
+    totalUncompressedBytes += uncompressedBytes
+    if (totalUncompressedBytes > MAX_ARCHIVE_TOTAL_BYTES) {
+      throw new Error('Office 文件解压后体积过大。')
+    }
+    if (
+      uncompressedBytes > 1024 * 1024
+      && uncompressedBytes / Math.max(compressedBytes, 1) > MAX_ARCHIVE_COMPRESSION_RATIO
+    ) {
+      throw new Error('Office 文件压缩比异常。')
+    }
+
+    const fileName = buffer.toString('utf8', offset + 46, offset + 46 + fileNameLength).replace(/\\/g, '/')
+    if (fileName.startsWith('/') || fileName.split('/').includes('..')) {
+      throw new Error('Office 文件包含非法路径。')
+    }
+    entries.add(fileName)
+    offset = nextOffset
+  }
+
+  return entries
+}
+
+const assertOfficeSignature = (buffer: Buffer, kind: 'docx' | 'xlsx') => {
+  if (!hasPrefix(buffer, [0x50, 0x4b])) {
+    throw new Error('文件内容与 Office 类型不匹配。')
+  }
+  const entries = inspectOfficeArchive(buffer)
+  const requiredEntry = kind === 'docx' ? 'word/document.xml' : 'xl/workbook.xml'
+  if (!entries.has(requiredEntry)) {
+    throw new Error(`文件内容不是有效的 ${kind.toUpperCase()} 文档。`)
+  }
+}
 
 const parseTextFile = async (buffer: Buffer) => normalizeText(buffer.toString('utf8'))
 
@@ -68,19 +179,24 @@ const parseDocxFile = async (buffer: Buffer) => {
   return normalizeText(result.value || '')
 }
 
-const parseSpreadsheetFile = (buffer: Buffer, fileName: string) => {
+const formatSpreadsheetCell = (value: unknown) => {
+  if (value instanceof Date) return value.toISOString()
+  if (value === null || value === undefined) return ''
+  return String(value).replace(/[\r\n]+/g, ' ')
+}
+
+const parseSpreadsheetFile = async (buffer: Buffer, fileName: string) => {
   if (/\.csv$/i.test(fileName) || /\.tsv$/i.test(fileName)) {
     return normalizeText(buffer.toString('utf8'))
   }
 
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true })
-  const sheets = workbook.SheetNames.slice(0, 8).map(sheetName => {
-    const sheet = workbook.Sheets[sheetName]
-    const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
-    return `# ${sheetName}\n${csv}`
-  })
+  const rows = await readSheet(buffer)
+  const text = rows
+    .slice(0, 200)
+    .map(row => row.slice(0, 50).map(formatSpreadsheetCell).join('\t'))
+    .join('\n')
 
-  return normalizeText(sheets.join('\n\n'))
+  return normalizeText(text)
 }
 
 const parseImageFile = async (buffer: Buffer) => {
@@ -121,20 +237,25 @@ export async function parseAttachmentFile(file: File): Promise<ParsedAttachment>
     const isImage = type.startsWith('image/') || IMAGE_EXTENSIONS.test(name)
     const isSpreadsheet = SPREADSHEET_EXTENSIONS.test(name) || [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
       'text/csv',
       'text/tab-separated-values',
     ].includes(type)
 
     let textPreview = ''
     if (isPdf) {
+      assertPdfSignature(buffer)
       textPreview = await parsePdfFile(buffer)
     } else if (isWord) {
+      assertOfficeSignature(buffer, 'docx')
       textPreview = await parseDocxFile(buffer)
     } else if (isImage) {
+      assertImageSignature(buffer, extension)
       textPreview = await parseImageFile(buffer)
     } else if (isSpreadsheet) {
-      textPreview = parseSpreadsheetFile(buffer, name)
+      if (/\.xlsx$/i.test(name) || type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+        assertOfficeSignature(buffer, 'xlsx')
+      }
+      textPreview = await parseSpreadsheetFile(buffer, name)
     } else if (isTextLike || ['json', 'xml'].includes(extension)) {
       textPreview = await parseTextFile(buffer)
     }

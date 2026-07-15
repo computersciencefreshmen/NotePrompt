@@ -1,26 +1,61 @@
-import { NextRequest, NextResponse } from 'next/server'
-import db from '@/lib/mysql-database'
+import { NextResponse } from 'next/server'
+import mysql from 'mysql2/promise'
 
-export async function GET(request: NextRequest) {
+const noStoreHeaders = { 'Cache-Control': 'no-store, max-age=0' }
+
+async function checkDatabaseReadiness() {
+  const host = process.env.MYSQL_HOST
+  const user = process.env.MYSQL_USER
+  const password = process.env.MYSQL_PASSWORD
+  const database = process.env.MYSQL_DATABASE
+  const port = Number.parseInt(process.env.MYSQL_PORT || '3306', 10)
+
+  if (!host || !user || !password || !database || !Number.isInteger(port)) {
+    throw new Error('Database readiness configuration is incomplete')
+  }
+  if (user.trim().toLowerCase() === 'root') {
+    throw new Error('Database readiness refuses the root account')
+  }
+
+  const connection = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database,
+    connectTimeout: 2500,
+    charset: 'utf8mb4',
+    multipleStatements: false,
+  })
+
   try {
-    // 测试数据库连接
-    const result = await db.query('SELECT 1 as test')
+    await connection.query({ sql: 'SELECT 1', timeout: 1500 })
+  } finally {
+    connection.destroy()
+  }
+}
+
+export async function GET() {
+  try {
+    await checkDatabaseReadiness()
 
     return NextResponse.json({
-      status: 'healthy',
-      database: 'connected',
+      success: true,
+      status: 'ready',
+      checks: { database: 'up' },
+      version: process.env.APP_VERSION || 'unknown',
       timestamp: new Date().toISOString(),
-      test_query: (result.rows as { test: number }[])[0]
-    })
+    }, { status: 200, headers: noStoreHeaders })
 
   } catch (error) {
-    console.error('Health check failed:', error)
+    console.error('Readiness check failed:', error instanceof Error ? error.name : 'UnknownError')
 
     return NextResponse.json({
-      status: 'unhealthy',
-      database: 'disconnected',
+      success: false,
+      status: 'not_ready',
+      checks: { database: 'down' },
+      version: process.env.APP_VERSION || 'unknown',
       timestamp: new Date().toISOString(),
-      error: error instanceof Error ? error.message : 'Database connection failed'
-    }, { status: 500 })
+    }, { status: 503, headers: noStoreHeaders })
   }
 }

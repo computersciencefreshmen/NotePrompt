@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
 
 type DbRow = Record<string, unknown>
 
@@ -36,6 +37,29 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    let parsedFolderFilterId: number | null = null
+    if (folderId && folderId !== 'null' && folderId !== 'undefined') {
+      parsedFolderFilterId = parsePositiveResourceId(folderId)
+      if (parsedFolderFilterId == null) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid folder ID' },
+          { status: 400 }
+        )
+      }
+
+      const folder = await findOwnedResource(
+        resourceId => db.getFolderById(resourceId),
+        parsedFolderFilterId,
+        userId
+      )
+      if (!folder) {
+        return NextResponse.json(
+          { success: false, error: 'Folder not found' },
+          { status: 404 }
+        )
+      }
+    }
     
     // 简化的查询，先确保基本功能正常
     let query = `
@@ -63,10 +87,10 @@ export async function GET(request: NextRequest) {
     }
     
     // 添加文件夹筛选条件
-    if (folderId && folderId !== 'null' && folderId !== 'undefined') {
+    if (parsedFolderFilterId != null) {
       query += ` AND up.folder_id = ?`
       countQuery += ` AND up.folder_id = ?`
-      queryParams.push(parseInt(folderId))
+      queryParams.push(parsedFolderFilterId)
     }
 
     // 添加标签筛选条件
@@ -157,7 +181,28 @@ export async function POST(request: NextRequest) {
 
     try {
       // folder_id 和 category_id 可能是 number 或 string，安全转换
-      const parsedFolderId = folder_id != null ? (typeof folder_id === 'number' ? folder_id : parseInt(folder_id)) : null
+      let parsedFolderId: number | null = null
+      if (folder_id != null && folder_id !== '') {
+        parsedFolderId = parsePositiveResourceId(folder_id)
+        if (parsedFolderId == null) {
+          return NextResponse.json(
+            { success: false, error: 'Invalid folder ID' },
+            { status: 400 }
+          )
+        }
+
+        const folder = await findOwnedResource(
+          resourceId => db.getFolderById(resourceId),
+          parsedFolderId,
+          userId
+        )
+        if (!folder) {
+          return NextResponse.json(
+            { success: false, error: 'Folder not found' },
+            { status: 404 }
+          )
+        }
+      }
       const parsedCategoryId = category_id != null ? (typeof category_id === 'number' ? category_id : parseInt(category_id)) : null
 
       newPrompt = await db.createUserPrompt({
@@ -165,7 +210,7 @@ export async function POST(request: NextRequest) {
         content,
         description: description || null,
         user_id: userId,
-        folder_id: isNaN(parsedFolderId as number) ? null : parsedFolderId,
+        folder_id: parsedFolderId,
         category_id: isNaN(parsedCategoryId as number) ? null : parsedCategoryId,
         mode: mode || 'normal',
         is_public: is_public || false

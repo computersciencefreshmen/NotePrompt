@@ -1,5 +1,6 @@
 import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER, getAvailableAIProviders, getAIProviderModels } from './ai-models'
 import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
+import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
 
 // AI模型配置 (2026最新)
 export const DEFAULT_AI_PROVIDER = process.env.DEFAULT_AI_PROVIDER || DEFAULT_PUBLIC_AI_PROVIDER
@@ -134,9 +135,13 @@ export function getAIRequestConfig(provider?: string, modelId?: string, runtimeO
     apiKey: providerConfig.apiKey,
     baseURL: providerConfig.baseURL,
   });
+  const userBaseURL = runtimeOverride?.baseURL
+    ? normalizeProviderBaseURL(resolvedProvider, runtimeOverride.baseURL)
+    : undefined;
+  const globalBaseURL = normalizeProviderBaseURL(resolvedProvider, globalRuntimeConfig.baseURL);
   const runtimeConfig = {
     apiKey: runtimeOverride?.apiKey || globalRuntimeConfig.apiKey,
-    baseURL: runtimeOverride?.baseURL || globalRuntimeConfig.baseURL,
+    baseURL: userBaseURL || globalBaseURL || '',
   }
   if (runtimeConfig.apiKey) headers['Authorization'] = 'Bearer ' + runtimeConfig.apiKey;
   

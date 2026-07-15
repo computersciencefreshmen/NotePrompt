@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
 
 // GET - 获取单个文件夹
 export async function GET(
@@ -14,10 +15,16 @@ export async function GET(
     }
     const userId = auth.user.id
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json(
+        { success: false, error: '文件夹不存在' },
+        { status: 404 }
+      )
+    }
 
-    const folder = await db.getFolderById(id)
-    if (!folder || (folder as Record<string, unknown>).user_id !== userId) {
+    const folder = await findOwnedResource(resourceId => db.getFolderById(resourceId), id, userId)
+    if (!folder) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
         { status: 404 }
@@ -49,13 +56,31 @@ export async function PUT(
     }
     const userId = auth.user.id
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json(
+        { success: false, error: '文件夹不存在' },
+        { status: 404 }
+      )
+    }
     const { name } = await request.json()
 
     if (!name || !name.trim()) {
       return NextResponse.json(
         { success: false, error: '文件夹名称不能为空' },
         { status: 400 }
+      )
+    }
+
+    const existingFolder = await findOwnedResource(
+      resourceId => db.getFolderById(resourceId),
+      id,
+      userId
+    )
+    if (!existingFolder) {
+      return NextResponse.json(
+        { success: false, error: '文件夹不存在' },
+        { status: 404 }
       )
     }
 
@@ -96,11 +121,17 @@ export async function DELETE(
     }
     const userId = auth.user.id
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json(
+        { success: false, error: '文件夹不存在' },
+        { status: 404 }
+      )
+    }
 
-    // 检查文件夹是否存在
-    const folder = await db.getFolderById(id)
-    if (!folder || folder.user_id !== userId) {
+    // 对不存在和越权资源统一返回 404
+    const folder = await findOwnedResource(resourceId => db.getFolderById(resourceId), id, userId)
+    if (!folder) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
         { status: 404 }
@@ -122,4 +153,4 @@ export async function DELETE(
       { status: 500 }
     )
   }
-} 
+}

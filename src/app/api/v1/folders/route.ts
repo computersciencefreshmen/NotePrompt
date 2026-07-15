@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
 
 // GET - 获取用户文件夹列表
 export async function GET(request: NextRequest) {
@@ -42,10 +43,33 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    let parentId: number | null = null
+    if (parent_id != null && parent_id !== '') {
+      parentId = parsePositiveResourceId(parent_id)
+      if (parentId == null) {
+        return NextResponse.json(
+          { success: false, error: '无效的父文件夹ID' },
+          { status: 400 }
+        )
+      }
+
+      const parentFolder = await findOwnedResource(
+        resourceId => db.getFolderById(resourceId),
+        parentId,
+        userId
+      )
+      if (!parentFolder) {
+        return NextResponse.json(
+          { success: false, error: '父文件夹不存在' },
+          { status: 404 }
+        )
+      }
+    }
+
     const folder = await db.createFolder({
       name: name.trim(),
       user_id: userId,
-      parent_id: parent_id || null
+      parent_id: parentId
     })
 
     return NextResponse.json({

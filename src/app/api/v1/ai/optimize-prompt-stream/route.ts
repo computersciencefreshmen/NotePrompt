@@ -3,8 +3,9 @@ import { validateAIModel, formatAIError } from '@/lib/ai-utils'
 import { FALLBACK_AI_MODEL, FALLBACK_AI_PROVIDER } from '@/config/ai'
 import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER } from '@/config/ai-models'
 import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
-import { requireAuth } from '@/lib/auth'
 import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
+import { requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
+import { MAX_AI_INPUT_CHARS, parseAIRequestAttachments, readLimitedJson } from '@/lib/ai-runtime-policy'
 
 type RequestedAttachment = {
   name: string
@@ -124,6 +125,7 @@ async function generatePromptTitle({
   try {
     const response = await fetch(`${config.baseURL}/chat/completions`, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
@@ -163,16 +165,24 @@ async function generatePromptTitle({
  * 支持实时展示AI思考过程和优化内容
  */
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
+  const auth = await requireAIUser(request)
+  if (!auth.ok) return auth.response
 
-    const prompt = body.prompt || body.originalPrompt
-    const provider = body.provider || body.modelType || DEFAULT_PUBLIC_AI_PROVIDER
-    const model = body.model || body.modelName || DEFAULT_PUBLIC_AI_MODEL
-    const temperatureOverride = body.temperature as number | undefined
-    const topPOverride = (body.topP ?? body.top_p) as number | undefined
-    const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
-    const requestedMode = body.mode as string | undefined
+  try {
+    const body = await readLimitedJson<Record<string, unknown>>(request)
+
+    const rawPrompt = body.prompt ?? body.originalPrompt
+    const rawProvider = body.provider ?? body.modelType
+    const rawModel = body.model ?? body.modelName
+    const prompt = typeof rawPrompt === 'string' ? rawPrompt : ''
+    const provider = typeof rawProvider === 'string' ? rawProvider : DEFAULT_PUBLIC_AI_PROVIDER
+    const model = typeof rawModel === 'string' ? rawModel : DEFAULT_PUBLIC_AI_MODEL
+    const temperatureOverride = typeof body.temperature === 'number' ? body.temperature : undefined
+    const rawTopP = body.topP ?? body.top_p
+    const rawMaxTokens = body.maxTokens ?? body.max_tokens
+    const topPOverride = typeof rawTopP === 'number' ? rawTopP : undefined
+    const maxTokensOverride = typeof rawMaxTokens === 'number' ? rawMaxTokens : undefined
+    const requestedMode = typeof body.mode === 'string' ? body.mode : undefined
     const requestedStyle = typeof body.style === 'string' ? body.style : ''
     const requestedTone = typeof body.tone === 'string' ? body.tone : ''
     const requestedOutputFormat = typeof body.outputFormat === 'string' ? body.outputFormat : ''
@@ -182,38 +192,18 @@ export async function POST(request: NextRequest) {
           .slice(0, 12)
           .map((item: string) => item.trim().slice(0, 500))
       : []
-    const requestedAttachments: RequestedAttachment[] = Array.isArray(body.attachments)
-      ? body.attachments
-          .filter((item: unknown) => item && typeof item === 'object')
-          .slice(0, 12)
-          .map((item: { name?: unknown; type?: unknown; size?: unknown; textPreview?: unknown; parseStatus?: unknown }) => ({
-            name: typeof item.name === 'string' ? item.name.slice(0, 120) : 'unnamed',
-            type: typeof item.type === 'string' ? item.type.slice(0, 80) : 'application/octet-stream',
-            size: typeof item.size === 'number' ? item.size : 0,
-            parseStatus: typeof item.parseStatus === 'string' ? item.parseStatus : 'metadata',
-            textPreview: typeof item.textPreview === 'string' ? item.textPreview.slice(0, 5000) : '',
-          }))
-      : []
-    const attachmentTextLength = requestedAttachments.reduce((total, attachment) => total + attachment.textPreview.length, 0)
-    const attachmentDeclaredSize = requestedAttachments.reduce((total, attachment) => total + Math.max(0, attachment.size), 0)
+    const requestedAttachments: RequestedAttachment[] = parseAIRequestAttachments(body.attachments)
 
-    if (attachmentTextLength > 30000 || attachmentDeclaredSize > 50 * 1024 * 1024) {
-      return NextResponse.json({ success: false, error: '附件上下文过大，请减少文件数量或内容长度' }, { status: 413 })
-    }
-
-    const MAX_INPUT_LENGTH = 10000
-    if (prompt && prompt.length > MAX_INPUT_LENGTH) {
-      return NextResponse.json({ error: '输入长度不能超过' + MAX_INPUT_LENGTH + '字符' }, { status: 400 })
+    if (prompt.length > MAX_AI_INPUT_CHARS) {
+      return NextResponse.json({ error: '输入长度不能超过' + MAX_AI_INPUT_CHARS + '字符' }, { status: 400 })
     }
     if (!prompt) {
       return NextResponse.json({ success: false, error: '提示词内容不能为空' }, { status: 400 })
     }
 
-    const auth = await requireAuth(request)
-    const userId = 'error' in auth ? null : auth.user.id
     const effectiveProvider = provider === 'local' ? 'qwen' : provider
     const resolveValidation = async (providerKey: string, modelKey: string) => {
-      const userRuntimeConfig = await getUserProviderRuntimeConfig(userId, providerKey)
+      const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, providerKey)
       return validateAIModel(providerKey, modelKey, userRuntimeConfig || undefined)
     }
 
@@ -223,6 +213,9 @@ export async function POST(request: NextRequest) {
     }
 
     const aiConfig = validation.config!
+    const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+    if (!quota.ok) return quota.response
+    const reservation = quota.reservation
 
     // 构建元提示词（与非流式路由一致）
     const modeInstruction = requestedMode === 'professional' || requestedMode === 'pro'
@@ -332,6 +325,7 @@ export async function POST(request: NextRequest) {
 
     const startTime = Date.now()
     const encoder = new TextEncoder()
+    let activeAbortController: AbortController | undefined
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -342,6 +336,7 @@ export async function POST(request: NextRequest) {
         try {
           const apiKey = aiConfig.headers['Authorization']?.replace('Bearer ', '')
           if (!apiKey) {
+            await reservation.rollback()
             send({ type: 'error', message: `未配置${effectiveProvider}的API密钥` })
             controller.close()
             return
@@ -388,11 +383,13 @@ export async function POST(request: NextRequest) {
 
             const requestApiKey = config.headers['Authorization']?.replace('Bearer ', '')
             const abortController = new AbortController()
+            activeAbortController = abortController
             const timeoutId = setTimeout(() => abortController.abort(), 150000)
 
             try {
               const response = await fetch(`${config.baseURL}/chat/completions`, {
                 method: 'POST',
+                redirect: 'error',
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${requestApiKey}`,
@@ -438,6 +435,7 @@ export async function POST(request: NextRequest) {
 
             if (!response.ok) {
               console.error(`${activeProvider} final stream error:`, sanitizeAIProviderError(fallbackError))
+              await reservation.rollback()
               const localOptimized = buildLocalOptimizedPrompt({
                 prompt,
                 mode: requestedMode,
@@ -601,12 +599,19 @@ export async function POST(request: NextRequest) {
             provider: activeProvider,
             model: activeModel,
           })
+          reservation.commit()
           controller.close()
         } catch (error) {
-          console.error('流式优化失败:', error)
+          activeAbortController?.abort()
+          await reservation.rollback()
+          console.error('流式优化失败')
           send({ type: 'error', message: formatAIError(error, effectiveProvider) })
           controller.close()
         }
+      },
+      async cancel() {
+        activeAbortController?.abort()
+        await reservation.rollback()
       },
     })
 
@@ -618,7 +623,6 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error('API错误:', error)
-    return NextResponse.json({ success: false, error: '请求处理失败' }, { status: 500 })
+    return requestPolicyResponse(error)
   }
 }

@@ -651,11 +651,6 @@ export default function PromptOptimizerV2() {
     showStatus(copy.rolledBack(version.label))
   }
 
-  const recordAIOptimizeUsage = () => {
-    if (!user) return
-    void api.user.incrementAIUsage('ai_optimize').catch(() => undefined)
-  }
-
   const handleProviderChange = (value: string) => {
     setProvider(value)
     setModel(getDefaultAIModel(value))
@@ -754,7 +749,6 @@ export default function PromptOptimizerV2() {
               thinkingContent: nextThinking,
               conversationHistory: nextHistory,
             })
-            recordAIOptimizeUsage()
             showStatus(copy.optimizeDone(result.processing_time))
           },
           onError: message => {
@@ -813,7 +807,6 @@ export default function PromptOptimizerV2() {
         thinkingContent: nextThinkingContent,
         conversationHistory: response.conversationHistory,
       })
-      recordAIOptimizeUsage()
       showStatus(copy.refinementDone(response.round))
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : copy.continueFailed)

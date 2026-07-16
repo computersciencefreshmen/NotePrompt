@@ -9,10 +9,12 @@
 - `.env*`、个人 provider 配置、证书、备份和 `_scripts` 不进入 Docker 构建上下文。
 - 秘密只在容器启动时从宿主机的受限文件或秘密管理器注入。
 - 应用不得使用 MySQL `root`；3306 和 6379 不得暴露到公网。
-- `/api/health` 是数据库 readiness；旧 `/api/v1/health-check` 与它完全相同，不再是固定成功的假健康检查。
+- 长期运行的应用账号只有 DML 权限；DDL 只由一次性迁移账号执行，两个账号不得相同。
+- 生产环境必须使用私网 Redis，且明确禁用内存限流降级。
+- `/api/health` 是数据库 readiness；Compose healthcheck 在此基础上还核对 Redis 与 commit version。旧 `/api/v1/health-check` 与数据库检查完全相同，不再是固定成功的假健康检查。
 - Nginx 只有在应用 readiness 通过后才启动。
 
-当前仍有少量运行时建表逻辑，因此应用专用 MySQL 账号暂时需要目标 schema 内的 `CREATE/ALTER/INDEX/REFERENCES`。完成正式迁移收口后，应撤销这些 DDL 权限，仅保留 DML。
+`database/migrations/*.cjs` 是唯一 schema 事实来源。请求处理期间不得建表、改列或回填；生产应用账号不需要且不得持有 DDL 权限。
 
 ## 2. 主机与网络准备
 
@@ -23,6 +25,19 @@
 | 80 | 公网 | HTTP 跳转与 ACME challenge |
 | 443 | 公网 | HTTPS |
 | 22 | 固定运维 IP | SSH |
+
+### 80/443 均无监听时的只读排障
+
+如果域名可解析、主机可 Ping，但 **80 和 443 均无监听**，先不要反复重启或输出容器环境变量。仓库提供了不会读取运行时密钥、不会输出 Compose 展开配置、也不会抓取容器日志的只读诊断脚本：
+
+```bash
+cd /opt/note-prompt
+bash scripts/deployment-diagnose.sh
+```
+
+按输出依次确认：宿主机监听端口、容器状态、`mysql8_default` 网络、firewalld 活动 zone、TLS 文件存在性与证书有效期。公网仍不可达时，在阿里云 ECS 控制台核对实例安全组入方向是否允许 TCP 80、443；Ping 成功只代表 ICMP 可达，不代表这两个 TCP 端口已放行。
+
+不要使用 `docker exec ... env`、`docker inspect ...Config.Env`、不带 `--quiet` 的 `docker compose config`，也不要把 `/opt/note-prompt-secrets/runtime.env` 内容贴入工单或聊天。
 
 确认 MySQL/Redis 端口未公开：
 
@@ -38,20 +53,29 @@ Compose 连接既有 MySQL Docker 网络，默认名称为 `mysql8_default`：
 docker network inspect mysql8_default >/dev/null
 ```
 
-如网络名称不同，在运行时配置中设置 `MYSQL_NETWORK`。Compose 本身不会启动或暴露 MySQL。
+如网络名称不同，在运行时配置中设置 `MYSQL_NETWORK`。Compose 本身不会启动或暴露 MySQL/Redis。`REDIS_URL` 必须指向同一 Docker 私网或 VPC 私网内可达的 Redis；禁止使用公网地址，也不要为 Redis 添加宿主机公网端口映射。
 
-## 3. 创建应用专用数据库账号
+## 3. 分离应用与迁移数据库账号
 
 使用本机管理通道登录 MySQL；管理凭据不得写入项目、Compose 或 shell history。下面只展示权限边界，密码应由秘密管理器生成并注入：
 
 ```sql
 CREATE USER IF NOT EXISTS 'note_prompt_app'@'%' IDENTIFIED BY '<由秘密管理器生成>';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+GRANT SELECT, INSERT, UPDATE, DELETE
   ON agent_report.* TO 'note_prompt_app'@'%';
+
+CREATE USER IF NOT EXISTS 'note_prompt_migrator'@'%' IDENTIFIED BY '<另一份独立秘密>';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, CREATE TEMPORARY TABLES, ALTER, INDEX, REFERENCES
+  ON agent_report.* TO 'note_prompt_migrator'@'%';
+
+SHOW GRANTS FOR 'note_prompt_app'@'%';
+SHOW GRANTS FOR 'note_prompt_migrator'@'%';
 FLUSH PRIVILEGES;
 ```
 
-MySQL 只应监听宿主机/Docker 私网，安全组不得放行 3306。应用启动命令会在 `MYSQL_USER=root` 时直接拒绝启动。
+`'%'` 只适用于 MySQL 已被 Docker/VPC 防火墙严格隔离的场景；能够固定容器网段或来源主机时，应把它收紧为实际来源。迁移 `007` 使用会话级临时表，因此需要 schema 级 `CREATE TEMPORARY TABLES`；它不要求普通表 `DROP` 权限。不要给迁移账号 `GRANT OPTION`、`FILE`、`PROCESS`、`SUPER` 或全局权限。若未来单个已审查迁移确实需要更高权限，应临时授予并在迁移成功后撤销。
+
+MySQL 只应监听宿主机/Docker 私网，安全组不得放行 3306。Compose 会拒绝 `MYSQL_USER=root`、`MYSQL_MIGRATION_USER=root`，也会拒绝两个用户名相同。
 
 ## 4. 运行时配置与证书
 
@@ -84,8 +108,24 @@ MYSQL_PORT=3306
 MYSQL_DATABASE=agent_report
 MYSQL_USER=note_prompt_app
 MYSQL_PASSWORD=<运行时秘密>
+MYSQL_MIGRATION_USER=note_prompt_migrator
+MYSQL_MIGRATION_PASSWORD=<独立迁移秘密>
+
+# 必须是私网 Redis；生产不得设置 RATE_LIMIT_ALLOW_MEMORY_FALLBACK=true
+REDIS_URL=redis://:<Redis密码>@redis.internal:6379/0
+RATE_LIMIT_KEY_PREFIX=note-prompt-prod
+AI_GLOBAL_DAILY_LIMIT=1000
+
 JWT_SECRET=<至少32字节的运行时秘密>
 PROVIDER_KEY_ENCRYPTION_SECRET=<独立的运行时秘密>
+VERIFICATION_CODE_SECRET=<独立的验证码HMAC秘密>
+JWT_EXPIRES_IN=2h
+NEXTAUTH_URL=https://noteprompt.cn
+
+# 默认关闭自助贡献升级；开启前需完成反滥用与运营审查。
+ENABLE_CONTRIBUTION_UPGRADES=false
+# 仅接受 1..10000；无效值回退为 100。只有管理员无限额。
+PRO_AI_MONTHLY_LIMIT=100
 
 TLS_CERT_DIR=/opt/note-prompt-secrets/tls
 CERTBOT_WEBROOT=/opt/note-prompt-certbot/www
@@ -109,6 +149,8 @@ EMAIL_PASS=
 EMAIL_FROM=
 EMAIL_FROM_NAME=Note Prompt
 ```
+
+运行时文件中不要写 `IMAGE_TAG` 或 `MIGRATION_IMAGE_TAG`：每次发布都必须从已签出的 Git commit 重新导出，避免陈旧标签把旧镜像伪装成当前版本。Redis URI 如果含密码，同样属于秘密；只允许部署账号读取。生产 Compose 固定写入 `RATE_LIMIT_ALLOW_MEMORY_FALLBACK=false` 和 `TRUST_PROXY=true`，无需在文件中覆盖。
 
 `TLS_CERT_DIR` 必须是项目外的受限目录，并真实包含：
 
@@ -138,9 +180,43 @@ docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx 
 
 应先运行 `certbot renew --dry-run` 验证续签链路；只有真实成功后才能配置自动 deploy hook。
 
+证书安装或续签后必须核对私钥与证书公钥匹配、证书尚未过期且覆盖两个域名，再执行 `nginx -t` 与 reload。最后从公网验证实际提供的证书，而不是只检查宿主机文件：
+
+```bash
+openssl x509 -in /opt/note-prompt-secrets/tls/fullchain.pem -noout -checkend 604800
+openssl x509 -in /opt/note-prompt-secrets/tls/fullchain.pem -pubkey -noout | sha256sum
+openssl pkey -in /opt/note-prompt-secrets/tls/privkey.pem -pubout | sha256sum
+
+openssl s_client -connect noteprompt.cn:443 -servername noteprompt.cn </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+curl --fail --show-error --silent --tlsv1.2 https://noteprompt.cn/api/health
+```
+
+前两条公钥摘要必须相同，`-checkend 604800` 必须成功。当前仓库无法证明线上证书有效；这些检查必须在真实部署主机和公网链路执行并保存变更记录。
+
 ## 5. 以 commit SHA 构建不可变镜像
 
-部署目录示例为 `/opt/note-prompt`。开始前要求工作树干净，并备份数据库：
+部署目录示例为 `/opt/note-prompt`。先进入变更窗口，记录当前运行镜像与完整 SHA，并停止写流量。数据库备份必须在项目目录外、权限为 `0600`，且通过完整性检查；仅有“命令成功”而没有备份文件和校验和不算完成。
+
+下面示例假设已用 `mysql_config_editor` 交互式创建受限的 `note_prompt_backup` login-path，因而密码不会出现在命令行或 shell history：
+
+```bash
+umask 077
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0700 /opt/note-prompt-backups
+BACKUP_FILE="/opt/note-prompt-backups/agent_report-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+
+set -o pipefail
+mysqldump --login-path=note_prompt_backup \
+  --single-transaction --quick --hex-blob --no-tablespaces --set-gtid-purged=OFF \
+  agent_report | gzip -9 >"$BACKUP_FILE"
+test -s "$BACKUP_FILE"
+gzip -t "$BACKUP_FILE"
+sha256sum "$BACKUP_FILE" | tee "${BACKUP_FILE}.sha256"
+```
+
+备份账号只需读取/备份所需权限，不得复用应用或迁移账号。发布前应已在隔离实例演练恢复并记录 RPO/RTO；不要把第一次恢复测试留到事故发生后。
+
+然后更新部署 checkout，并要求工作树干净：
 
 ```bash
 cd /opt/note-prompt
@@ -148,10 +224,13 @@ git fetch --all --tags --prune
 git pull --ff-only
 test -z "$(git status --porcelain)"
 
-export IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+export IMAGE_TAG="$(git rev-parse HEAD)"
+export MIGRATION_IMAGE_TAG="$IMAGE_TAG"
 export IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-note-prompt}"
 export COMPOSE_PROJECT_NAME="note-prompt"
-test -n "$IMAGE_TAG"
+test "${#IMAGE_TAG}" -eq 40
+test "$MIGRATION_IMAGE_TAG" = "$IMAGE_TAG"
+test "$(git rev-parse HEAD)" = "$IMAGE_TAG"
 ```
 
 先做静默配置校验；不要运行会把插值后秘密打印到日志的 `docker compose config`：
@@ -177,11 +256,50 @@ docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
-输出必须与 `$IMAGE_TAG` 完全一致。不要使用 `docker build -t note-prompt:latest`，也不要仅执行 `git pull && docker compose up`。
+输出必须与完整 `$IMAGE_TAG` 完全一致。不要使用 `docker build -t note-prompt:latest`，也不要仅执行 `git pull && docker compose up`。
+
+镜像内必须具备本地 PDF/OCR 能力，生产解析不得在首个请求时从外网下载语言包：
+
+```bash
+docker run --rm --entrypoint sh "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" -ec '
+  command -v pdftotext >/dev/null
+  command -v tesseract >/dev/null
+  tesseract --list-langs | grep -Fx eng >/dev/null
+  tesseract --list-langs | grep -Fx chi_sim >/dev/null
+'
+```
+
+任一检查失败都应阻止发布；不要用运行时联网下载替代镜像内固定能力。
 
 ## 6. 启动与验证
 
-启动阶段禁止隐式重建，确保运行的就是刚核对过的镜像：
+迁移必须是显式发布门禁。先查看镜像内的离线计划与当前数据库状态；然后停止旧应用写流量，强制重建并运行一次迁移容器。只有迁移进程返回 0 且随后 `status` 全部为 `applied` 才能启动新版本：
+
+```bash
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs plan
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+
+docker compose --env-file /opt/note-prompt-secrets/runtime.env stop nginx note-prompt-app
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  up --no-build --no-deps --force-recreate \
+  --abort-on-container-exit --exit-code-from note-prompt-migrate \
+  note-prompt-migrate
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+```
+
+如果迁移失败，保持 `nginx` 和应用停止，不要通过改用 `root`、手工删除 `schema_migrations` 记录或启动旧镜像来绕过。MySQL DDL 可能已经隐式提交；保存迁移日志与数据库状态，确认失败迁移是否可安全续跑。现有迁移均按可重入设计，修正明确原因后可再次运行同一命令；无法证明可续跑时，按已演练流程恢复已校验备份。
+
+迁移成功后，启动阶段仍禁止隐式重建：
 
 ```bash
 docker compose \
@@ -199,13 +317,16 @@ curl -fsS --max-time 15 https://noteprompt.cn/api/health
 curl -fsS --max-time 15 https://noteprompt.cn/api/v1/health-check
 curl -fsSI --max-time 15 https://noteprompt.cn/
 
+docker compose --env-file /opt/note-prompt-secrets/runtime.env exec -T note-prompt-app \
+  node -e "const Redis=require('ioredis');(async()=>{const r=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1});try{await r.connect();if(await r.ping()!=='PONG')throw new Error()}finally{r.disconnect()}})().catch(()=>{console.error('Redis readiness failed');process.exit(1)})"
+
 APP_CONTAINER_ID="$(docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q note-prompt-app)"
 test -n "$APP_CONTAINER_ID"
 docker inspect "$APP_CONTAINER_ID" \
   --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
-两个 API 健康地址应返回相同的 `status: ready`、`checks.database: up` 和当前 `version`。数据库不可用时必须返回 HTTP 503，Compose 会将应用标记为 unhealthy，Nginx 不应把它当成可用版本。
+两个 API 健康地址应返回相同的 `status: ready`、`checks.database: up` 和完整当前 commit `version`。应用容器 healthcheck 同时核对这些字段、`APP_VERSION` 和 Redis `PING`，而非只接受任意 HTTP 200。数据库不可用时 API 必须返回 HTTP 503；数据库或 Redis 不可用、版本不符时 Compose 都会把应用标记为 unhealthy，Nginx 初始启动不会把它当成可用版本。生产限流不允许退回进程内存。
 
 禁止用 `docker exec ... env` 排障，因为它会把全部运行时秘密写入终端或日志。只检查非敏感单项配置，或直接使用 readiness。
 
@@ -225,15 +346,26 @@ docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx 
 
 ## 8. 回滚
 
-代码回滚不等于数据库回滚。涉及 schema 变化前必须备份并确认向后兼容。
+代码回滚不等于数据库回滚。迁移器只前进且没有 `down` 命令；不得删除 `schema_migrations` 记录来伪造回滚。只有在隔离数据库上证明旧应用与当前 schema 向后兼容，才允许只回滚应用镜像。否则必须进入恢复流程，评估恢复备份导致的数据回退，而不是让 Compose 猜测。
 
-如果目标 SHA 的镜像仍在本机，只切换不可变标签，不修改工作树：
+发布记录必须保留“当前 schema 对应的迁移镜像完整 SHA”和至少一个已验证的应用回滚镜像。回滚时继续使用当前迁移镜像核对 schema，只切换应用镜像标签，不修改工作树：
 
 ```bash
 cd /opt/note-prompt
-export IMAGE_TAG=<已验证的旧commit短SHA>
+export MIGRATION_IMAGE_TAG=<当前schema对应的迁移镜像完整SHA>
+export IMAGE_TAG=<已验证且兼容当前schema的旧应用完整SHA>
 
+test "${#MIGRATION_IMAGE_TAG}" -eq 40
+test "${#IMAGE_TAG}" -eq 40
+docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${MIGRATION_IMAGE_TAG}" >/dev/null
 docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" >/dev/null
+docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  | grep -Fx "$IMAGE_TAG"
+
+docker compose --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+
 docker compose \
   --env-file /opt/note-prompt-secrets/runtime.env \
   up -d --no-build --wait --wait-timeout 180 note-prompt-app nginx
@@ -241,19 +373,16 @@ docker compose \
 curl -fsS --max-time 15 http://127.0.0.1/health
 ```
 
-如果本机没有该镜像，使用临时 Git worktree 构建旧 SHA，避免 `git reset --hard` 破坏当前部署目录：
+如果本机没有该镜像，只能从受信任镜像仓库按完整 SHA 拉取并再次核对 OCI revision：
 
 ```bash
-export TARGET_SHA=<完整旧commit SHA>
-git worktree add "/tmp/note-prompt-${TARGET_SHA}" "${TARGET_SHA}"
-cd "/tmp/note-prompt-${TARGET_SHA}"
-export IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
-
-docker compose --env-file /opt/note-prompt-secrets/runtime.env build --pull note-prompt-app
-docker compose --env-file /opt/note-prompt-secrets/runtime.env up -d --no-build --wait --wait-timeout 180 note-prompt-app nginx
+docker pull "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+docker image inspect "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  | grep -Fx "$IMAGE_TAG"
 ```
 
-回滚完成后再次核对镜像 revision 与两个 readiness URL。数据库恢复必须走独立、已演练的恢复流程，不能由 Compose 自动执行。
+仓库中缺少目标镜像不是在生产机临时重建的授权；应由受控 CI 从精确 commit 重建并发布，或判定应用回滚受阻。回滚完成后再次核对镜像 revision、Redis 探测与两个 readiness URL。数据库恢复必须走独立、已演练的恢复流程，不能由 Compose 自动执行。
 
 ## 9. 常见故障
 
@@ -266,6 +395,21 @@ curl -i --max-time 15 http://127.0.0.1/health
 ```
 
 HTTP 503 表示应用进程存活但数据库 readiness 失败。检查 MySQL 容器、外部网络连接和专用用户权限，不要切换为 root 规避错误。
+
+### 迁移失败
+
+```bash
+docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -a note-prompt-migrate
+docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --no-log-prefix note-prompt-migrate
+docker compose --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+```
+
+校验和变化、未知 migration、版本断层和 advisory lock 获取失败都会 fail closed。不要编辑已经应用的 migration，也不要手工修记录。先判断是并发发布、权限不足、代码/数据库历史不匹配还是可重入迁移的中断，再按第 6 节处理。
+
+### Redis 不可用
+
+生产环境没有内存降级。检查 Redis 私网 DNS/路由、TLS/密码和服务状态；不要临时把 6379 开到公网，也不要设置 `RATE_LIMIT_ALLOW_MEMORY_FALLBACK=true` 绕过。修复后重新执行第 6 节的无秘密 Redis `PING` 探测。
 
 ### Nginx 未启动
 
@@ -282,7 +426,7 @@ docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --tail 200 n
 比较 Git SHA、镜像标签、OCI revision 与健康响应中的 `version`：
 
 ```bash
-git rev-parse --short=12 HEAD
+git rev-parse HEAD
 APP_CONTAINER_ID="$(docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q note-prompt-app)"
 test -n "$APP_CONTAINER_ID"
 docker inspect "$APP_CONTAINER_ID" \
@@ -291,3 +435,65 @@ curl -fsS https://noteprompt.cn/api/health
 ```
 
 四处版本必须一致；否则停止发布并重新按第 5、6 节构建部署。
+
+## 10. 凭据轮换与 Git 历史清理
+
+本仓库曾跟踪过真实凭据。删除当前文件或新增一次“清理”提交不会使旧值失效；必须先轮换/撤销，再重写历史。处置过程应建立事件记录，但只记录系统、账号、密钥指纹、发现 commit 和轮换时间，不复制秘密值。
+
+### 10.1 先轮换，不等待历史清理
+
+1. 进入维护窗口，限制公网访问并冻结发布；保存数据库备份、当前镜像 ID、Git SHA 和必要审计日志。
+2. 立即撤销或轮换所有可能出现过的 SSH root/运维密钥与密码、MySQL 账号、站点管理员密码、SMTP 密码、AI/provider API key 和第三方 token。证书私钥若可能泄露，重新签发并撤销旧证书。
+3. 数据库账号优先创建新用户名、复制最小权限、切换部署并验证，再 `DROP USER` 旧账号，避免在运行容器仍使用旧密码时原地失效。应用与迁移账号继续保持分离。
+4. 更换 `JWT_SECRET` 会强制全部用户重新登录；应作为计划内安全动作执行。`VERIFICATION_CODE_SECRET` 必须独立轮换并让未使用验证码失效。
+5. `PROVIDER_KEY_ENCRYPTION_SECRET` 当前没有双密钥在线轮换工具。如果该密钥或数据库副本可能泄露，应先撤销底层 provider key，再在维护窗口清除/重新录入受影响配置并切换新加密秘密；不要只换加密秘密导致现有密文永久不可读。
+6. 用项目目录外的 `runtime.env` 部署新值，完成数据库、Redis、登录、邮件/AI（若启用）和 readiness 验证后，确认旧凭据在各外部系统均已不可用。
+
+### 10.2 受控重写历史
+
+历史重写会改变所有受影响 commit，破坏开放 PR/本地分支，并且不能清理他人的 clone、fork 或 GitHub 缓存。必须由仓库所有者协调停写窗口并明确批准 force push。按照 [GitHub 官方敏感数据清理指南](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) 执行：
+
+1. 记录所有受影响路径（包含改名/移动前的旧路径）和需替换的秘密模式；秘密替换清单保存在仓库外受限临时文件中。
+2. 创建受控的远端镜像备份并限制访问。该备份仍含已泄露值，只用于灾难恢复，不能成为新的共享仓库。
+3. 在全新 clone 中使用 `git-filter-repo >= 2.47`。删除整条历史中的秘密文件时，为每个历史路径重复 `--path`：
+
+   ```bash
+   git filter-repo --sensitive-data-removal --invert-paths \
+     --path deploy-latest.js \
+     --path _scripts/reset-admin-pw.js \
+     --path _scripts/test-login.js
+   ```
+
+   若秘密也出现在仍需保留的文件中，使用仓库外的替换清单：
+
+   ```bash
+   git filter-repo --sensitive-data-removal --replace-text /secure/path/secret-replacements.txt
+   ```
+
+   上述路径只是已知代表项，不是完整清单；必须以全历史扫描结果为准。
+4. 检查 `.git/filter-repo/changed-refs`、所有 branch/tag、已知 commit 与秘密扫描结果；在重写 clone 上完成构建、测试和部署配置验证。任何命中都必须重新开始，不能 force push 半清理历史。
+5. `git-filter-repo` 可能移除 `origin` 作为安全保护。仓库所有者临时协调 branch protection 后，先用 `git remote -v` 核对；若缺失，只把已人工核对的精确仓库 URL 重新添加为 `origin`。随后从唯一受控 clone 执行 `git push --force --mirror origin`。这一步不可逆，执行前再次确认停写、远端地址、changed refs 和备份。
+6. 所有协作者删除旧 clone 后重新 clone；禁止把旧 branch merge/rebase 回新历史。协调 fork 所有者清理或删除 fork，并联系 GitHub Support 清除仍可访问的 PR 引用和缓存视图。
+7. 恢复 branch protection/ruleset，启用 push protection/secret scanning，并在 CI 中阻止秘密模式和 `.env`/运维脚本再次进入历史。
+
+## 11. 泄露镜像、构建缓存与发布包清理
+
+若旧构建上下文可能含 `.env`、provider 配置或硬编码凭据，则旧镜像、registry layer、BuildKit cache 和离线发布包都按泄露源处理。凭据必须先轮换；清缓存不能替代轮换。
+
+先记录当前容器、回滚镜像和所有待删除对象的精确 ID/digest，完成干净历史上的无缓存重建与替换部署，再删除明确命中的旧对象：
+
+```bash
+docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q \
+  | xargs -r docker inspect --format '{{.Id}} {{.Config.Image}} {{.Image}}'
+docker image ls --no-trunc --filter 'reference=note-prompt:*'
+docker system df -v
+
+# 仅填写已核对的受影响 image ID；不要用模糊标签批量删除。
+docker image rm <compromised-image-id> [<compromised-image-id> ...]
+
+# 构建缓存可能保留被 .dockerignore 漏掉的秘密层。
+docker builder prune --all --force
+# 若实际使用了独立 buildx builder，再执行：docker buildx prune --all --force
+```
+
+在镜像仓库中还要按 digest 删除受影响 manifest/layer，检查 registry retention 与复制节点，并重新发布从已清理 commit 构建的 commit-SHA 镜像。检查备份目录、CI artifact、对象存储和其他部署主机上的同名包。严禁使用 `docker system prune --volumes`：它可能删除数据库或其他持久卷。常规发布只清理已确认无引用的旧应用镜像，并始终保留当前版本和至少一个已验证回滚版本。

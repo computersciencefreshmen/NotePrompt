@@ -20,6 +20,10 @@ skills-lock.json
 **/.env*
 **/.provider-config.local.json
 **/.provider-config*.local.json
+**/.npmrc
+**/.yarnrc.yml
+**/.netrc
+**/.ssh/
 **/*.pem
 **/*.key
 **/*.p12
@@ -39,6 +43,7 @@ certbot/
 _scripts/
 deploy*.js
 deploy.sh
+docker-compose.override*.yml
 data/
 ai-optimizer/
 
@@ -53,7 +58,11 @@ ai-optimizer/
 *.swp
 *~
 **/*.sql.gz
+**/*.sql
 **/*.dump
+**/*.sqlite
+**/*.sqlite3
+**/*.db
 **/*.tgz
 **/*.tar
 **/*.zip

@@ -11,18 +11,13 @@ const nextConfig = {
     root: projectRoot,
   },
 
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-
-  env: {
-    CUSTOM_KEY: process.env.CUSTOM_KEY,
-  },
-
   serverExternalPackages: ['mysql2'],
+
+  // Give builds migrated from the retired custom JSX runtime a fresh compiler
+  // cache namespace without disabling persistent caching.
+  compiler: {
+    reactRemoveProperties: false,
+  },
 
   // Disable x-powered-by header
   poweredByHeader: false,
@@ -33,11 +28,14 @@ const nextConfig = {
       {
         source: '/:path*',
         headers: [
-          { key: 'X-DNS-Prefetch-Control', value: 'on' },
+          { key: 'X-DNS-Prefetch-Control', value: 'off' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'X-XSS-Protection', value: '1; mode=block' },
+          { key: 'X-XSS-Protection', value: '0' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Resource-Policy', value: 'same-site' },
         ],
       },
     ];

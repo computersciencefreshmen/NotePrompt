@@ -175,7 +175,13 @@ openssl s_client -connect noteprompt.cn:443 -servername noteprompt.cn </dev/null
 
 curl -fsS --max-time 15 http://noteprompt.cn/.well-known/acme-challenge/nonexistent \
   -o /dev/null -w '%{http_code}\n'
-curl -fsS --max-time 15 https://noteprompt.cn/api/health
+curl -fsS --max-time 15 https://noteprompt.cn/api/live
+APP_CONTAINER_IDS="$(docker ps --filter label=com.docker.compose.service=note-prompt-app --format '{{.ID}}')"
+test "$(printf '%s\n' "$APP_CONTAINER_IDS" | sed '/^$/d' | wc -l)" -eq 1
+APP_CONTAINER_ID="$APP_CONTAINER_IDS"
+docker exec "$APP_CONTAINER_ID" \
+  node -e "fetch('http://127.0.0.1:3000/api/health',{cache:'no-store'}).then(async r=>{const b=await r.json();if(!r.ok||b.status!=='ready')process.exitCode=1})"
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://noteprompt.cn/api/health)" = "404"
 ```
 
 最后一组验收标准：
@@ -186,7 +192,7 @@ curl -fsS --max-time 15 https://noteprompt.cn/api/health
 - Certbot 源证书、Docker 复制件和公网实际证书指纹一致；
 - `certbot renew --dry-run` 成功；
 - timer 已启用且下次运行时间可见；
-- `/api/health` 返回 ready，并报告预期 commit SHA。
+- 公网 `/api/live` 返回 alive，公网 `/api/health` 返回 404；应用容器内 `/api/health` 返回 ready，并报告预期 commit SHA。
 
 ## 5. 若证书修好但 443 仍无监听
 
@@ -205,7 +211,7 @@ docker network inspect mysql8_default --format '{{.Name}}'
 
 - 每 12 小时执行 `certbot renew --quiet`，仅在真实续签成功后运行 deploy hook。
 - 对公网 443 证书剩余天数设置 30/14/7 天告警；监控必须检查“实际提供的证书”，不能只检查磁盘文件。
-- 同时监控 TCP 80、TCP 443、ACME challenge、`/api/health` 和返回的 commit version。
+- 公网同时监控 TCP 80、TCP 443、ACME challenge 和 `/api/live`；在受信任内网单独监控 `/api/health` 及其 commit version。不得为了公网监控重新开放 readiness。
 - 每月执行一次 `certbot renew --dry-run`，变更 DNS、安全组、CDN、Nginx 或证书目录后立即补测。
 - 保留续签、hook 校验、Nginx reload 与验收时间，不记录私钥、密码或完整运行时环境。
 

@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
-import { requireAuth } from '@/lib/auth'
+import { requireAdminAuth } from '@/lib/auth'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { normalizePromptTagNames, TagValidationError } from '@/lib/tag-policy'
+
+type DatabaseRow = Record<string, unknown>
+
+const MAX_ADMIN_PROMPT_BODY_BYTES = 64 * 1024
+const MAX_PROMPT_TITLE_CHARS = 200
+const MAX_PROMPT_CONTENT_CHARS = 50_000
+const MAX_PROMPT_DESCRIPTION_CHARS = 10_000
 
 // GET - 获取单个公共提示词详情
 export async function GET(
@@ -8,21 +18,19 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await requireAuth(request)
+    const auth = await requireAdminAuth(request)
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
-    
-    // 检查管理员权限
-    if (!auth.user.is_admin) {
-      return NextResponse.json(
-        { success: false, error: '需要管理员权限' },
-        { status: 403 }
-      )
-    }
 
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json(
+        { success: false, error: '公共提示词不存在' },
+        { status: 404 },
+      )
+    }
 
     // 获取公共提示词详情
     const result = await db.query(`
@@ -32,14 +40,14 @@ export async function GET(
       WHERE pp.id = ?
     `, [id])
 
-    if (!result.rows || (result.rows as any[]).length === 0) {
+    if (!result.rows || (result.rows as DatabaseRow[]).length === 0) {
       return NextResponse.json(
         { success: false, error: '公共提示词不存在' },
         { status: 404 }
       )
     }
 
-    const prompt = (result.rows as any[])[0]
+    const prompt = (result.rows as DatabaseRow[])[0]
 
     // 获取标签信息
     const tagsResult = await db.getPublicPromptTags(id)
@@ -76,66 +84,95 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await requireAuth(request)
+    const auth = await requireAdminAuth(request)
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
-    
-    // 检查管理员权限
-    if (!auth.user.is_admin) {
+
+    const { id: idStr } = await params
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
       return NextResponse.json(
-        { success: false, error: '需要管理员权限' },
-        { status: 403 }
+        { success: false, error: '公共提示词不存在' },
+        { status: 404 },
+      )
+    }
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_ADMIN_PROMPT_BODY_BYTES,
+    )
+    const allowedFields = new Set(['title', 'content', 'description', 'is_featured', 'tags'])
+    if (Object.keys(body).some(key => !allowedFields.has(key))) {
+      return NextResponse.json(
+        { success: false, error: '请求包含不支持的字段' },
+        { status: 400 },
       )
     }
 
-    const { id: idStr } = await params
-    const id = parseInt(idStr)
-    const body = await request.json()
-
-    // 更新公共提示词
-    const updateFields = []
-    const updateValues = []
+    const updates: Partial<{
+      title: string
+      content: string
+      description: string | null
+      is_featured: boolean
+      tags: string[]
+    }> = {}
 
     if (body.title !== undefined) {
-      updateFields.push('title = ?')
-      updateValues.push(body.title)
+      if (typeof body.title !== 'string' || !body.title.trim() || body.title.trim().length > MAX_PROMPT_TITLE_CHARS) {
+        return NextResponse.json(
+          { success: false, error: `标题必须为 1-${MAX_PROMPT_TITLE_CHARS} 个字符` },
+          { status: 400 },
+        )
+      }
+      updates.title = body.title.trim()
     }
     if (body.content !== undefined) {
-      updateFields.push('content = ?')
-      updateValues.push(body.content)
+      if (typeof body.content !== 'string' || !body.content.trim() || body.content.length > MAX_PROMPT_CONTENT_CHARS) {
+        return NextResponse.json(
+          { success: false, error: `内容必须为 1-${MAX_PROMPT_CONTENT_CHARS} 个字符` },
+          { status: 400 },
+        )
+      }
+      updates.content = body.content
     }
     if (body.description !== undefined) {
-      updateFields.push('description = ?')
-      updateValues.push(body.description)
+      if (
+        body.description !== null &&
+        (typeof body.description !== 'string' || body.description.length > MAX_PROMPT_DESCRIPTION_CHARS)
+      ) {
+        return NextResponse.json(
+          { success: false, error: `描述不能超过 ${MAX_PROMPT_DESCRIPTION_CHARS} 个字符` },
+          { status: 400 },
+        )
+      }
+      updates.description = body.description === null ? null : body.description.trim() || null
     }
     if (body.is_featured !== undefined) {
-      updateFields.push('is_featured = ?')
-      updateValues.push(body.is_featured)
+      if (typeof body.is_featured !== 'boolean') {
+        return NextResponse.json(
+          { success: false, error: 'is_featured 必须是布尔值' },
+          { status: 400 },
+        )
+      }
+      updates.is_featured = body.is_featured
     }
 
-    if (updateFields.length === 0) {
+    if (body.tags !== undefined) {
+      updates.tags = normalizePromptTagNames(body.tags)
+    }
+
+    if (Object.keys(updates).length === 0) {
       return NextResponse.json(
         { success: false, error: '没有提供更新字段' },
         { status: 400 }
       )
     }
 
-    updateFields.push('updated_at = NOW()')
-    updateValues.push(id)
-
-    const query = `UPDATE public_prompts SET ${updateFields.join(', ')} WHERE id = ?`
-    await db.query(query, updateValues)
-
-    // 处理标签更新
-    if (body.tags && Array.isArray(body.tags)) {
-      // 先删除现有标签
-      await db.query('DELETE FROM public_prompt_tags WHERE public_prompt_id = ?', [id])
-      
-      // 添加新标签
-      if (body.tags.length > 0) {
-        await db.addPublicPromptTags(id, body.tags)
-      }
+    if (!await db.updatePublicPromptWithTags(id, updates)) {
+      return NextResponse.json(
+        { success: false, error: '公共提示词不存在' },
+        { status: 404 },
+      )
     }
 
     return NextResponse.json({
@@ -143,6 +180,18 @@ export async function PUT(
       message: '公共提示词更新成功'
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
+    if (error instanceof TagValidationError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 400 },
+      )
+    }
     console.error('Update admin public prompt error:', error)
     return NextResponse.json(
       { success: false, error: '更新公共提示词失败' },
@@ -157,24 +206,28 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await requireAuth(request)
+    const auth = await requireAdminAuth(request)
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
-    
-    // 检查管理员权限
-    if (!auth.user.is_admin) {
+
+    const { id: idStr } = await params
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
       return NextResponse.json(
-        { success: false, error: '需要管理员权限' },
-        { status: 403 }
+        { success: false, error: '公共提示词不存在' },
+        { status: 404 },
       )
     }
 
-    const { id: idStr } = await params
-    const id = parseInt(idStr)
-
     // 删除公共提示词
-    await db.query('DELETE FROM public_prompts WHERE id = ?', [id])
+    const deleteResult = await db.query('DELETE FROM public_prompts WHERE id = ?', [id])
+    if (Number((deleteResult.rows as { affectedRows?: number }).affectedRows) !== 1) {
+      return NextResponse.json(
+        { success: false, error: '公共提示词不存在' },
+        { status: 404 },
+      )
+    }
 
     return NextResponse.json({
       success: true,
@@ -187,4 +240,4 @@ export async function DELETE(
       { status: 500 }
     )
   }
-} 
+}

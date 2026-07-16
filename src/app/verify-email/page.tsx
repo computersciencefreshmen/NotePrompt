@@ -24,9 +24,9 @@ function VerifyEmailContent() {
       setEmail(emailParam);
     } else {
       // 如果没有邮箱参数，重定向到注册页面
-      router.push(href('/register'));
+      router.push(withLocaleHref('/register', locale));
     }
-  }, [searchParams, router]);
+  }, [locale, router, searchParams]);
 
   const handleVerified = () => {
     // 验证成功，跳转到登录页面

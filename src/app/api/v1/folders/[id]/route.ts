@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+const MAX_FOLDER_BODY_BYTES = 8 * 1024
+const MAX_FOLDER_NAME_CHARS = 100
 
 // GET - 获取单个文件夹
 export async function GET(
@@ -23,7 +27,7 @@ export async function GET(
       )
     }
 
-    const folder = await findOwnedResource(resourceId => db.getFolderById(resourceId), id, userId)
+    const folder = await db.getOwnedFolderById(id, userId)
     if (!folder) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
@@ -63,33 +67,32 @@ export async function PUT(
         { status: 404 }
       )
     }
-    const { name } = await request.json()
-
-    if (!name || !name.trim()) {
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_FOLDER_BODY_BYTES,
+    )
+    if (Object.keys(body).some(key => key !== 'name')) {
       return NextResponse.json(
-        { success: false, error: '文件夹名称不能为空' },
+        { success: false, error: '请求包含不支持的字段' },
+        { status: 400 },
+      )
+    }
+    const { name } = body
+
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > MAX_FOLDER_NAME_CHARS) {
+      return NextResponse.json(
+        { success: false, error: `文件夹名称必须为 1-${MAX_FOLDER_NAME_CHARS} 个字符` },
         { status: 400 }
       )
     }
 
-    const existingFolder = await findOwnedResource(
-      resourceId => db.getFolderById(resourceId),
-      id,
-      userId
+    const updateResult = await db.query(
+      'UPDATE folders SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+      [name.trim(), id, userId],
     )
-    if (!existingFolder) {
-      return NextResponse.json(
-        { success: false, error: '文件夹不存在' },
-        { status: 404 }
-      )
-    }
-
-    // 更新文件夹名称
-    const updatedFolder = await db.updateFolder(id, {
-      name: name.trim()
-    })
-
-    if (!updatedFolder) {
+    const affectedRows = Number((updateResult.rows as { affectedRows?: number }).affectedRows)
+    const updatedFolder = await db.getOwnedFolderById(id, userId)
+    if (!updatedFolder || affectedRows > 1) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
         { status: 404 }
@@ -101,6 +104,12 @@ export async function PUT(
       data: updatedFolder
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('Update folder error:', error)
     return NextResponse.json(
       { success: false, error: '更新文件夹失败' },
@@ -129,17 +138,17 @@ export async function DELETE(
       )
     }
 
-    // 对不存在和越权资源统一返回 404
-    const folder = await findOwnedResource(resourceId => db.getFolderById(resourceId), id, userId)
-    if (!folder) {
+    // 外键负责将 user_prompts.folder_id 置空并清理关联表；所有权和删除在同一语句内判定。
+    const deleteResult = await db.query(
+      'DELETE FROM folders WHERE id = ? AND user_id = ?',
+      [id, userId],
+    )
+    if (Number((deleteResult.rows as { affectedRows?: number }).affectedRows) !== 1) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
         { status: 404 }
       )
     }
-
-    // 删除文件夹（不影响提示词）
-    await db.deleteFolder(id)
 
     return NextResponse.json({
       success: true,

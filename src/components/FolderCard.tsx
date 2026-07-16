@@ -4,9 +4,8 @@ import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Folder, Edit, Trash2, FileText, Plus, Upload } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Folder, Edit, Trash2, FileText, Upload } from 'lucide-react'
 import { Folder as FolderType } from '@/types'
 import { api } from '@/lib/api'
 import { useRouter } from 'next/navigation'
@@ -40,7 +39,7 @@ export default function FolderCard({
   const [editName, setEditName] = useState(folder.name)
   const [loading, setLoading] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const router = useRouter(); // 新增
+  const router = useRouter()
 
   const handleEdit = async () => {
     if (!editName.trim()) return
@@ -79,16 +78,23 @@ export default function FolderCard({
     onDrop?.(e, folder.id)
   }
 
+  const handleClick = () => {
+    if (onClick) {
+      onClick()
+    } else {
+      router.push(`/folders/${folder.id}`)
+    }
+  }
+
   return (
     <>
       <Card 
-        className={`hover:shadow-md transition-all cursor-pointer ${
+        className={`hover:shadow-md transition-all ${
           isDragOver ? 'border-blue-500 bg-blue-50' : ''
         }`}
-        onDrop={(e) => onDrop?.(e, folder.id)}
+        onDrop={handleDrop}
         onDragOver={(e) => onDragOver?.(e, folder.id)}
         onDragLeave={onDragLeave}
-        onClick={() => router.push(`/folders/${folder.id}`)} // 修改为跳转
       >
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
@@ -97,6 +103,7 @@ export default function FolderCard({
               {isEditing ? (
                 <div className="flex items-center space-x-2 flex-1">
                   <Input
+                    aria-label={`重命名文件夹：${folder.name}`}
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     onKeyDown={(e) => {
@@ -125,14 +132,22 @@ export default function FolderCard({
                   </Button>
                 </div>
               ) : (
-                <CardTitle className="text-lg font-semibold line-clamp-1">
-                  {folder.name}
+                <CardTitle className="text-lg font-semibold line-clamp-1" role="heading" aria-level={3}>
+                  <button
+                    type="button"
+                    className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2"
+                    onClick={handleClick}
+                    aria-label={`打开文件夹：${folder.name}`}
+                  >
+                    {folder.name}
+                  </button>
                 </CardTitle>
               )}
             </div>
             
             <div className="flex items-center space-x-1">
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
@@ -140,10 +155,12 @@ export default function FolderCard({
                   setIsEditing(true)
                 }}
                 className="p-1 text-gray-400 hover:text-gray-600"
+                aria-label={`编辑文件夹：${folder.name}`}
               >
-                <Edit className="h-4 w-4" />
+                <Edit className="h-4 w-4" aria-hidden="true" />
               </Button>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
@@ -151,8 +168,9 @@ export default function FolderCard({
                   setShowDeleteDialog(true)
                 }}
                 className="p-1 text-gray-400 hover:text-red-600"
+                aria-label={`删除文件夹：${folder.name}`}
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -216,4 +234,4 @@ export default function FolderCard({
       </Dialog>
     </>
   )
-} 
+}

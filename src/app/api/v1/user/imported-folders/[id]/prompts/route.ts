@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+
+function normalizeTags(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((tag): tag is string => typeof tag === 'string')
+  if (typeof value !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((tag): tag is string => typeof tag === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 export async function GET(
   request: NextRequest,
@@ -13,7 +25,10 @@ export async function GET(
     }
     const userId = auth.user.id
     const { id: idStr } = await params
-    const importedFolderId = parseInt(idStr)
+    const importedFolderId = parsePositiveResourceId(idStr)
+    if (importedFolderId == null) {
+      return NextResponse.json({ success: false, error: '无效的导入文件夹ID' }, { status: 400 })
+    }
 
     // 检查导入文件夹是否属于当前用户
     const importedFolder = await db.getImportedFolderById(importedFolderId)
@@ -35,7 +50,7 @@ export async function GET(
       author: (prompt.username as string) || '未知用户',
       author_id: prompt.user_id as number,
       category: (prompt.category_name as string) || '未分类',
-      tags: (prompt.tags_string as string) ? (prompt.tags_string as string).split(',').map((tag: string) => tag.trim()) : [],
+      tags: normalizeTags(prompt.tags),
       views_count: (prompt.views_count as number) || 0,
       favorites_count: 0, // 导入的提示词没有收藏数，因为它们是用户提示词
       is_featured: false,
@@ -55,4 +70,4 @@ export async function GET(
       { status: 500 }
     )
   }
-} 
+}

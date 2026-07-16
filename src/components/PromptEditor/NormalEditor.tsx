@@ -224,31 +224,41 @@ export default function NormalEditor({
     <div className="space-y-6">
       {/* 模板快速选择（折叠式） */}
       <Card>
-        <CardHeader className="py-3 cursor-pointer" onClick={() => setShowTips(!showTips)}>
-          <CardTitle className="text-sm flex items-center justify-between">
-            <div className="flex items-center">
-              <FileText className="h-4 w-4 mr-2 text-teal-600" />
-              <span>快速模板（可选）</span>
-            </div>
-            <span className="text-xs text-gray-400">{showTips ? '收起' : '展开'}</span>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2"
+              aria-expanded={showTips}
+              aria-controls="quick-template-options"
+              onClick={() => setShowTips(current => !current)}
+            >
+              <span className="flex items-center">
+                <FileText className="h-4 w-4 mr-2 text-teal-600" aria-hidden="true" />
+                <span>快速模板（可选）</span>
+              </span>
+              <span className="text-xs text-gray-400">{showTips ? '收起' : '展开'}</span>
+            </button>
           </CardTitle>
         </CardHeader>
         {showTips && (
-          <CardContent className="pt-0">
+          <CardContent id="quick-template-options" className="pt-0">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {templates.map((template) => (
-                <div
+                <button
                   key={template.id}
+                  type="button"
+                  aria-pressed={selectedTemplate === template.id}
                   className={`p-2 border rounded-lg cursor-pointer transition-colors text-center ${
                     selectedTemplate === template.id
                       ? 'border-teal-500 bg-teal-50'
                       : 'border-gray-200 hover:border-gray-300'
-                  }`}
+                  } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2`}
                   onClick={() => applyTemplate(template)}
                 >
-                  <h4 className="font-medium text-xs">{template.name}</h4>
-                  <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{template.description}</p>
-                </div>
+                  <span className="block font-medium text-xs">{template.name}</span>
+                  <span className="block text-xs text-gray-500 mt-0.5 line-clamp-1">{template.description}</span>
+                </button>
               ))}
             </div>
           </CardContent>
@@ -389,6 +399,7 @@ export default function NormalEditor({
               {availableTags.map((tag) => (
                 <button
                   key={tag}
+                  type="button"
                   onClick={() => addTag(tag)}
                   disabled={tags.includes(tag) || loading}
                   className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
@@ -407,7 +418,14 @@ export default function NormalEditor({
                 {tags.map((tag) => (
                   <Badge key={tag} variant="secondary" className="flex items-center gap-1 text-xs">
                     {tag}
-                    <X className="h-3 w-3 cursor-pointer hover:text-red-500" onClick={() => removeTag(tag)} />
+                    <button
+                      type="button"
+                      className="rounded-sm hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                      onClick={() => removeTag(tag)}
+                      aria-label={`移除标签：${tag}`}
+                    >
+                      <X className="h-3 w-3" aria-hidden="true" />
+                    </button>
                   </Badge>
                 ))}
               </div>

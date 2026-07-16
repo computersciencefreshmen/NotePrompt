@@ -466,6 +466,7 @@ export default function PromptOptimizerV2() {
   const { user } = useAuth()
   const { visualStyle } = useUISettings()
   const [locale, setLocale] = useState<Locale>('zh')
+  const [localeReady, setLocaleReady] = useState(false)
   const copy = optimizerCopy[locale]
   const localizedStyleOptions = locale === 'en' ? styleOptionsEn : styleOptions
   const localizedToneOptions = locale === 'en' ? toneOptionsEn : toneOptions
@@ -510,6 +511,7 @@ export default function PromptOptimizerV2() {
 
   useEffect(() => {
     setLocale(detectLocaleFromSearch())
+    setLocaleReady(true)
   }, [])
 
   useEffect(() => {
@@ -576,6 +578,8 @@ export default function PromptOptimizerV2() {
   }
 
   useEffect(() => {
+    if (!localeReady) return
+
     const rawDraft = window.sessionStorage.getItem('note-prompt-optimizer-draft')
     if (!rawDraft) return
 
@@ -595,7 +599,7 @@ export default function PromptOptimizerV2() {
     } finally {
       window.sessionStorage.removeItem('note-prompt-optimizer-draft')
     }
-  }, [])
+  }, [copy.draftLoadFailed, copy.draftLoadedCreate, copy.draftLoadedEdit, localeReady])
 
   const showStatus = (message: string) => {
     setStatus(message)

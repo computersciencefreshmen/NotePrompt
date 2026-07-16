@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -28,10 +28,14 @@ export default function AdminFolderDetailPage() {
   const router = useRouter()
   const { user } = useAuth()
   const { toast } = useToast()
+  const hasAdminAccess = Boolean(user && (user.is_admin || user.user_type === 'admin'))
   
   const folderId = parseInt(params.id as string)
   const [folder, setFolder] = useState<AdminFolder | null>(null)
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
+  const [promptPage, setPromptPage] = useState(1)
+  const [promptTotal, setPromptTotal] = useState(0)
+  const [promptTotalPages, setPromptTotalPages] = useState(0)
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [showAddDialog, setShowAddDialog] = useState(false)
@@ -39,19 +43,16 @@ export default function AdminFolderDetailPage() {
   const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
   const [loadingAvailablePrompts, setLoadingAvailablePrompts] = useState(false)
 
-  useEffect(() => {
-    if (user?.is_admin && folderId) {
-      fetchFolderData()
-    }
-  }, [user, folderId])
-
-  const fetchFolderData = async () => {
+  const fetchFolderData = useCallback(async (page = 1) => {
     setLoading(true)
     try {
-      const response = await api.admin.getPublicFolderPrompts(folderId)
+      const response = await api.admin.getPublicFolderPrompts(folderId, { page, limit: 20 })
       if (response.success && response.data) {
         setFolder(response.data.folder)
         setPrompts(response.data.prompts)
+        setPromptPage(response.pagination?.page ?? page)
+        setPromptTotal(response.pagination?.total ?? response.data.prompts.length)
+        setPromptTotalPages(response.pagination?.totalPages ?? 1)
       } else {
         toast({
           title: '获取数据失败',
@@ -69,7 +70,13 @@ export default function AdminFolderDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [folderId, toast])
+
+  useEffect(() => {
+    if (hasAdminAccess && folderId) {
+      void fetchFolderData()
+    }
+  }, [fetchFolderData, folderId, hasAdminAccess])
 
   const handleAddPrompt = async () => {
     if (!selectedPromptId) return
@@ -82,7 +89,7 @@ export default function AdminFolderDetailPage() {
           description: '提示词已添加到文件夹',
           variant: 'success',
         })
-        fetchFolderData()
+        fetchFolderData(promptPage)
         setShowAddDialog(false)
         setSelectedPromptId(null)
       } else {
@@ -111,7 +118,7 @@ export default function AdminFolderDetailPage() {
           description: '提示词已从文件夹移除',
           variant: 'success',
         })
-        fetchFolderData()
+        fetchFolderData(promptPage)
       } else {
         toast({
           title: '移除失败',
@@ -151,7 +158,7 @@ export default function AdminFolderDetailPage() {
     prompt.content.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  if (!user?.is_admin) {
+  if (!hasAdminAccess) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -194,7 +201,7 @@ export default function AdminFolderDetailPage() {
                     <div className="flex items-center space-x-4 text-sm text-gray-500 mt-2">
                       <div className="flex items-center space-x-1">
                         <FileText className="h-4 w-4" />
-                        <span>{prompts.length} 个提示词</span>
+                        <span>{promptTotal} 个提示词</span>
                       </div>
                       <div className="flex items-center space-x-1">
                         <span>作者: {folder.author}</span>
@@ -216,7 +223,7 @@ export default function AdminFolderDetailPage() {
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-gray-900">
-                  文件夹内的提示词 ({prompts.length})
+                  文件夹内的提示词 ({promptTotal})
                 </h2>
                                  <Button onClick={() => {
                    setShowAddDialog(true)
@@ -229,6 +236,7 @@ export default function AdminFolderDetailPage() {
 
               <div className="mb-4">
                 <Input
+                  aria-label="搜索文件夹内的提示词"
                   placeholder="搜索提示词..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -265,24 +273,49 @@ export default function AdminFolderDetailPage() {
                         </div>
                         <div className="flex items-center space-x-2 ml-4">
                           <Button
+                            type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => window.open(`/public-prompts/${prompt.id}`, '_blank')}
+                            onClick={() => window.open(`/public-prompts/${prompt.id}?source=published`, '_blank', 'noopener,noreferrer')}
+                            aria-label={`在新窗口查看提示词：${prompt.title}`}
                           >
-                            <FileText className="h-4 w-4" />
+                            <FileText className="h-4 w-4" aria-hidden="true" />
                           </Button>
                           <Button
+                            type="button"
                             size="sm"
                             variant="outline"
                             onClick={() => handleRemovePrompt(prompt.id)}
                             className="text-red-600 hover:text-red-700"
+                            aria-label={`从文件夹移除提示词：${prompt.title}`}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
                           </Button>
                         </div>
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+              {promptTotalPages > 1 && (
+                <div className="mt-6 flex items-center justify-center gap-3" aria-label="文件夹提示词分页">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={promptPage <= 1}
+                    onClick={() => void fetchFolderData(promptPage - 1)}
+                  >
+                    上一页
+                  </Button>
+                  <span className="text-sm text-gray-500">{promptPage} / {promptTotalPages}</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={promptPage >= promptTotalPages}
+                    onClick={() => void fetchFolderData(promptPage + 1)}
+                  >
+                    下一页
+                  </Button>
                 </div>
               )}
             </div>
@@ -303,10 +336,11 @@ export default function AdminFolderDetailPage() {
            </DialogHeader>
            <div className="space-y-4">
              <div>
-               <label className="block text-sm font-medium text-gray-700 mb-2">
+               <label htmlFor="available-prompt-search" className="block text-sm font-medium text-gray-700 mb-2">
                  搜索提示词
                </label>
                <Input
+                 id="available-prompt-search"
                  placeholder="搜索提示词..."
                  onChange={(e) => fetchAvailablePrompts(e.target.value)}
                  className="mb-4"
@@ -315,8 +349,8 @@ export default function AdminFolderDetailPage() {
              
              <div className="max-h-60 overflow-y-auto">
                {loadingAvailablePrompts ? (
-                 <div className="flex items-center justify-center py-8">
-                   <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                 <div className="flex items-center justify-center py-8" role="status" aria-live="polite">
+                   <Loader2 className="h-6 w-6 animate-spin text-blue-600" aria-hidden="true" />
                    <span className="ml-2 text-gray-600">加载中...</span>
                  </div>
                ) : availablePrompts.length === 0 ? (
@@ -324,32 +358,32 @@ export default function AdminFolderDetailPage() {
                    <p className="text-gray-500">没有找到可添加的提示词</p>
                  </div>
                ) : (
-                 <div className="space-y-2">
+                 <div className="space-y-2" role="radiogroup" aria-label="选择要添加的提示词">
                    {availablePrompts.map((prompt) => (
                      <div
                        key={prompt.id}
-                       className={`p-3 border rounded-lg cursor-pointer hover:bg-gray-50 ${
+                       className={`border rounded-lg hover:bg-gray-50 ${
                          selectedPromptId === prompt.id ? 'border-blue-500 bg-blue-50' : ''
                        }`}
-                       onClick={() => setSelectedPromptId(prompt.id)}
                      >
-                       <div className="flex items-start justify-between">
-                         <div className="flex-1">
-                           <h4 className="font-medium text-sm">{prompt.title}</h4>
-                           <p className="text-xs text-gray-600 mt-1">{prompt.author}</p>
-                           <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                       <label className="flex cursor-pointer items-start justify-between p-3">
+                         <span className="flex-1">
+                           <span className="block font-medium text-sm">{prompt.title}</span>
+                           <span className="block text-xs text-gray-600 mt-1">{prompt.author}</span>
+                           <span className="block text-xs text-gray-500 mt-1 line-clamp-2">
                              {prompt.description || prompt.content}
-                           </p>
-                         </div>
-                         <div className="ml-2">
+                           </span>
+                         </span>
+                         <span className="ml-2">
                            <input
                              type="radio"
+                             name="available-prompt"
                              checked={selectedPromptId === prompt.id}
                              onChange={() => setSelectedPromptId(prompt.id)}
                              className="text-blue-600"
                            />
-                         </div>
-                       </div>
+                         </span>
+                       </label>
                      </div>
                    ))}
                  </div>
@@ -378,4 +412,4 @@ export default function AdminFolderDetailPage() {
        </Dialog>
     </div>
   )
-} 
+}

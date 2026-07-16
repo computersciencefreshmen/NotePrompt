@@ -85,6 +85,7 @@ export function EmailVerification({ email, onVerified, onBack, locale = 'zh' }: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
+        credentials: 'same-origin',
       });
 
       const data = await response.json();
@@ -144,6 +145,7 @@ export function EmailVerification({ email, onVerified, onBack, locale = 'zh' }: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code }),
+        credentials: 'same-origin',
       });
 
       const data = await response.json();

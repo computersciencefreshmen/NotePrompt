@@ -7,6 +7,11 @@ import path from 'path'
 import { promisify } from 'util'
 import mammoth from 'mammoth'
 import { readSheet } from 'read-excel-file/node'
+import {
+  BoundedWorkPool,
+  WorkQueueCapacityError,
+  WorkQueueTimeoutError,
+} from './bounded-work-pool'
 
 export type ParsedAttachment = {
   id: string
@@ -29,6 +34,14 @@ const MAX_ARCHIVE_ENTRIES = 256
 const MAX_ARCHIVE_ENTRY_BYTES = 10 * 1024 * 1024
 const MAX_ARCHIVE_TOTAL_BYTES = 25 * 1024 * 1024
 const MAX_ARCHIVE_COMPRESSION_RATIO = 200
+const ocrWorkPool = new BoundedWorkPool(2, 8, 10_000)
+
+class SafeAttachmentParseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SafeAttachmentParseError'
+  }
+}
 
 const normalizeText = (value: string) => value
   .replace(/\u0000/g, '')
@@ -44,7 +57,7 @@ const hasPrefix = (buffer: Buffer, signature: readonly number[]) =>
 
 const assertPdfSignature = (buffer: Buffer) => {
   if (buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
-    throw new Error('文件内容与 PDF 类型不匹配。')
+    throw new SafeAttachmentParseError('文件内容与 PDF 类型不匹配。')
   }
 }
 
@@ -60,7 +73,7 @@ const assertImageSignature = (buffer: Buffer, extension: string) => {
   const normalizedExtension = extension === 'jpeg' ? 'jpg' : extension === 'tif' ? 'tiff' : extension
   const expected = signatures[normalizedExtension as keyof typeof signatures]
   if (expected === false || (expected === undefined && !Object.values(signatures).some(Boolean))) {
-    throw new Error('文件内容与图片类型不匹配。')
+    throw new SafeAttachmentParseError('文件内容与图片类型不匹配。')
   }
 }
 
@@ -74,7 +87,7 @@ const inspectOfficeArchive = (buffer: Buffer) => {
       break
     }
   }
-  if (eocdOffset < 0) throw new Error('Office 文件不是有效的 ZIP 容器。')
+  if (eocdOffset < 0) throw new SafeAttachmentParseError('Office 文件不是有效的 ZIP 容器。')
 
   const diskNumber = buffer.readUInt16LE(eocdOffset + 4)
   const centralDiskNumber = buffer.readUInt16LE(eocdOffset + 6)
@@ -82,10 +95,10 @@ const inspectOfficeArchive = (buffer: Buffer) => {
   const centralSize = buffer.readUInt32LE(eocdOffset + 12)
   const centralOffset = buffer.readUInt32LE(eocdOffset + 16)
   if (diskNumber !== 0 || centralDiskNumber !== 0 || entryCount === 0 || entryCount > MAX_ARCHIVE_ENTRIES) {
-    throw new Error('Office 文件的压缩结构不受支持。')
+    throw new SafeAttachmentParseError('Office 文件的压缩结构不受支持。')
   }
   if (centralOffset + centralSize > eocdOffset || centralOffset >= buffer.length) {
-    throw new Error('Office 文件的中央目录无效。')
+    throw new SafeAttachmentParseError('Office 文件的中央目录无效。')
   }
 
   const entries = new Set<string>()
@@ -93,7 +106,7 @@ const inspectOfficeArchive = (buffer: Buffer) => {
   let offset = centralOffset
   for (let index = 0; index < entryCount; index += 1) {
     if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) {
-      throw new Error('Office 文件的压缩条目无效。')
+      throw new SafeAttachmentParseError('Office 文件的压缩条目无效。')
     }
 
     const flags = buffer.readUInt16LE(offset + 8)
@@ -110,23 +123,23 @@ const inspectOfficeArchive = (buffer: Buffer) => {
       || uncompressedBytes === 0xffffffff
       || uncompressedBytes > MAX_ARCHIVE_ENTRY_BYTES
     ) {
-      throw new Error('Office 文件包含不安全或不受支持的压缩条目。')
+      throw new SafeAttachmentParseError('Office 文件包含不安全或不受支持的压缩条目。')
     }
 
     totalUncompressedBytes += uncompressedBytes
     if (totalUncompressedBytes > MAX_ARCHIVE_TOTAL_BYTES) {
-      throw new Error('Office 文件解压后体积过大。')
+      throw new SafeAttachmentParseError('Office 文件解压后体积过大。')
     }
     if (
       uncompressedBytes > 1024 * 1024
       && uncompressedBytes / Math.max(compressedBytes, 1) > MAX_ARCHIVE_COMPRESSION_RATIO
     ) {
-      throw new Error('Office 文件压缩比异常。')
+      throw new SafeAttachmentParseError('Office 文件压缩比异常。')
     }
 
     const fileName = buffer.toString('utf8', offset + 46, offset + 46 + fileNameLength).replace(/\\/g, '/')
     if (fileName.startsWith('/') || fileName.split('/').includes('..')) {
-      throw new Error('Office 文件包含非法路径。')
+      throw new SafeAttachmentParseError('Office 文件包含非法路径。')
     }
     entries.add(fileName)
     offset = nextOffset
@@ -137,26 +150,40 @@ const inspectOfficeArchive = (buffer: Buffer) => {
 
 const assertOfficeSignature = (buffer: Buffer, kind: 'docx' | 'xlsx') => {
   if (!hasPrefix(buffer, [0x50, 0x4b])) {
-    throw new Error('文件内容与 Office 类型不匹配。')
+    throw new SafeAttachmentParseError('文件内容与 Office 类型不匹配。')
   }
   const entries = inspectOfficeArchive(buffer)
   const requiredEntry = kind === 'docx' ? 'word/document.xml' : 'xl/workbook.xml'
   if (!entries.has(requiredEntry)) {
-    throw new Error(`文件内容不是有效的 ${kind.toUpperCase()} 文档。`)
+    throw new SafeAttachmentParseError(`文件内容不是有效的 ${kind.toUpperCase()} 文档。`)
   }
 }
 
 const parseTextFile = async (buffer: Buffer) => normalizeText(buffer.toString('utf8'))
 
 const getPdfToTextPath = () => {
-  const toolPath = path.resolve(process.cwd(), '..', '_tools', 'poppler-25.12.0', 'Library', 'bin', 'pdftotext.exe')
-  return existsSync(toolPath) ? toolPath : ''
+  const candidates = [
+    process.env.PDFTOTEXT_PATH?.trim(),
+    '/usr/bin/pdftotext',
+    '/usr/local/bin/pdftotext',
+    path.resolve(process.cwd(), '..', '_tools', 'poppler-25.12.0', 'Library', 'bin', 'pdftotext.exe'),
+  ]
+  return candidates.find(candidate => candidate && existsSync(candidate)) || ''
+}
+
+const getTesseractPath = () => {
+  const candidates = [
+    process.env.TESSERACT_PATH?.trim(),
+    '/usr/bin/tesseract',
+    '/usr/local/bin/tesseract',
+  ]
+  return candidates.find(candidate => candidate && existsSync(candidate)) || ''
 }
 
 const parsePdfFile = async (buffer: Buffer) => {
   const pdfToTextPath = getPdfToTextPath()
   if (!pdfToTextPath) {
-    throw new Error('PDF 正文解析工具未找到，已保留文件元数据。')
+    throw new SafeAttachmentParseError('PDF 正文解析工具未找到，已保留文件元数据。')
   }
 
   const tempDirectory = await mkdtemp(path.join(tmpdir(), 'note-prompt-pdf-'))
@@ -200,20 +227,34 @@ const parseSpreadsheetFile = async (buffer: Buffer, fileName: string) => {
 }
 
 const parseImageFile = async (buffer: Buffer) => {
-  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'note-prompt-ocr-'))
-  const inputPath = path.join(tempDirectory, `${randomUUID()}.png`)
-  const scriptPath = path.resolve(process.cwd(), 'scripts', 'ocr-image.cjs')
-
   try {
-    await writeFile(inputPath, buffer)
-    const { stdout } = await execFileAsync(process.execPath, [scriptPath, inputPath], {
-      cwd: process.cwd(),
-      maxBuffer: 1024 * 1024,
-      timeout: 60000,
+    return await ocrWorkPool.run(async () => {
+      const tempDirectory = await mkdtemp(path.join(tmpdir(), 'note-prompt-ocr-'))
+      const inputPath = path.join(tempDirectory, `${randomUUID()}.png`)
+      const tesseractPath = getTesseractPath()
+      const scriptPath = path.resolve(process.cwd(), 'scripts', 'ocr-image.cjs')
+
+      try {
+        await writeFile(inputPath, buffer)
+        const command = tesseractPath || process.execPath
+        const args = tesseractPath
+          ? [inputPath, 'stdout', '-l', 'chi_sim+eng']
+          : [scriptPath, inputPath]
+        const { stdout } = await execFileAsync(command, args, {
+          cwd: process.cwd(),
+          maxBuffer: 1024 * 1024,
+          timeout: 60000,
+        })
+        return normalizeText(stdout || '')
+      } finally {
+        await rm(tempDirectory, { recursive: true, force: true })
+      }
     })
-    return normalizeText(stdout || '')
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true })
+  } catch (error) {
+    if (error instanceof WorkQueueCapacityError || error instanceof WorkQueueTimeoutError) {
+      throw new SafeAttachmentParseError('OCR 服务繁忙，请稍后重试。')
+    }
+    throw error
   }
 }
 
@@ -277,7 +318,7 @@ export async function parseAttachmentFile(file: File): Promise<ParsedAttachment>
     return {
       ...base,
       parseStatus: 'failed',
-      error: error instanceof Error ? error.message : '附件解析失败',
+      error: error instanceof SafeAttachmentParseError ? error.message : '附件解析失败',
     }
   }
 }

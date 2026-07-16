@@ -55,7 +55,7 @@ interface AdminFolder {
   description: string
   user_id: number
   author: string
-  original_folder_id: number
+  original_folder_id: number | null
   is_featured: boolean
   prompt_count: number
   created_at: string
@@ -111,6 +111,7 @@ export default function AdminPage() {
   const { user, loading } = useAuth()
   const { toast } = useToast()
   const router = useRouter()
+  const hasAdminAccess = Boolean(user && (user.is_admin || user.user_type === 'admin'))
   
   const [activeTab, setActiveTab] = useState('dashboard')
   
@@ -123,11 +124,17 @@ export default function AdminPage() {
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
   const [promptsLoading, setPromptsLoading] = useState(false)
   const [promptSearch, setPromptSearch] = useState('')
+  const [promptPage, setPromptPage] = useState(1)
+  const [promptTotal, setPromptTotal] = useState(0)
+  const [promptTotalPages, setPromptTotalPages] = useState(0)
   
   // 文件夹
   const [folders, setFolders] = useState<AdminFolder[]>([])
   const [foldersLoading, setFoldersLoading] = useState(false)
   const [folderSearch, setFolderSearch] = useState('')
+  const [folderPage, setFolderPage] = useState(1)
+  const [folderTotal, setFolderTotal] = useState(0)
+  const [folderTotalPages, setFolderTotalPages] = useState(0)
   
   // 用户
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -149,14 +156,16 @@ export default function AdminPage() {
   const [showAIUsageDialog, setShowAIUsageDialog] = useState(false)
   const [aiUsageData, setAIUsageData] = useState<UserAIUsage[]>([])
   const [aiUsageLoading, setAIUsageLoading] = useState(false)
+  const [aiUsagePage, setAIUsagePage] = useState(1)
+  const [aiUsageTotalPages, setAIUsageTotalPages] = useState(0)
 
   // 管理员权限检查
   useEffect(() => {
-    if (user && !user.is_admin) {
+    if (user && !hasAdminAccess) {
       toast({ title: '权限不足', description: '您没有管理员权限', variant: 'destructive' })
       router.push('/')
     }
-  }, [user, router, toast])
+  }, [hasAdminAccess, user, router, toast])
 
   // 获取统计数据
   const fetchStats = useCallback(async () => {
@@ -176,11 +185,14 @@ export default function AdminPage() {
   }, [toast])
 
   // 获取提示词
-  const fetchPrompts = useCallback(async () => {
+  const fetchPrompts = useCallback(async (page = 1, search = '') => {
     setPromptsLoading(true)
     try {
-      const res = await api.admin.getPublicPrompts()
+      const res = await api.admin.getPublicPrompts({ page, limit: 20, search: search || undefined })
       setPrompts(res.data || [])
+      setPromptPage(res.pagination?.page ?? page)
+      setPromptTotal(res.pagination?.total ?? res.data?.length ?? 0)
+      setPromptTotalPages(res.pagination?.totalPages ?? 1)
     } catch (error) {
       console.error('Failed to fetch prompts:', error)
     } finally {
@@ -189,11 +201,14 @@ export default function AdminPage() {
   }, [])
 
   // 获取文件夹
-  const fetchFolders = useCallback(async () => {
+  const fetchFolders = useCallback(async (page = 1, search = '') => {
     setFoldersLoading(true)
     try {
-      const res = await api.admin.getPublicFolders()
+      const res = await api.admin.getPublicFolders({ page, limit: 20, search: search || undefined })
       setFolders(res.data || [])
+      setFolderPage(res.pagination?.page ?? page)
+      setFolderTotal(res.pagination?.total ?? res.data?.length ?? 0)
+      setFolderTotalPages(res.pagination?.totalPages ?? 1)
     } catch (error) {
       console.error('Failed to fetch folders:', error)
     } finally {
@@ -221,32 +236,33 @@ export default function AdminPage() {
 
   // 初始加载
   useEffect(() => {
-    if (user?.is_admin) {
+    if (hasAdminAccess) {
       fetchStats()
     }
-  }, [user, fetchStats])
+  }, [hasAdminAccess, fetchStats])
 
   useEffect(() => {
-    if (!user?.is_admin || activeTab !== 'dashboard') return
+    if (!hasAdminAccess || activeTab !== 'dashboard') return
 
     const intervalId = window.setInterval(() => {
       fetchStats()
     }, 30000)
 
     return () => window.clearInterval(intervalId)
-  }, [activeTab, user, fetchStats])
+  }, [activeTab, hasAdminAccess, fetchStats])
 
   // 获取用户AI用量统计
-  const fetchAIUsage = useCallback(async () => {
+  const fetchAIUsage = useCallback(async (page = 1) => {
     setAIUsageLoading(true)
     try {
-      const token = localStorage.getItem('auth_token')
-      const res = await fetch('/api/v1/admin/ai-usage', {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetch(`/api/v1/admin/ai-usage?page=${page}&limit=50`, {
+        credentials: 'same-origin',
       })
       const data = await res.json()
       if (data.success) {
         setAIUsageData(data.data || [])
+        setAIUsagePage(data.pagination?.page ?? page)
+        setAIUsageTotalPages(data.pagination?.totalPages ?? 1)
       }
     } catch (error) {
       console.error('Failed to fetch AI usage:', error)
@@ -257,11 +273,11 @@ export default function AdminPage() {
 
   // Tab 切换时加载数据
   useEffect(() => {
-    if (!user?.is_admin) return
+    if (!hasAdminAccess) return
     if (activeTab === 'prompts' && prompts.length === 0) fetchPrompts()
     if (activeTab === 'folders' && folders.length === 0) fetchFolders()
     if (activeTab === 'users' && users.length === 0) fetchUsers(1, '')
-  }, [activeTab, user, fetchPrompts, fetchFolders, fetchUsers, prompts.length, folders.length, users.length])
+  }, [activeTab, hasAdminAccess, fetchPrompts, fetchFolders, fetchUsers, prompts.length, folders.length, users.length])
 
   // 删除操作
   const handleDelete = (type: 'prompt' | 'folder' | 'user', id: number, title: string) => {
@@ -269,15 +285,30 @@ export default function AdminPage() {
     setShowDeleteDialog(true)
   }
 
+  const openPromptEditor = async (prompt: AdminPrompt) => {
+    try {
+      const response = await api.admin.getPublicPrompt(prompt.id)
+      if (!response.success || !response.data) throw new Error(response.error || '无法读取完整提示词')
+      setEditingPrompt(response.data as AdminPrompt)
+      setShowPromptEditDialog(true)
+    } catch (error) {
+      toast({
+        title: '加载提示词失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    }
+  }
+
   const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
       if (deleteTarget.type === 'prompt') {
         await api.admin.deletePublicPrompt(deleteTarget.id)
-        fetchPrompts()
+        fetchPrompts(promptPage, promptSearch)
       } else if (deleteTarget.type === 'folder') {
         await api.admin.deletePublicFolder(deleteTarget.id)
-        fetchFolders()
+        fetchFolders(folderPage, folderSearch)
       } else if (deleteTarget.type === 'user') {
         await api.admin.users.delete(deleteTarget.id)
         fetchUsers(userPage, userSearch)
@@ -356,28 +387,28 @@ export default function AdminPage() {
   // 加载状态
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center" aria-busy="true">
+        <div className="text-center" role="status" aria-live="polite">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4" aria-hidden="true"></div>
           <p className="text-gray-600 dark:text-gray-400">正在加载...</p>
         </div>
-      </div>
+      </main>
     )
   }
 
-  if (!user || !user.is_admin) {
+  if (!user || !hasAdminAccess) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">权限不足</h1>
           <p className="text-gray-600 dark:text-gray-400">{!user ? '请先登录' : '您没有管理员权限'}</p>
         </div>
-      </div>
+      </main>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 页面标题 */}
         <div className="mb-8 flex items-center justify-between">
@@ -414,20 +445,20 @@ export default function AdminPage() {
             <TabsTrigger value="prompts" className="flex items-center space-x-2">
               <FileText className="h-4 w-4" />
               <span>提示词</span>
-              {prompts.length > 0 && <Badge variant="secondary" className="ml-1">{prompts.length}</Badge>}
+              {promptTotal > 0 && <Badge variant="secondary" className="ml-1">{promptTotal}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="folders" className="flex items-center space-x-2">
               <Folder className="h-4 w-4" />
               <span>文件夹</span>
-              {folders.length > 0 && <Badge variant="secondary" className="ml-1">{folders.length}</Badge>}
+              {folderTotal > 0 && <Badge variant="secondary" className="ml-1">{folderTotal}</Badge>}
             </TabsTrigger>
           </TabsList>
 
           {/* ===== 数据概览 Tab ===== */}
           <TabsContent value="dashboard" className="mt-6">
             {statsLoading ? (
-              <div className="text-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <div className="text-center py-12" role="status" aria-live="polite">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" aria-hidden="true"></div>
                 <p className="mt-2 text-gray-600 dark:text-gray-400">加载统计数据...</p>
               </div>
             ) : statsData ? (
@@ -484,21 +515,24 @@ export default function AdminPage() {
                       </div>
                     </CardContent>
                   </Card>
-                  <Card className="cursor-pointer hover:ring-2 hover:ring-orange-400 transition-all" onClick={() => { setShowAIUsageDialog(true); fetchAIUsage(); }}>
-                    <CardContent className="pt-6">
-                      <div className="flex items-center space-x-2">
-                        <Zap className="h-8 w-8 text-orange-500" />
-                        <div>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">本月AI使用</p>
-                          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{statsData.stats.monthlyAIUsage ?? 0}</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  <button
+                    type="button"
+                    className="rounded-xl border bg-card p-6 text-left text-card-foreground shadow transition-all hover:ring-2 hover:ring-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                    onClick={() => { setShowAIUsageDialog(true); fetchAIUsage() }}
+                    aria-label="查看 AI 用量明细"
+                  >
+                    <span className="flex items-center space-x-2">
+                      <Zap className="h-8 w-8 text-orange-500" aria-hidden="true" />
+                      <span>
+                        <span className="block text-sm text-gray-500 dark:text-gray-400">本月AI使用</span>
+                        <span className="block text-2xl font-bold text-gray-900 dark:text-gray-100">{statsData.stats.monthlyAIUsage ?? 0}</span>
+                      </span>
+                    </span>
+                      <span className="mt-2 block text-xs text-gray-500 dark:text-gray-400">
                         本月优化 {statsData.stats.monthlyOptimize ?? 0} · 本月生成 {statsData.stats.monthlyGenerate ?? 0} · 历史总计 {statsData.stats.totalAIUsage ?? 0}
-                      </p>
-                      <p className="text-xs text-orange-500 mt-1">点击查看明细 · {statsUpdatedAt ? `更新于 ${statsUpdatedAt}` : '每 30 秒自动刷新'} →</p>
-                    </CardContent>
-                  </Card>
+                      </span>
+                    <span className="mt-1 block text-xs text-orange-500">点击查看明细 · {statsUpdatedAt ? `更新于 ${statsUpdatedAt}` : '每 30 秒自动刷新'} →</span>
+                  </button>
                 </div>
 
                 {/* 最近活动 */}
@@ -591,6 +625,7 @@ export default function AdminPage() {
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                       <Input
+                        aria-label="搜索用户名或邮箱"
                         placeholder="搜索用户名或邮箱..."
                         value={userSearch}
                         onChange={(e) => setUserSearch(e.target.value)}
@@ -598,16 +633,16 @@ export default function AdminPage() {
                         className="pl-9 w-64"
                       />
                     </div>
-                    <Button variant="outline" onClick={() => fetchUsers(1, userSearch)}>
-                      <Search className="h-4 w-4" />
+                    <Button type="button" variant="outline" onClick={() => fetchUsers(1, userSearch)} aria-label="搜索用户">
+                      <Search className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
                 {usersLoading ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <div className="text-center py-8" role="status" aria-live="polite">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" aria-hidden="true"></div>
                     <p className="mt-2 text-gray-600 dark:text-gray-400">加载中...</p>
                   </div>
                 ) : users.length === 0 ? (
@@ -645,7 +680,7 @@ export default function AdminPage() {
                                   onValueChange={(val) => changeUserType(u.id, val)}
                                   disabled={u.id === user.id}
                                 >
-                                  <SelectTrigger className="w-[100px] h-8 text-xs">
+                                  <SelectTrigger className="w-[100px] h-8 text-xs" aria-label={`设置 ${u.username} 的用户类型`}>
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -663,6 +698,7 @@ export default function AdminPage() {
                               </td>
                               <td className="py-3">
                                 <Switch
+                                  aria-label={`设置 ${u.username} 的管理员权限`}
                                   checked={!!u.is_admin}
                                   onCheckedChange={() => toggleUserAdmin(u.id, !!u.is_admin)}
                                   disabled={u.id === user.id}
@@ -670,6 +706,7 @@ export default function AdminPage() {
                               </td>
                               <td className="py-3">
                                 <Switch
+                                  aria-label={`${u.is_active ? '停用' : '启用'}用户 ${u.username}`}
                                   checked={!!u.is_active}
                                   onCheckedChange={() => toggleUserActive(u.id, !!u.is_active)}
                                   disabled={u.id === user.id}
@@ -681,12 +718,14 @@ export default function AdminPage() {
                               <td className="py-3">
                                 {u.id !== user.id && (
                                   <Button
+                                    type="button"
                                     size="sm"
                                     variant="outline"
                                     onClick={() => handleDelete('user', u.id, u.username)}
                                     className="text-red-600 hover:text-red-700"
+                                    aria-label={`删除用户：${u.username}`}
                                   >
-                                    <Trash2 className="h-4 w-4" />
+                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
                                   </Button>
                                 )}
                               </td>
@@ -703,20 +742,24 @@ export default function AdminPage() {
                         </p>
                         <div className="flex items-center space-x-2">
                           <Button
+                            type="button"
                             size="sm"
                             variant="outline"
                             disabled={userPage <= 1}
                             onClick={() => fetchUsers(userPage - 1, userSearch)}
+                            aria-label="上一页用户"
                           >
-                            <ChevronLeft className="h-4 w-4" />
+                            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                           </Button>
                           <Button
+                            type="button"
                             size="sm"
                             variant="outline"
                             disabled={userPage >= userTotalPages}
                             onClick={() => fetchUsers(userPage + 1, userSearch)}
+                            aria-label="下一页用户"
                           >
-                            <ChevronRight className="h-4 w-4" />
+                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
                           </Button>
                         </div>
                       </div>
@@ -736,9 +779,13 @@ export default function AdminPage() {
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                     <Input
+                      aria-label="搜索公共提示词"
                       placeholder="搜索提示词..."
                       value={promptSearch}
                       onChange={(e) => setPromptSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void fetchPrompts(1, promptSearch)
+                      }}
                       className="pl-9 w-64"
                     />
                   </div>
@@ -746,8 +793,8 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent>
                 {promptsLoading ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <div className="text-center py-8" role="status" aria-live="polite">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" aria-hidden="true"></div>
                     <p className="mt-2 text-gray-600 dark:text-gray-400">加载中...</p>
                   </div>
                 ) : filteredPrompts.length === 0 ? (
@@ -761,12 +808,20 @@ export default function AdminPage() {
                     {filteredPrompts.map((prompt) => (
                       <div
                         key={prompt.id}
-                        className="border dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
-                        onClick={() => { setEditingPrompt(prompt); setShowPromptEditDialog(true) }}
+                        className="border dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-shadow"
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100">{prompt.title}</h3>
+                            <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100">
+                              <button
+                                type="button"
+                                className="rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                                onClick={() => void openPromptEditor(prompt)}
+                                aria-label={`编辑公共提示词：${prompt.title}`}
+                              >
+                                {prompt.title}
+                              </button>
+                            </h3>
                             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">作者: {prompt.author}</p>
                             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 line-clamp-2">
                               {prompt.description || prompt.content}
@@ -780,22 +835,37 @@ export default function AdminPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center space-x-2 ml-4" onClick={(e) => e.stopPropagation()}>
-                            <Button size="sm" variant="outline" onClick={() => window.open(`/public-prompts/${prompt.id}`, '_blank')}>
-                              <Eye className="h-4 w-4" />
+                          <div className="flex items-center space-x-2 ml-4">
+                            <Button type="button" size="sm" variant="outline" onClick={() => window.open(`/public-prompts/${prompt.id}?source=published`, '_blank', 'noopener,noreferrer')} aria-label={`在新窗口查看提示词：${prompt.title}`}>
+                              <Eye className="h-4 w-4" aria-hidden="true" />
                             </Button>
                             <Button
+                              type="button"
                               size="sm"
                               variant="outline"
                               onClick={() => handleDelete('prompt', prompt.id, prompt.title)}
                               className="text-red-600 hover:text-red-700"
+                              aria-label={`删除公共提示词：${prompt.title}`}
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
                             </Button>
                           </div>
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+                {promptTotalPages > 1 && (
+                  <div className="mt-5 flex items-center justify-between border-t pt-4">
+                    <span className="text-sm text-gray-500">共 {promptTotal} 条，第 {promptPage}/{promptTotalPages} 页</span>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" disabled={promptPage <= 1} onClick={() => void fetchPrompts(promptPage - 1, promptSearch)} aria-label="上一页提示词">
+                        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={promptPage >= promptTotalPages} onClick={() => void fetchPrompts(promptPage + 1, promptSearch)} aria-label="下一页提示词">
+                        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -811,9 +881,13 @@ export default function AdminPage() {
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                     <Input
+                      aria-label="搜索公共文件夹"
                       placeholder="搜索文件夹..."
                       value={folderSearch}
                       onChange={(e) => setFolderSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void fetchFolders(1, folderSearch)
+                      }}
                       className="pl-9 w-64"
                     />
                   </div>
@@ -821,8 +895,8 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent>
                 {foldersLoading ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <div className="text-center py-8" role="status" aria-live="polite">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" aria-hidden="true"></div>
                     <p className="mt-2 text-gray-600 dark:text-gray-400">加载中...</p>
                   </div>
                 ) : filteredFolders.length === 0 ? (
@@ -836,12 +910,20 @@ export default function AdminPage() {
                     {filteredFolders.map((folder) => (
                       <div
                         key={folder.id}
-                        className="border dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
-                        onClick={() => { setEditingFolder(folder); setShowFolderEditDialog(true) }}
+                        className="border dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-shadow"
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100">{folder.name}</h3>
+                            <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100">
+                              <button
+                                type="button"
+                                className="rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                                onClick={() => { setEditingFolder(folder); setShowFolderEditDialog(true) }}
+                                aria-label={`编辑公共文件夹：${folder.name}`}
+                              >
+                                {folder.name}
+                              </button>
+                            </h3>
                             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">作者: {folder.author}</p>
                             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{folder.description}</p>
                             <div className="flex items-center space-x-2 mt-2">
@@ -854,22 +936,37 @@ export default function AdminPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center space-x-2 ml-4" onClick={(e) => e.stopPropagation()}>
-                            <Button size="sm" variant="outline" onClick={() => window.open(`/public-folders/${folder.id}`, '_blank')}>
-                              <Eye className="h-4 w-4" />
+                          <div className="flex items-center space-x-2 ml-4">
+                            <Button type="button" size="sm" variant="outline" onClick={() => window.open(`/public-folders/${folder.id}`, '_blank', 'noopener,noreferrer')} aria-label={`在新窗口查看文件夹：${folder.name}`}>
+                              <Eye className="h-4 w-4" aria-hidden="true" />
                             </Button>
                             <Button
+                              type="button"
                               size="sm"
                               variant="outline"
                               onClick={() => handleDelete('folder', folder.id, folder.name)}
                               className="text-red-600 hover:text-red-700"
+                              aria-label={`删除公共文件夹：${folder.name}`}
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
                             </Button>
                           </div>
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+                {folderTotalPages > 1 && (
+                  <div className="mt-5 flex items-center justify-between border-t pt-4">
+                    <span className="text-sm text-gray-500">共 {folderTotal} 个，第 {folderPage}/{folderTotalPages} 页</span>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" disabled={folderPage <= 1} onClick={() => void fetchFolders(folderPage - 1, folderSearch)} aria-label="上一页文件夹">
+                        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={folderPage >= folderTotalPages} onClick={() => void fetchFolders(folderPage + 1, folderSearch)} aria-label="下一页文件夹">
+                        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -904,7 +1001,7 @@ export default function AdminPage() {
         open={showPromptEditDialog}
         onOpenChange={setShowPromptEditDialog}
         onSave={() => {
-          fetchPrompts()
+          fetchPrompts(promptPage, promptSearch)
           setEditingPrompt(null)
         }}
       />
@@ -915,7 +1012,7 @@ export default function AdminPage() {
         open={showFolderEditDialog}
         onOpenChange={setShowFolderEditDialog}
         onSave={() => {
-          fetchFolders()
+          fetchFolders(folderPage, folderSearch)
           setEditingFolder(null)
         }}
       />
@@ -930,13 +1027,14 @@ export default function AdminPage() {
             </DialogTitle>
           </DialogHeader>
           {aiUsageLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500"></div>
+            <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" aria-hidden="true"></div>
               <span className="ml-2 text-gray-500">加载中...</span>
             </div>
           ) : (
-            <ScrollArea className="h-[55vh]">
-              <div className="space-y-0">
+            <div>
+              <ScrollArea className="h-[50vh]">
+                <div className="space-y-0">
                 {/* 表头 */}
                 <div className="grid grid-cols-6 gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg text-xs font-medium text-gray-500 dark:text-gray-400 sticky top-0">
                   <span className="col-span-2">用户</span>
@@ -974,11 +1072,19 @@ export default function AdminPage() {
                     还有 {aiUsageData.filter(u => u.total_ai_usage === 0 && u.monthly_usage === 0).length} 位用户暂无使用记录
                   </p>
                 )}
-              </div>
-            </ScrollArea>
+                </div>
+              </ScrollArea>
+              {aiUsageTotalPages > 1 && (
+                <div className="mt-3 flex items-center justify-center gap-3 border-t pt-3">
+                  <Button type="button" size="sm" variant="outline" disabled={aiUsagePage <= 1} onClick={() => void fetchAIUsage(aiUsagePage - 1)}>上一页</Button>
+                  <span className="text-sm text-gray-500">{aiUsagePage} / {aiUsageTotalPages}</span>
+                  <Button type="button" size="sm" variant="outline" disabled={aiUsagePage >= aiUsageTotalPages} onClick={() => void fetchAIUsage(aiUsagePage + 1)}>下一页</Button>
+                </div>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </main>
   )
 }

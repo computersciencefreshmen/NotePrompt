@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
@@ -20,11 +21,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
       )
     }
 
-    const folder = await findOwnedResource(
-      resourceId => db.getFolderById(resourceId),
-      folderId,
-      userId
-    )
+    const folder = await db.getOwnedFolderById(folderId, userId)
     if (!folder) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
@@ -43,7 +40,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     console.error('获取文件夹提示词失败:', error)
     return NextResponse.json({ 
       success: false, 
-      error: error instanceof Error ? error.message : '获取文件夹提示词失败' 
+      error: '获取文件夹提示词失败',
     }, { status: 500 })
   }
 }
@@ -58,7 +55,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     
     const { id } = await context.params
     const folderId = parsePositiveResourceId(id)
-    const { prompt_id } = await request.json()
+    const { prompt_id } = await readLimitedJson<Record<string, unknown>>(request, 8 * 1024)
     const promptId = parsePositiveResourceId(prompt_id)
 
     if (promptId == null) {
@@ -70,12 +67,8 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     const folder = folderId == null
       ? null
-      : await findOwnedResource(resourceId => db.getFolderById(resourceId), folderId, userId)
-    const prompt = await findOwnedResource(
-      resourceId => db.getUserPromptById(resourceId),
-      promptId,
-      userId
-    )
+      : await db.getOwnedFolderById(folderId, userId)
+    const prompt = await db.getOwnedUserPromptById(promptId, userId)
     if (!folder || !prompt) {
       return NextResponse.json(
         { success: false, error: '文件夹或提示词不存在' },
@@ -93,18 +86,25 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       [folderId, promptId, userId, userId]
     )
     await db.query(
-      `UPDATE user_prompts
-       SET folder_id = NULL, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND user_id = ? AND folder_id = ?`,
-      [promptId, userId, folderId]
+      `UPDATE user_prompts up
+       SET folder_id = (
+         SELECT MIN(upf.folder_id)
+         FROM user_prompt_folders upf
+         WHERE upf.user_prompt_id = up.id
+       ), updated_at = CURRENT_TIMESTAMP
+       WHERE up.id = ? AND up.user_id = ? AND up.folder_id = ?`,
+      [promptId, userId, folderId],
     )
     
     return NextResponse.json({ success: true, message: '移除成功' })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.status })
+    }
     console.error('移除提示词失败:', error)
     return NextResponse.json({ 
       success: false, 
-      error: error instanceof Error ? error.message : '移除提示词失败' 
+      error: '移除提示词失败',
     }, { status: 500 })
   }
 }

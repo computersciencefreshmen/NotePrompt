@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -28,7 +28,7 @@ export default function VersionHistory({ promptId, onRestore }: VersionHistoryPr
   const [loading, setLoading] = useState(false)
   const [restoring, setRestoring] = useState(false)
 
-  const fetchVersions = async () => {
+  const fetchVersions = useCallback(async () => {
     setLoading(true)
     try {
       const response = await api.prompts.getVersions(promptId)
@@ -40,14 +40,14 @@ export default function VersionHistory({ promptId, onRestore }: VersionHistoryPr
     } finally {
       setLoading(false)
     }
-  }
+  }, [promptId])
 
   useEffect(() => {
     if (open) {
-      fetchVersions()
+      void fetchVersions()
       setSelectedVersion(null)
     }
-  }, [open, promptId])
+  }, [fetchVersions, open])
 
   const handleSelectVersion = async (version: PromptVersion) => {
     if (version.content) {

@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import PromptCard, { PromptCardSkeleton } from '@/components/PromptCard'
-import Header from '@/components/Header'
 import { PublicPrompt, PublicPromptQueryParams, Category } from '@/types'
 import { api } from '@/lib/api'
 import { Filter, Loader2, Copy, Check, X, ArrowUp } from 'lucide-react'
@@ -70,6 +69,15 @@ const publicPromptCopy = {
   },
 }
 
+function mergeUniquePrompts(current: PublicPrompt[], incoming: PublicPrompt[]) {
+  const seen = new Set<number>()
+  return [...current, ...incoming].filter(prompt => {
+    if (seen.has(prompt.id)) return false
+    seen.add(prompt.id)
+    return true
+  })
+}
+
 export default function PublicPromptsPage() {
   const [locale, setLocale] = useState<Locale>(() => detectLocaleFromSearch())
   const [localeReady, setLocaleReady] = useState(false)
@@ -99,16 +107,8 @@ export default function PublicPromptsPage() {
     setLocaleReady(true)
   }, [])
 
-  const mergeUniquePrompts = (current: PublicPrompt[], incoming: PublicPrompt[]) => {
-    const seen = new Set<number>()
-    return [...current, ...incoming].filter(prompt => {
-      if (seen.has(prompt.id)) return false
-      seen.add(prompt.id)
-      return true
-    })
-  }
-
-  const fetchPrompts = async (params: PublicPromptQueryParams = {}) => {
+  const fetchPrompts = useCallback(async (params: PublicPromptQueryParams = {}) => {
+    const requestedPage = params.page ?? 1
     setLoading(true)
     try {
       const response = await api.publicPrompts.list({
@@ -116,13 +116,13 @@ export default function PublicPromptsPage() {
         tag: selectedTag || undefined,
         lang: locale,
         sort: sort, // 使用当前排序
-        page: page,
+        page: requestedPage,
         limit: 12,
         ...params
       })
 
       if (response.success && response.data) {
-        if (params.page === 1) {
+        if (requestedPage === 1) {
           setPrompts(mergeUniquePrompts([], response.data.items))
         } else {
           setPrompts(prev => mergeUniquePrompts(prev, response.data!.items))
@@ -137,7 +137,7 @@ export default function PublicPromptsPage() {
       loadingMoreRef.current = false
       setLoading(false)
     }
-  }
+  }, [locale, searchTerm, selectedTag, sort])
 
   const fetchCategories = async () => {
     try {
@@ -153,8 +153,8 @@ export default function PublicPromptsPage() {
   // 排序、搜索、标签变化时自动刷新
   useEffect(() => {
     if (!localeReady) return
-    fetchPrompts({ page: 1 })
-  }, [searchTerm, selectedTag, sort, locale, localeReady])
+    void fetchPrompts({ page: 1 })
+  }, [fetchPrompts, localeReady])
 
   const handleLocaleChange = (nextLocale: Locale) => {
     setLocale(nextLocale)
@@ -190,9 +190,9 @@ export default function PublicPromptsPage() {
       const nextPage = page + 1
       loadingMoreRef.current = true
       setPage(nextPage)
-      fetchPrompts({ page: nextPage })
+      void fetchPrompts({ page: nextPage })
     }
-  }, [loading, hasMore, page])
+  }, [fetchPrompts, hasMore, loading, page])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -251,9 +251,12 @@ export default function PublicPromptsPage() {
   }
 
   // 处理导入提示词
-  const handleImportPrompt = async (promptId: number) => {
+  const handleImportPrompt = async (
+    promptId: number,
+    source?: PublicPrompt['source'],
+  ) => {
     try {
-      const response = await api.publicPrompts.import(promptId)
+      const response = await api.publicPrompts.import(promptId, undefined, source)
       if (response.success) {
         // 可以添加成功提示
         console.log('导入成功')
@@ -276,7 +279,6 @@ export default function PublicPromptsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 页面标题和操作区 */}
@@ -337,6 +339,7 @@ export default function PublicPromptsPage() {
               {/* 排序下拉框 */}
               <div className="w-full md:w-48">
                 <select
+                  aria-label={locale === 'en' ? 'Sort prompts' : '提示词排序'}
                   value={sort}
                   onChange={e => handleSortChange(e.target.value as 'favorites' | 'latest')}
                   className="block w-full border-gray-300 dark:border-gray-600 rounded-full shadow focus:ring-blue-500 focus:border-blue-500 text-sm px-4 py-2 bg-white dark:bg-gray-800 hover:border-blue-400 transition-all"
@@ -354,10 +357,14 @@ export default function PublicPromptsPage() {
                 {selectedTag && (
                   <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm flex items-center gap-1">
                     {copy.tagPrefix}: {selectedTag}
-                    <X
-                      className="h-3 w-3 cursor-pointer"
+                    <button
+                      type="button"
+                      className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                       onClick={() => setSelectedTag('')}
-                    />
+                      aria-label={`${copy.clear}: ${selectedTag}`}
+                    >
+                      <X className="h-3 w-3" aria-hidden="true" />
+                    </button>
                   </div>
                 )}
                 <Button
@@ -377,7 +384,9 @@ export default function PublicPromptsPage() {
                 {hotTags.map((tag) => (
                   <button
                     key={tag}
+                    type="button"
                     onClick={() => handleTagFilter(tag)}
+                    aria-pressed={selectedTag === tag}
                     className={`px-3 py-1 text-sm rounded-full border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${
                       selectedTag === tag
                         ? 'bg-blue-100 border-blue-300 text-blue-700'
@@ -395,7 +404,7 @@ export default function PublicPromptsPage() {
 
         {/* 提示词网格 */}
         {loading && prompts.length === 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8" aria-label={copy.loadingLabel}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8" role="status" aria-live="polite" aria-label={copy.loadingLabel}>
             {Array.from({ length: 6 }).map((_, index) => (
               <PromptCardSkeleton key={index} />
             ))}
@@ -405,7 +414,7 @@ export default function PublicPromptsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
               {prompts.map((prompt, index) => (
                 <PromptCard
-                  key={`public-prompt-${prompt.id}-${index}`}
+                  key={`public-prompt-${prompt.source || 'published'}-${prompt.id}-${index}`}
                   prompt={prompt}
                   type="public"
                   onFavoriteChange={handleFavoriteChange}
@@ -435,8 +444,8 @@ export default function PublicPromptsPage() {
 
             {/* 加载状态 */}
             {loading && prompts.length > 0 && (
-              <div className="text-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-blue-600 mx-auto" />
+              <div className="text-center py-8" role="status" aria-live="polite">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-600 mx-auto" aria-hidden="true" />
                 <span className="ml-2 text-gray-600 dark:text-gray-400">{copy.loadingMore}</span>
               </div>
             )}
@@ -447,11 +456,13 @@ export default function PublicPromptsPage() {
       {/* 回到顶部按钮 */}
       {showBackToTop && (
         <Button
+          type="button"
           onClick={scrollToTop}
           className="fixed bottom-8 right-8 z-50 rounded-full w-12 h-12 shadow-lg bg-blue-600 hover:bg-blue-700 text-white"
           size="sm"
+          aria-label={locale === 'en' ? 'Back to top' : '返回顶部'}
         >
-          <ArrowUp className="h-5 w-5" />
+          <ArrowUp className="h-5 w-5" aria-hidden="true" />
         </Button>
       )}
 
@@ -485,7 +496,8 @@ export default function PublicPromptsPage() {
                 {selectedPrompt.category && (
                   <div>
                     <h3 className="font-semibold mb-2">{copy.category}</h3>
-                    <span
+                    <button
+                      type="button"
                       className="inline-block bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm cursor-pointer hover:bg-blue-200"
                       onClick={() => {
                         handleTagFilter(selectedPrompt.category)
@@ -493,7 +505,7 @@ export default function PublicPromptsPage() {
                       }}
                     >
                       {selectedPrompt.category}
-                    </span>
+                    </button>
                   </div>
                 )}
 
@@ -503,8 +515,9 @@ export default function PublicPromptsPage() {
                     <h3 className="font-semibold mb-2">{copy.tags}</h3>
                     <div className="flex flex-wrap gap-2">
                       {selectedPrompt.tags.map((tag, index) => (
-                        <span
+                        <button
                           key={`selected-tag-${selectedPrompt.id}-${tag}-${index}`}
+                          type="button"
                           className="inline-block bg-gray-100 dark:bg-white/10 text-gray-800 dark:text-gray-200 px-2 py-1 rounded text-sm cursor-pointer hover:bg-gray-200 dark:hover:bg-white/20"
                           onClick={() => {
                             handleTagFilter(tag)
@@ -512,7 +525,7 @@ export default function PublicPromptsPage() {
                           }}
                         >
                           {tag}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -555,7 +568,9 @@ export default function PublicPromptsPage() {
                     {copy.close}
                   </Button>
                   <Button
-                    onClick={() => locale === 'en' ? handleCopyPrompt(selectedPrompt.content) : handleImportPrompt(selectedPrompt.id)}
+                    onClick={() => locale === 'en'
+                      ? handleCopyPrompt(selectedPrompt.content)
+                      : handleImportPrompt(selectedPrompt.id, selectedPrompt.source)}
                     className="bg-teal-600 hover:bg-teal-700"
                   >
                     {copy.import}
@@ -568,4 +583,4 @@ export default function PublicPromptsPage() {
       </Dialog>
     </div>
   )
-} 
+}

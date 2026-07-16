@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
 
 // POST - 导入公共文件夹到用户文件夹（只创建文件夹结构）
 export async function POST(
@@ -14,8 +15,11 @@ export async function POST(
     }
     const user_id = auth.user.id
     const { id: idStr } = await params
-    const publicFolderId = parseInt(idStr)
-    
+    const publicFolderId = parsePositiveResourceId(idStr)
+    if (publicFolderId == null) {
+      return NextResponse.json({ success: false, error: '无效的文件夹ID' }, { status: 400 })
+    }
+
     // 从数据库查询公共文件夹
     const publicFolder = await db.getPublicFolderById(publicFolderId)
 
@@ -67,4 +71,4 @@ export async function POST(
       { status: 500 }
     )
   }
-} 
+}

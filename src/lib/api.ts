@@ -30,52 +30,19 @@ import {
   PromptAttachmentDraft,
   PromptOptimizerMode
 } from '@/types'
-
-// API基础配置
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
-
-// 获取存储的token
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null
-  return localStorage.getItem('auth_token')
-}
-
-// 设置认证token
-function setAuthToken(token: string): void {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('auth_token', token)
-  }
-}
-
-// 清除认证token
-function clearAuthToken(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('auth_token')
-  }
-}
+import type { UserPreferencesDto } from '@/lib/user-preferences'
 
 // 通用API请求函数
 async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeoutMs?: number): Promise<T> {
-  // 动态检测端口，优先使用当前页面的端口
-  const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
-  const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
-  const url = `${baseURL}/api/v1${endpoint}`
+  const url = `/api/v1${endpoint}`
   
   const config: RequestInit = {
     ...options,
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
     },
-  }
-
-  const token = getAuthToken()
-  
-  if (token) {
-    config.headers = {
-      ...config.headers,
-      Authorization: `Bearer ${token}`,
-    }
   }
 
   // 请求超时控制 (默认30秒，AI请求可传入更长时间)
@@ -120,45 +87,23 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
 export const auth = {
   // 用户登录
   login: async (data: LoginRequest): Promise<AuthResponse> => {
-    const result = await apiRequest<AuthResponse>('/auth/login', {
+    return apiRequest<AuthResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(data),
     })
-
-    if (result.success && result.data?.token) {
-      setAuthToken(result.data.token)
-    }
-
-    return result
   },
 
   // 用户注册
   register: async (data: RegisterRequest): Promise<AuthResponse> => {
-    const result = await apiRequest<AuthResponse>('/auth/register', {
+    return apiRequest<AuthResponse>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(data),
     })
-
-    if (result.success && result.data?.token) {
-      setAuthToken(result.data.token)
-    }
-
-    return result
   },
 
   // 退出登录
-  logout: (): void => {
-    clearAuthToken()
-  },
-
-  // 检查登录状态
-  isLoggedIn: (): boolean => {
-    return getAuthToken() !== null
-  },
-
-  // 获取当前token
-  getToken: (): string | null => {
-    return getAuthToken()
+  logout: async (): Promise<void> => {
+    await apiRequest('/auth/logout', { method: 'POST' })
   }
 }
 
@@ -167,6 +112,11 @@ export const user = {
   // 获取用户资料
   getProfile: async (): Promise<ApiResponse<UserProfile>> => {
     return apiRequest<ApiResponse<UserProfile>>('/user/profile')
+  },
+
+  // 获取跨设备用户偏好
+  getPreferences: async (): Promise<ApiResponse<UserPreferencesDto>> => {
+    return apiRequest<ApiResponse<UserPreferencesDto>>('/user/preferences')
   },
 
   // 更新用户资料
@@ -180,17 +130,6 @@ export const user = {
   // 获取用户统计
   getStats: async (): Promise<ApiResponse<UserStats>> => {
     return apiRequest<ApiResponse<UserStats>>('/user/stats')
-  },
-
-  // 增加AI使用次数
-  incrementAIUsage: async (aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize'): Promise<ApiResponse<UserStats>> => {
-    return apiRequest<ApiResponse<UserStats>>('/user/stats', {
-      method: 'POST',
-      body: JSON.stringify({ 
-        action: 'increment_ai_usage',
-        aiMode: aiMode
-      }),
-    })
   },
 
   // 获取 AI 使用热力图数据
@@ -232,15 +171,17 @@ export const user = {
   },
 
   // 删除账户
-  deleteAccount: async (): Promise<ApiResponse<null>> => {
+  deleteAccount: async (currentPassword: string): Promise<ApiResponse<null>> => {
     return apiRequest<ApiResponse<null>>('/user/delete-account', {
       method: 'DELETE',
+      body: JSON.stringify({ currentPassword }),
     })
   },
 
   // 获取升级进度
   getUpgradeProgress: async (): Promise<ApiResponse<{
     currentType: string
+    programEnabled: boolean
     canUpgrade: boolean
     conditionsMet: number
     conditionsRequired: number
@@ -470,17 +411,26 @@ export const publicPrompts = {
   },
 
   // 获取单个公共提示词详情
-  get: async (id: number, lang?: string): Promise<ApiResponse<PublicPrompt>> => {
+  get: async (
+    id: number,
+    lang?: string,
+    source?: PublicPrompt['source'],
+  ): Promise<ApiResponse<PublicPrompt>> => {
     const queryParams = new URLSearchParams()
     if (lang) queryParams.append('lang', lang)
+    if (source) queryParams.append('source', source)
     return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}${queryParams.toString() ? `?${queryParams}` : ''}`)
   },
 
   // 导入提示词到用户库（支持公共提示词和用户提示词）
-  import: async (id: number, folderId?: number): Promise<ApiResponse<Prompt>> => {
+  import: async (
+    id: number,
+    folderId?: number,
+    source?: PublicPrompt['source'],
+  ): Promise<ApiResponse<Prompt>> => {
     return apiRequest<ApiResponse<Prompt>>(`/prompts/${id}/import`, {
       method: 'POST',
-      body: JSON.stringify({ folder_id: folderId }),
+      body: JSON.stringify({ folder_id: folderId, source }),
     })
   }
 }
@@ -498,16 +448,23 @@ export const favorites = {
   },
 
   // 添加收藏
-  add: async (publicPromptId: number): Promise<ApiResponse<null> | { success: false; error: string }> => {
+  add: async (
+    publicPromptId: number,
+    source?: PublicPrompt['source'],
+  ): Promise<ApiResponse<null> | { success: false; error: string }> => {
     return apiRequest<ApiResponse<null> | { success: false; error: string }>('/favorites', {
       method: 'POST',
-      body: JSON.stringify({ public_prompt_id: publicPromptId }),
+      body: JSON.stringify({ public_prompt_id: publicPromptId, source }),
     })
   },
 
   // 移除收藏
-  remove: async (publicPromptId: number): Promise<ApiResponse<null>> => {
-    return apiRequest<ApiResponse<null>>(`/favorites/${publicPromptId}`, {
+  remove: async (
+    publicPromptId: number,
+    source?: PublicPrompt['source'],
+  ): Promise<ApiResponse<null>> => {
+    const query = source ? `?source=${encodeURIComponent(source)}` : ''
+    return apiRequest<ApiResponse<null>>(`/favorites/${publicPromptId}${query}`, {
       method: 'DELETE',
     })
   }
@@ -562,20 +519,14 @@ export const attachments = {
       return { success: false, error: '请选择需要解析的附件' }
     }
 
-    const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
-    const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
     const formData = new FormData()
     files.slice(0, 12).forEach(file => formData.append('files', file))
 
-    const token = getAuthToken()
-    const headers: Record<string, string> = {}
-    if (token) headers.Authorization = `Bearer ${token}`
-
     try {
-      const response = await fetch(`${baseURL}/api/v1/attachments/parse`, {
+      const response = await fetch('/api/v1/attachments/parse', {
         method: 'POST',
-        headers,
         body: formData,
+        credentials: 'same-origin',
       })
 
       const data = await response.json().catch(() => ({ success: false, error: `请求失败: ${response.status}` }))
@@ -672,13 +623,8 @@ export async function optimizePromptStream(
     return
   }
 
-  const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
-  const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
-  const url = `${baseURL}/api/v1/ai/optimize-prompt-stream`
-
-  const token = getAuthToken()
+  const url = '/api/v1/ai/optimize-prompt-stream'
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 180000)
@@ -689,6 +635,7 @@ export async function optimizePromptStream(
       headers,
       body: JSON.stringify(data),
       signal: controller.signal,
+      credentials: 'same-origin',
     })
 
     if (!response.ok) {
@@ -892,8 +839,12 @@ export const admin = {
   },
 
   // 获取公共提示词列表
-  getPublicPrompts: async (): Promise<ApiResponse<AdminPrompt[]>> => {
-    return apiRequest<ApiResponse<AdminPrompt[]>>('/admin/public-prompts')
+  getPublicPrompts: async (params?: { page?: number; limit?: number; search?: string }): Promise<ApiResponse<AdminPrompt[]>> => {
+    const query = new URLSearchParams()
+    if (params?.page) query.set('page', String(params.page))
+    if (params?.limit) query.set('limit', String(params.limit))
+    if (params?.search) query.set('search', params.search)
+    return apiRequest<ApiResponse<AdminPrompt[]>>(`/admin/public-prompts${query.size ? `?${query}` : ''}`)
   },
 
   // 获取单个公共提示词
@@ -902,8 +853,12 @@ export const admin = {
   },
 
   // 获取公共文件夹列表
-  getPublicFolders: async (): Promise<ApiResponse<AdminFolder[]>> => {
-    return apiRequest<ApiResponse<AdminFolder[]>>('/admin/public-folders')
+  getPublicFolders: async (params?: { page?: number; limit?: number; search?: string }): Promise<ApiResponse<AdminFolder[]>> => {
+    const query = new URLSearchParams()
+    if (params?.page) query.set('page', String(params.page))
+    if (params?.limit) query.set('limit', String(params.limit))
+    if (params?.search) query.set('search', params.search)
+    return apiRequest<ApiResponse<AdminFolder[]>>(`/admin/public-folders${query.size ? `?${query}` : ''}`)
   },
 
   // 删除公共提示词
@@ -937,8 +892,11 @@ export const admin = {
   },
 
   // 获取公共文件夹内的提示词
-  getPublicFolderPrompts: async (id: number): Promise<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>> => {
-    return apiRequest<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>>(`/admin/public-folders/${id}/prompts`)
+  getPublicFolderPrompts: async (id: number, params?: { page?: number; limit?: number }): Promise<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>> => {
+    const query = new URLSearchParams()
+    if (params?.page) query.set('page', String(params.page))
+    if (params?.limit) query.set('limit', String(params.limit))
+    return apiRequest<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>>(`/admin/public-folders/${id}/prompts${query.size ? `?${query}` : ''}`)
   },
 
   // 向公共文件夹添加提示词
@@ -957,10 +915,12 @@ export const admin = {
   },
 
   // 获取可选的提示词列表
-  getAvailablePrompts: async (params?: { search?: string; folderId?: number }): Promise<ApiResponse<AdminPrompt[]>> => {
+  getAvailablePrompts: async (params?: { search?: string; folderId?: number; page?: number; limit?: number }): Promise<ApiResponse<AdminPrompt[]>> => {
     const queryParams = new URLSearchParams()
     if (params?.search) queryParams.append('search', params.search)
     if (params?.folderId) queryParams.append('folderId', params.folderId.toString())
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
 
     const endpoint = `/admin/available-prompts${queryParams.toString() ? `?${queryParams}` : ''}`
     return apiRequest<ApiResponse<AdminPrompt[]>>(endpoint)
@@ -996,10 +956,19 @@ export const api = {
     },
 
     // 获取公共文件夹的提示词
-    getPrompts: async (id: number, lang?: string): Promise<ApiResponse<PublicPrompt[]>> => {
+    getPrompts: async (id: number, lang?: string, params?: { page?: number; limit?: number }): Promise<ApiResponse<PublicPrompt[]>> => {
       const queryParams = new URLSearchParams()
       if (lang) queryParams.append('lang', lang)
+      if (params?.page) queryParams.append('page', params.page.toString())
+      if (params?.limit) queryParams.append('limit', params.limit.toString())
       return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts${queryParams.toString() ? `?${queryParams}` : ''}`)
+    },
+
+    // Import the immutable snapshot row, not an unrelated public-prompts id.
+    importPrompt: async (id: number, snapshotPromptId: number): Promise<ApiResponse<Prompt>> => {
+      return apiRequest<ApiResponse<Prompt>>(`/public-folders/${id}/prompts/${snapshotPromptId}/import`, {
+        method: 'POST',
+      })
     },
 
     // 导入公共文件夹

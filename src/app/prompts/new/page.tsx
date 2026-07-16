@@ -7,7 +7,7 @@ import PromptEditor from '@/components/PromptEditor'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
-import { Folder } from '@/types'
+import { EditMode, Folder, PromptEditorSaveData } from '@/types'
 import { toast } from '@/hooks/use-toast'
 
 export default function NewPromptPage() {
@@ -17,6 +17,7 @@ export default function NewPromptPage() {
   const [saving, setSaving] = useState(false)
   const [folders, setFolders] = useState<Folder[]>([])
   const [defaultFolderId, setDefaultFolderId] = useState<number | undefined>()
+  const [defaultEditorMode, setDefaultEditorMode] = useState<EditMode>('normal')
 
   // 获取当前用户的文件夹列表，自动选第一个
   useEffect(() => {
@@ -27,11 +28,18 @@ export default function NewPromptPage() {
           setDefaultFolderId(res.data[0].id)
         }
       })
+      api.user.getPreferences().then(res => {
+        if (res.success && res.data) {
+          setDefaultEditorMode(res.data.defaultEditorMode)
+        }
+      }).catch(error => {
+        console.warn('Failed to load default editor mode:', error)
+      })
     }
   }, [user])
 
   // 保存新提示词
-  const handleSave = async (data: { title: string; content: string; mode: string; tags: string[]; is_public: boolean }) => {
+  const handleSave = async (data: PromptEditorSaveData) => {
     setSaving(true)
 
     try {
@@ -41,7 +49,10 @@ export default function NewPromptPage() {
         folder_id: defaultFolderId || null,
         tags: data.tags || [],
         is_public: data.is_public,
-        mode: data.mode
+        mode: data.mode,
+        editor_mode: data.editor_mode,
+        payload: data.payload,
+        schema_version: data.schema_version,
       }
       const response = await api.prompts.create(createData)
       if (response.success) {
@@ -68,6 +79,7 @@ export default function NewPromptPage() {
 
 
         <PromptEditor
+          defaultMode={defaultEditorMode}
           onSave={handleSave}
           onCancel={handleCancel}
           loading={saving}

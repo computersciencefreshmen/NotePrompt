@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -51,13 +51,20 @@ const statsCopy = {
   },
 }
 
-const cardBase = 'cursor-pointer hover:shadow-md transition-all group'
+const cardBase = 'cursor-pointer hover:shadow-md transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2'
 
 function scrollToSection(id: string) {
   const el = document.getElementById(id)
   if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
   }
+}
+
+function activateOnKeyboard(event: KeyboardEvent<HTMLDivElement>, action: () => void) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  action()
 }
 
 export default function StatsCards({ stats, locale = 'zh' }: StatsCardsProps) {
@@ -73,6 +80,10 @@ export default function StatsCards({ stats, locale = 'zh' }: StatsCardsProps) {
         <Card
           className={`${cardBase} hover:border-blue-300`}
           onClick={() => scrollToSection('prompts-section')}
+          onKeyDown={(event) => activateOnKeyboard(event, () => scrollToSection('prompts-section'))}
+          role="button"
+          tabIndex={0}
+          aria-label={`${copy.totalPrompts}: ${stats.total_prompts}. ${copy.viewPrompts}`}
         >
           <CardContent className="p-6">
             <div className="flex items-center">
@@ -89,6 +100,10 @@ export default function StatsCards({ stats, locale = 'zh' }: StatsCardsProps) {
         <Card
           className={`${cardBase} hover:border-green-300`}
           onClick={() => scrollToSection('folders-section')}
+          onKeyDown={(event) => activateOnKeyboard(event, () => scrollToSection('folders-section'))}
+          role="button"
+          tabIndex={0}
+          aria-label={`${copy.folders}: ${stats.total_folders}. ${copy.viewFolders}`}
         >
           <CardContent className="p-6">
             <div className="flex items-center">
@@ -105,6 +120,10 @@ export default function StatsCards({ stats, locale = 'zh' }: StatsCardsProps) {
         <Card
           className={`${cardBase} hover:border-purple-300`}
           onClick={() => setHeatmapOpen(true)}
+          onKeyDown={(event) => activateOnKeyboard(event, () => setHeatmapOpen(true))}
+          role="button"
+          tabIndex={0}
+          aria-label={`${copy.monthlyAI}: ${stats.monthly_usage || 0}. ${copy.viewHeatmap}`}
         >
           <CardContent className="p-6">
             <div className="flex items-center">
@@ -121,6 +140,10 @@ export default function StatsCards({ stats, locale = 'zh' }: StatsCardsProps) {
         <Card
           className={`${cardBase} hover:border-orange-300`}
           onClick={() => router.push(withLocaleHref('/favorites', locale))}
+          onKeyDown={(event) => activateOnKeyboard(event, () => router.push(withLocaleHref('/favorites', locale)))}
+          role="button"
+          tabIndex={0}
+          aria-label={`${copy.favorites}: ${stats.total_favorites}. ${copy.viewFavorites}`}
         >
           <CardContent className="p-6">
             <div className="flex items-center">

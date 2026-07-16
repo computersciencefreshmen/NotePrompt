@@ -328,8 +328,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        error: 'Failed to optimize prompt',
-        details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : 'Internal server error'
+        error: 'Failed to optimize prompt'
       },
       { status: 500 }
     )

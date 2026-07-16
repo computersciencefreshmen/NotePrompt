@@ -4,7 +4,6 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { Activity, AlertTriangle, CheckCircle2, Loader2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { auth } from '@/lib/api'
 import { Locale, withLocaleHref } from '@/lib/i18n'
 
 type DiagnosticProvider = {
@@ -119,11 +118,9 @@ export function ModelDiagnosticsPanel({ locale = 'zh' }: { locale?: Locale }) {
     try {
       const response = await fetch('/api/v1/ai/diagnostics', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(auth.getToken() ? { Authorization: `Bearer ${auth.getToken()}` } : {}),
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: nextMode, force, confirmed: nextMode === 'probe' }),
+        credentials: 'same-origin',
       })
       const payload = await response.json()
       if (!response.ok || !payload.success) {

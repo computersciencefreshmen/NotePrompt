@@ -1,7 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { getCuratedPublicPromptById, hydrateCuratedPublicPrompt } from '@/lib/curated-public-prompts'
+import {
+  getCuratedPublicPromptById,
+  hydrateCuratedPublicPrompt,
+  incrementCuratedPromptViews,
+  resolvePublicPromptSource,
+} from '@/lib/curated-public-prompts'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+type PromptUpdate = {
+  title?: string
+  content?: string
+  description?: string | null
+}
+
+type MutationResult = { affectedRows?: number }
+
+const MAX_PUBLIC_PROMPT_UPDATE_BODY_BYTES = 64 * 1024
 
 async function getOptionalUserId(request: NextRequest) {
   try {
@@ -20,21 +37,39 @@ export async function GET(
 ) {
   try {
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
     const { searchParams } = new URL(request.url)
     const lang = searchParams.get('lang') || 'zh'
 
     // 验证ID是否为有效数字
-    if (isNaN(id) || id <= 0) {
+    if (id == null) {
       return NextResponse.json(
         { success: false, error: lang === 'en' ? 'Invalid prompt ID' : '无效的提示词ID' },
         { status: 400 }
       )
     }
 
-    const curatedPrompt = getCuratedPublicPromptById(id)
-    if (curatedPrompt && (lang === 'en' || id >= 910000)) {
-      const hydratedPrompt = await hydrateCuratedPublicPrompt(curatedPrompt, await getOptionalUserId(request))
+    const source = resolvePublicPromptSource(id, searchParams.get('source'))
+    if (!source) {
+      return NextResponse.json(
+        { success: false, error: lang === 'en' ? 'Invalid prompt source' : '无效的提示词来源' },
+        { status: 400 },
+      )
+    }
+
+    if (source === 'curated') {
+      const curatedPrompt = getCuratedPublicPromptById(id)
+      if (!curatedPrompt) {
+        return NextResponse.json(
+          { success: false, error: lang === 'en' ? 'Prompt not found' : '提示词不存在' },
+          { status: 404 },
+        )
+      }
+      await incrementCuratedPromptViews(curatedPrompt)
+      const hydratedPrompt = await hydrateCuratedPublicPrompt(
+        curatedPrompt,
+        await getOptionalUserId(request),
+      )
 
       return NextResponse.json({
         success: true,
@@ -42,7 +77,8 @@ export async function GET(
       })
     }
 
-    // 获取提示词详情
+    // The source-qualified path keeps a genuine high-ID publication addressable even when
+    // its numeric ID is also a legacy curated catalog ID.
     const prompt = await db.getPublicPromptById(id)
     if (!prompt) {
       return NextResponse.json(
@@ -51,24 +87,16 @@ export async function GET(
       )
     }
 
-    // 增加浏览次数
-    try {
-      await db.incrementPromptViews(id)
-    } catch (error) {
-      console.error('Failed to increment prompt views:', error)
-      // 不影响主要功能，继续执行
-    }
+    await db.incrementPromptViews(id)
+    const viewedPrompt = await db.getPublicPromptById(id)
 
     return NextResponse.json({
       success: true,
-      data: prompt
+      data: { ...(viewedPrompt || prompt), source: 'published' }
     })
   } catch (error) {
     console.error('Get public prompt error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch prompt', details: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: 'Failed to fetch prompt' }, { status: 500 })
   }
 }
 
@@ -78,74 +106,86 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    console.log('开始编辑公共提示词...')
-    
     const auth = await requireAuth(request)
     if ('error' in auth) {
-      console.log('认证失败:', auth.error)
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const userId = auth.user.id
-    
+
     const { id: idStr } = await params
-    const id = parseInt(idStr)
-    const body = await request.json()
-    console.log('编辑数据:', body)
-
-    // 检查公共提示词是否存在
-    const prompt = await db.getPublicPromptById(id)
-    if (!prompt) {
-      console.log('提示词不存在')
-      return NextResponse.json(
-        { success: false, error: '公共提示词不存在' },
-        { status: 404 }
-      )
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json({ success: false, error: '无效的提示词ID' }, { status: 400 })
     }
 
-    // 检查权限 - 只能编辑自己发布的提示词
-    if ((prompt as any).author_id !== userId) {
-      console.log('权限检查失败:', { promptAuthorId: (prompt as any).author_id, currentUserId: userId })
-      return NextResponse.json(
-        { success: false, error: '没有权限编辑此提示词' },
-        { status: 403 }
-      )
+    const input = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_PUBLIC_PROMPT_UPDATE_BODY_BYTES,
+    )
+    if (Object.keys(input).some(key => !['title', 'content', 'description'].includes(key))) {
+      return NextResponse.json({ success: false, error: '请求包含不支持的字段' }, { status: 400 })
     }
 
-    // 更新公共提示词
-    const updateData: any = {}
-    if (body.title !== undefined) updateData.title = body.title
-    if (body.content !== undefined) updateData.content = body.content
-    if (body.description !== undefined) updateData.description = body.description
-
-    console.log('更新数据:', updateData)
-    const updatedPrompt = await db.updatePublicPrompt(id, updateData)
-    console.log('更新成功:', updatedPrompt)
-
-    // 处理标签更新（暂时跳过，避免错误）
-    if (body.tags && Array.isArray(body.tags)) {
-      console.log('标签更新暂时跳过')
-      // 暂时注释掉标签更新，避免错误
-      /*
-      // 先删除现有标签
-      await db.removeUserPromptTags(id)
-      
-      // 添加新标签
-      if (body.tags.length > 0) {
-        await db.addPublicPromptTags(id, body.tags)
+    const updateData: PromptUpdate = {}
+    if (input.title !== undefined) {
+      if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 200) {
+        return NextResponse.json({ success: false, error: '标题必须为 1-200 个字符' }, { status: 400 })
       }
-      */
+      updateData.title = input.title.trim()
     }
+    if (input.content !== undefined) {
+      if (typeof input.content !== 'string' || !input.content.trim() || input.content.length > 50_000) {
+        return NextResponse.json({ success: false, error: '内容必须为 1-50000 个字符' }, { status: 400 })
+      }
+      updateData.content = input.content
+    }
+    if (input.description !== undefined) {
+      if (input.description !== null && (typeof input.description !== 'string' || input.description.length > 2_000)) {
+        return NextResponse.json({ success: false, error: '描述不能超过 2000 个字符' }, { status: 400 })
+      }
+      updateData.description = input.description as string | null
+    }
+
+    const fields = Object.keys(updateData) as Array<keyof PromptUpdate>
+    if (fields.length === 0) {
+      return NextResponse.json({ success: false, error: '没有可更新的字段' }, { status: 400 })
+    }
+
+    // 所有权检查与写入放在同一条语句中，避免检查后资源归属变化的竞态。
+    const values = fields.map((field) => updateData[field])
+    const result = await db.query(
+      `UPDATE public_prompts
+       SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND author_id = ?`,
+      [...values, id, userId],
+    )
+    const affectedRows = Number((result.rows as MutationResult).affectedRows)
+    if (affectedRows > 1) throw new Error('Public prompt update affected more than one row')
+    if (affectedRows === 0) {
+      const existingResult = await db.query(
+        'SELECT id FROM public_prompts WHERE id = ? AND author_id = ? LIMIT 1',
+        [id, userId],
+      )
+      if ((existingResult.rows as Record<string, unknown>[]).length === 0) {
+        return NextResponse.json({ success: false, error: '公共提示词不存在' }, { status: 404 })
+      }
+    }
+
+    const updatedPrompt = await db.getPublicPromptById(id)
 
     return NextResponse.json({
       success: true,
-      data: updatedPrompt,
+      data: updatedPrompt ? { ...updatedPrompt, source: 'published' as const } : null,
       message: '公共提示词更新成功'
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('Update public prompt error:', error)
-    return NextResponse.json(
-      { success: false, error: '更新公共提示词失败', details: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: '更新公共提示词失败' }, { status: 500 })
   }
 }

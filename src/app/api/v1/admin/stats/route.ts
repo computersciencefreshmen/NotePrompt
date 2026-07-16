@@ -17,8 +17,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
     }
 
-    await db.ensureAIUsageDailyTable()
-
     const now = new Date()
     const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
     const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
@@ -36,9 +34,15 @@ export async function GET(request: NextRequest) {
     ] = await Promise.all([
       db.query('SELECT COUNT(*) as total, SUM(CASE WHEN is_admin = 1 THEN 1 ELSE 0 END) as admins, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active FROM users'),
       db.query('SELECT COUNT(*) as total FROM user_prompts'),
-      db.query('SELECT COUNT(*) as total, SUM(CASE WHEN is_featured = 1 THEN 1 ELSE 0 END) as featured FROM public_prompts'),
+      db.query(`SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN is_featured = 1 THEN 1 ELSE 0 END) AS featured,
+        (SELECT COUNT(*) FROM curated_catalog_entries) AS curated
+        FROM public_prompts`),
       db.query('SELECT COUNT(*) as total FROM public_folders'),
-      db.query('SELECT COUNT(*) as total FROM user_favorites'),
+      db.query(`SELECT
+        (SELECT COUNT(*) FROM user_favorites)
+        + (SELECT COUNT(*) FROM curated_prompt_favorites) AS total`),
       db.query(`
         SELECT
           COALESCE(SUM(s.total_ai_usage), 0) as totalAIUsage,
@@ -61,7 +65,7 @@ export async function GET(request: NextRequest) {
           ), 0) as monthlyGenerate
         FROM user_usage_stats s
       `, [monthStart, nextMonthStart, monthStart, nextMonthStart, monthStart, nextMonthStart]),
-      db.query('SELECT id, username, email, user_type, is_admin, created_at FROM users ORDER BY created_at DESC'),
+      db.query('SELECT id, username, email, user_type, is_admin, created_at FROM users ORDER BY created_at DESC LIMIT 10'),
       db.query(`
         SELECT pp.id, pp.title, pp.created_at, pp.views_count,
           (SELECT COUNT(*) FROM user_favorites uf WHERE uf.public_prompt_id = pp.id) as favorites_count,
@@ -69,6 +73,7 @@ export async function GET(request: NextRequest) {
         FROM public_prompts pp
         LEFT JOIN users u ON pp.author_id = u.id
         ORDER BY pp.created_at DESC
+        LIMIT 10
       `)
     ])
 
@@ -89,6 +94,8 @@ export async function GET(request: NextRequest) {
           totalPrompts: prompts.total,
           totalPublicPrompts: publicPrompts.total,
           featuredPrompts: publicPrompts.featured,
+          curatedPrompts: publicPrompts.curated,
+          totalCatalogPrompts: Number(publicPrompts.total) + Number(publicPrompts.curated),
           totalPublicFolders: publicFolders.total,
           totalFavorites: favorites.total,
           totalAIUsage: Number(aiUsage.totalAIUsage) || 0,

@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import Header from '@/components/Header'
 import { PublicPrompt } from '@/types'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
@@ -76,6 +75,7 @@ export default function PublicPromptDetailPage() {
   const { user } = useAuth()
   const promptId = parseInt(params.id as string)
   const [locale, setLocale] = useState<Locale>('zh')
+  const [source, setSource] = useState<PublicPrompt['source']>()
   const [localeReady, setLocaleReady] = useState(false)
   const copy = promptDetailCopy[locale]
   const href = (path: string) => withLocaleHref(path, locale)
@@ -85,41 +85,35 @@ export default function PublicPromptDetailPage() {
   const [copied, setCopied] = useState(false)
   const [isFavorited, setIsFavorited] = useState(false)
   const [favoriting, setFavoriting] = useState(false)
-
+  const userId = user?.id
   useEffect(() => {
     setLocale(detectLocaleFromSearch())
+    const requestedSource = new URLSearchParams(window.location.search).get('source')
+    setSource(requestedSource === 'curated' || requestedSource === 'published'
+      ? requestedSource
+      : undefined)
     setLocaleReady(true)
   }, [])
 
-  useEffect(() => {
-    if (promptId && localeReady) {
-      fetchPromptDetail()
-    }
-  }, [promptId, locale, localeReady])
-
-  // 检查当前用户是否已收藏
-  useEffect(() => {
-    if (user && promptId) {
-      checkFavoriteStatus()
-    }
-  }, [user, promptId])
-
-  const checkFavoriteStatus = async () => {
+  const checkFavoriteStatus = useCallback(async () => {
     try {
       const response = await api.favorites.list(1, 200)
       if (response.success && response.data?.items) {
-        const found = response.data.items.some((item: PublicPrompt) => item.id === promptId)
+        const expectedSource = prompt?.source || source
+        const found = response.data.items.some((item: PublicPrompt) => (
+          item.id === promptId && (!expectedSource || item.source === expectedSource)
+        ))
         setIsFavorited(found)
       }
     } catch {
       // 未登录或请求失败忽略
     }
-  }
+  }, [prompt?.source, promptId, source])
 
-  const fetchPromptDetail = async () => {
+  const fetchPromptDetail = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await api.publicPrompts.get(promptId, locale)
+      const response = await api.publicPrompts.get(promptId, locale, source)
       if (response.success && response.data) {
         setPrompt(response.data)
       }
@@ -128,7 +122,20 @@ export default function PublicPromptDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [locale, promptId, source])
+
+  useEffect(() => {
+    if (promptId && localeReady) {
+      void fetchPromptDetail()
+    }
+  }, [fetchPromptDetail, localeReady, promptId])
+
+  // 检查当前用户是否已收藏
+  useEffect(() => {
+    if (userId && promptId) {
+      void checkFavoriteStatus()
+    }
+  }, [checkFavoriteStatus, promptId, userId])
 
   const handleCopyPrompt = async () => {
     if (!prompt) return
@@ -154,14 +161,14 @@ export default function PublicPromptDetailPage() {
     setFavoriting(true)
     try {
       if (isFavorited) {
-        const response = await api.favorites.remove(prompt.id)
+        const response = await api.favorites.remove(prompt.id, prompt.source)
         if (response.success) {
           setIsFavorited(false)
           setPrompt({ ...prompt, favorites_count: Math.max(0, (prompt.favorites_count || 0) - 1) })
           toast({ description: copy.unfavorited })
         }
       } else {
-        const response = await api.favorites.add(prompt.id)
+        const response = await api.favorites.add(prompt.id, prompt.source)
         if (response.success) {
           setIsFavorited(true)
           setPrompt({ ...prompt, favorites_count: (prompt.favorites_count || 0) + 1 })
@@ -193,7 +200,6 @@ export default function PublicPromptDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -207,7 +213,6 @@ export default function PublicPromptDetailPage() {
   if (!prompt) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
             <h1 className="text-2xl font-bold text-gray-900 mb-4">{copy.notFound}</h1>
@@ -223,7 +228,6 @@ export default function PublicPromptDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Header />
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 返回按钮 */}
@@ -358,4 +362,4 @@ export default function PublicPromptDetailPage() {
       </main>
     </div>
   )
-} 
+}

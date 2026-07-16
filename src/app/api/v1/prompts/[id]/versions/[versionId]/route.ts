@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { withResolvedPromptEditorState } from '@/lib/prompt-editor-state'
 
 // GET - 获取单个版本详情（包含完整内容）
 export async function GET(
@@ -14,17 +16,16 @@ export async function GET(
     }
 
     const { id: idStr, versionId: versionIdStr } = await params
-    const promptId = parseInt(idStr)
-    const versionId = parseInt(versionIdStr)
+    const promptId = parsePositiveResourceId(idStr)
+    const versionId = parsePositiveResourceId(versionIdStr)
 
-    if (isNaN(promptId) || isNaN(versionId)) {
+    if (promptId == null || versionId == null) {
       return NextResponse.json({ success: false, error: '无效的参数' }, { status: 400 })
     }
 
-    // 验证提示词属于当前用户
-    const prompt = await db.getUserPromptById(promptId)
-    if (!prompt || prompt.user_id !== auth.user.id) {
-      return NextResponse.json({ success: false, error: '提示词不存在或无权访问' }, { status: 404 })
+    const prompt = await db.getOwnedUserPromptById(promptId, auth.user.id)
+    if (!prompt) {
+      return NextResponse.json({ success: false, error: '提示词不存在' }, { status: 404 })
     }
 
     const version = await db.getPromptVersion(versionId)
@@ -34,7 +35,7 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      data: version,
+      data: withResolvedPromptEditorState(version),
     })
   } catch (error) {
     console.error('Get prompt version error:', error)
@@ -54,42 +55,22 @@ export async function POST(
     }
 
     const { id: idStr, versionId: versionIdStr } = await params
-    const promptId = parseInt(idStr)
-    const versionId = parseInt(versionIdStr)
+    const promptId = parsePositiveResourceId(idStr)
+    const versionId = parsePositiveResourceId(versionIdStr)
 
-    if (isNaN(promptId) || isNaN(versionId)) {
+    if (promptId == null || versionId == null) {
       return NextResponse.json({ success: false, error: '无效的参数' }, { status: 400 })
     }
 
-    // 验证提示词属于当前用户
-    const prompt = await db.getUserPromptById(promptId)
-    if (!prompt || prompt.user_id !== auth.user.id) {
-      return NextResponse.json({ success: false, error: '提示词不存在或无权访问' }, { status: 404 })
+    const restoredPrompt = await db.restoreOwnedPromptVersion(promptId, versionId, auth.user.id)
+    if (!restoredPrompt) {
+      return NextResponse.json({ success: false, error: '提示词或版本不存在' }, { status: 404 })
     }
-
-    const version = await db.getPromptVersion(versionId)
-    if (!version || version.prompt_id !== promptId) {
-      return NextResponse.json({ success: false, error: '版本不存在' }, { status: 404 })
-    }
-
-    // 先保存当前版本
-    await db.createPromptVersion({
-      prompt_id: promptId,
-      user_id: auth.user.id,
-      title: String(prompt.title || ''),
-      content: String(prompt.content || ''),
-      change_summary: '恢复前自动备份',
-    })
-
-    // 恢复到目标版本
-    await db.updateUserPrompt(promptId, {
-      title: version.title,
-      content: version.content,
-    })
 
     return NextResponse.json({
       success: true,
-      message: `已恢复到版本 ${version.version_number}`,
+      data: withResolvedPromptEditorState(restoredPrompt),
+      message: '已恢复到选定版本',
     })
   } catch (error) {
     console.error('Restore prompt version error:', error)

@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Folder, Edit, Trash2, FileText, Plus, Upload, User, Calendar, ExternalLink, Download } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Folder, Edit, Trash2, FileText, Upload, User, Calendar, ExternalLink } from 'lucide-react'
 import { Folder as FolderType, ImportedFolder } from '@/types'
 import { api } from '@/lib/api'
 import { useRouter } from 'next/navigation'
@@ -35,6 +35,10 @@ const unifiedFolderCopy = {
     prompts: '个提示词',
     publish: '发布',
     view: '查看',
+    edit: '编辑文件夹',
+    delete: '删除文件夹',
+    open: (name: string) => `打开文件夹：${name}`,
+    rename: (name: string) => `重命名文件夹：${name}`,
     confirmDeleteTitle: '确认删除文件夹',
     deleteImportedDescription: (name: string) => `确定要删除文件夹 "${name}" 吗？这将从您的导入列表中移除该文件夹，但不会影响原始文件夹。`,
     deleteDescription: (name: string) => `确定要删除文件夹 "${name}" 吗？此操作不可撤销。`,
@@ -49,6 +53,10 @@ const unifiedFolderCopy = {
     prompts: 'prompts',
     publish: 'Publish',
     view: 'View',
+    edit: 'Edit folder',
+    delete: 'Delete folder',
+    open: (name: string) => `Open folder: ${name}`,
+    rename: (name: string) => `Rename folder: ${name}`,
     confirmDeleteTitle: 'Delete folder?',
     deleteImportedDescription: (name: string) => `Remove "${name}" from your imported folders? The original public folder will not be affected.`,
     deleteDescription: (name: string) => `Delete "${name}"? This action cannot be undone.`,
@@ -148,13 +156,12 @@ export default function UnifiedFolderCard({
   return (
     <>
       <Card 
-        className={`hover:shadow-md transition-all cursor-pointer ${
+        className={`hover:shadow-md transition-all ${
           isDragOver ? 'border-blue-500 bg-blue-50' : ''
         }`}
         onDrop={handleDrop}
         onDragOver={(e) => onDragOver?.(e, folder.id)}
         onDragLeave={onDragLeave}
-        onClick={handleClick}
       >
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
@@ -163,6 +170,7 @@ export default function UnifiedFolderCard({
               {isEditing ? (
                 <div className="flex items-center space-x-2 flex-1">
                   <Input
+                    aria-label={copy.rename(folder.name)}
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     onKeyDown={(e) => {
@@ -192,8 +200,15 @@ export default function UnifiedFolderCard({
                 </div>
               ) : (
                 <div className="flex items-center space-x-2 flex-1">
-                  <CardTitle className="text-lg font-semibold line-clamp-1">
-                    {folder.name}
+                  <CardTitle className="text-lg font-semibold line-clamp-1" role="heading" aria-level={3}>
+                    <button
+                      type="button"
+                      className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2"
+                      onClick={handleClick}
+                      aria-label={copy.open(folder.name)}
+                    >
+                      {folder.name}
+                    </button>
                   </CardTitle>
                   {isImported && (
                     <Badge variant="secondary" className="text-xs">
@@ -207,6 +222,7 @@ export default function UnifiedFolderCard({
             <div className="flex items-center space-x-1">
               {!isImported && (
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   onClick={(e) => {
@@ -214,11 +230,13 @@ export default function UnifiedFolderCard({
                     setIsEditing(true)
                   }}
                   className="p-1 text-gray-400 hover:text-gray-600"
+                  aria-label={`${copy.edit}: ${folder.name}`}
                 >
-                  <Edit className="h-4 w-4" />
+                  <Edit className="h-4 w-4" aria-hidden="true" />
                 </Button>
               )}
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
@@ -226,8 +244,9 @@ export default function UnifiedFolderCard({
                   setShowDeleteDialog(true)
                 }}
                 className="p-1 text-gray-400 hover:text-red-600"
+                aria-label={`${copy.delete}: ${folder.name}`}
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -321,4 +340,4 @@ export default function UnifiedFolderCard({
       </Dialog>
     </>
   )
-} 
+}

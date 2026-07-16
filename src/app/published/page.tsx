@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
@@ -48,6 +48,7 @@ export default function PublishedPage() {
   const [showEditDialog, setShowEditDialog] = useState(false)
   const [itemToEdit, setItemToEdit] = useState<{ id: number; type: 'prompt' | 'folder'; data: PublicPrompt | PublicFolder } | null>(null)
   const [editForm, setEditForm] = useState<{ title?: string; content?: string; description?: string; name?: string; tags?: string[] }>({})
+  const userId = user?.id
 
   // 检查用户登录状态 - 等待认证初始化完成
   useEffect(() => {
@@ -57,19 +58,16 @@ export default function PublishedPage() {
   }, [user, loading, router])
 
   // 获取发布的提示词
-  const fetchPublishedPrompts = async (params?: { page?: number; search?: string }) => {
-    if (!user) return
+  const fetchPublishedPrompts = useCallback(async (params?: { page?: number; search?: string }) => {
+    if (!userId) return
 
     try {
       setDataLoading(true)
-      console.log('Fetching published prompts with params:', params)
       const response = await api.user.getPublishedPrompts({
-        page: params?.page || page,
+        page: params?.page ?? 1,
         limit: 12,
-        search: params?.search || searchTerm
+        search: params?.search ?? ''
       })
-
-      console.log('Published prompts response:', response)
 
       if (response.success && response.data) {
         if (params?.page === 1 || !params?.page) {
@@ -97,22 +95,19 @@ export default function PublishedPage() {
     } finally {
       setDataLoading(false)
     }
-  }
+  }, [toast, userId])
 
   // 获取发布的文件夹
-  const fetchPublishedFolders = async (params?: { page?: number; search?: string }) => {
-    if (!user) return
+  const fetchPublishedFolders = useCallback(async (params?: { page?: number; search?: string }) => {
+    if (!userId) return
 
     try {
       setDataLoading(true)
-      console.log('Fetching published folders with params:', params)
       const response = await api.user.getPublishedFolders({
-        page: params?.page || page,
+        page: params?.page ?? 1,
         limit: 12,
-        search: params?.search || searchTerm
+        search: params?.search ?? ''
       })
-
-      console.log('Published folders response:', response)
 
       if (response.success && response.data) {
         if (params?.page === 1 || !params?.page) {
@@ -140,22 +135,17 @@ export default function PublishedPage() {
     } finally {
       setDataLoading(false)
     }
-  }
+  }, [toast, userId])
 
   // 初始加载
   useEffect(() => {
-    if (user) {
-      console.log('User authenticated, fetching published content...')
-      console.log('User ID:', user.id)
-      console.log('User token:', api.auth.getToken())
-      fetchPublishedPrompts({ page: 1 })
-      fetchPublishedFolders({ page: 1 })
-    } else {
-      console.log('No user found, redirecting to login...')
-      console.log('Auth token:', api.auth.getToken())
-      console.log('Is logged in:', api.auth.isLoggedIn())
+    if (userId) {
+      void Promise.all([
+        fetchPublishedPrompts({ page: 1, search: '' }),
+        fetchPublishedFolders({ page: 1, search: '' })
+      ])
     }
-  }, [user])
+  }, [fetchPublishedFolders, fetchPublishedPrompts, userId])
 
   // 处理搜索
   const handleSearch = (value: string) => {
@@ -298,12 +288,6 @@ export default function PublishedPage() {
     }
   }
 
-  // 处理标签点击
-  const handleTagClick = (tag: string) => {
-    // 可以跳转到标签搜索页面
-    console.log('Tag clicked:', tag)
-  }
-
   // 格式化日期
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('zh-CN')
@@ -381,26 +365,32 @@ export default function PublishedPage() {
                       </div>
                       <div className="flex items-center space-x-2 ml-2">
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => router.push(`/public-prompts/${prompt.id}`)}
+                          onClick={() => router.push(`/public-prompts/${prompt.id}?source=published`)}
+                          aria-label={`查看提示词：${prompt.title}`}
                         >
-                          <Eye className="h-3 w-3" />
+                          <Eye className="h-3 w-3" aria-hidden="true" />
                         </Button>
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => handleEdit(prompt, 'prompt')}
+                          aria-label={`编辑提示词：${prompt.title}`}
                         >
-                          <Edit className="h-3 w-3" />
+                          <Edit className="h-3 w-3" aria-hidden="true" />
                         </Button>
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => handleDelete(prompt, 'prompt')}
                           className="text-red-600 hover:text-red-700"
+                          aria-label={`删除提示词：${prompt.title}`}
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="h-3 w-3" aria-hidden="true" />
                         </Button>
                       </div>
                     </div>
@@ -422,8 +412,7 @@ export default function PublishedPage() {
                           <Badge
                             key={index}
                             variant="secondary"
-                            className="text-xs cursor-pointer hover:bg-gray-200"
-                            onClick={() => handleTagClick(tag)}
+                            className="text-xs"
                           >
                             {tag}
                           </Badge>
@@ -512,26 +501,32 @@ export default function PublishedPage() {
                       </div>
                       <div className="flex items-center space-x-2 ml-2">
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => router.push(`/public-folders/${folder.id}`)}
+                          aria-label={`查看文件夹：${folder.name}`}
                         >
-                          <Eye className="h-3 w-3" />
+                          <Eye className="h-3 w-3" aria-hidden="true" />
                         </Button>
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => handleEdit(folder, 'folder')}
+                          aria-label={`编辑文件夹：${folder.name}`}
                         >
-                          <Edit className="h-3 w-3" />
+                          <Edit className="h-3 w-3" aria-hidden="true" />
                         </Button>
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => handleDelete(folder, 'folder')}
                           className="text-red-600 hover:text-red-700"
+                          aria-label={`删除文件夹：${folder.name}`}
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="h-3 w-3" aria-hidden="true" />
                         </Button>
                       </div>
                     </div>
@@ -691,4 +686,4 @@ export default function PublishedPage() {
       </Dialog>
     </div>
   )
-} 
+}

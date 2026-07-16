@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { FREE_USER_LIMITS, requireAuth } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import db from '@/lib/mysql-database'
 import { RequestPolicyError } from '@/lib/ai-runtime-policy'
+import { resolveAiMonthlyLimit } from '@/lib/entitlement-policy'
+import {
+  checkAccountRateLimit,
+  checkIpRateLimit,
+  createGlobalAICostResponse,
+  createRateLimitResponse,
+  type GlobalAICostReservation,
+  RateLimitRules,
+  rateLimitHttpStatus,
+  reserveGlobalAICall,
+} from '@/lib/rate-limit'
 
 export type AIUsageMode = 'ai_optimize' | 'ai_generate'
 
@@ -28,12 +39,38 @@ function normalizeUserType(value: unknown): AuthenticatedAIUser['userType'] {
   return 'free'
 }
 
-export async function requireAIUser(request: NextRequest): Promise<AIAuthResult> {
+export async function requireAIUser(
+  request: NextRequest,
+  scope: 'ai' | 'attachments' = 'ai',
+): Promise<AIAuthResult> {
+  const rule = RateLimitRules[scope]
+  const ipLimit = await checkIpRateLimit(request, scope, rule.ip)
+  if (!ipLimit.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        createRateLimitResponse(ipLimit),
+        { status: rateLimitHttpStatus(ipLimit) },
+      ),
+    }
+  }
+
   const auth = await requireAuth(request)
   if ('error' in auth) {
     return {
       ok: false,
       response: NextResponse.json({ success: false, error: auth.error }, { status: auth.status }),
+    }
+  }
+
+  const accountLimit = await checkAccountRateLimit(scope, auth.user.id, rule.account)
+  if (!accountLimit.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        createRateLimitResponse(accountLimit),
+        { status: rateLimitHttpStatus(accountLimit) },
+      ),
     }
   }
 
@@ -76,20 +113,21 @@ export class AIUsageReservation {
     private readonly userId: number,
     private readonly mode: AIUsageMode,
     private readonly usageDate: string,
+    private readonly globalReservation: GlobalAICostReservation,
   ) {}
 
   commit() {
+    this.globalReservation.commit()
     this.settled = true
   }
 
   async rollback() {
     if (this.settled) return
     this.settled = true
-    try {
-      await db.rollbackAIUsage(this.userId, this.mode, this.usageDate)
-    } catch {
-      console.error('AI usage rollback failed')
-    }
+    await Promise.allSettled([
+      db.rollbackAIUsage(this.userId, this.mode, this.usageDate),
+      this.globalReservation.rollback(),
+    ])
   }
 }
 
@@ -97,9 +135,7 @@ export async function reserveAIUsage(
   user: AuthenticatedAIUser,
   mode: AIUsageMode,
 ): Promise<AIReservationResult> {
-  const monthlyLimit = user.userType === 'free'
-    ? FREE_USER_LIMITS.max_ai_usage_per_month
-    : -1
+  const monthlyLimit = resolveAiMonthlyLimit(user.userType)
 
   try {
     const result = await db.reserveAIUsage(user.id, mode, monthlyLimit)
@@ -118,7 +154,27 @@ export async function reserveAIUsage(
       }
     }
 
-    return { ok: true, reservation: new AIUsageReservation(user.id, mode, result.usageDate) }
+    const globalCost = await reserveGlobalAICall()
+    if (!globalCost.allowed || !globalCost.reservation) {
+      await db.rollbackAIUsage(user.id, mode, result.usageDate).catch(() => undefined)
+      return {
+        ok: false,
+        response: NextResponse.json(
+          createGlobalAICostResponse(globalCost),
+          { status: rateLimitHttpStatus(globalCost) },
+        ),
+      }
+    }
+
+    return {
+      ok: true,
+      reservation: new AIUsageReservation(
+        user.id,
+        mode,
+        result.usageDate,
+        globalCost.reservation,
+      ),
+    }
   } catch {
     return {
       ok: false,

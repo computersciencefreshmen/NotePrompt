@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { findOwnedResource, parsePositiveResourceId } from '@/lib/resource-authorization'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+type MutationResult = { affectedRows?: number }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
@@ -13,7 +16,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     
     const { id } = await context.params
     const folderId = parsePositiveResourceId(id)
-    const { prompt_id } = await request.json()
+    const { prompt_id } = await readLimitedJson<Record<string, unknown>>(request, 8 * 1024)
     const promptId = parsePositiveResourceId(prompt_id)
     
     // 验证参数
@@ -27,7 +30,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     // 检查文件夹是否属于当前用户
     const folder = folderId == null
       ? null
-      : await findOwnedResource(resourceId => db.getFolderById(resourceId), folderId, userId)
+      : await db.getOwnedFolderById(folderId, userId)
     if (!folder) {
       return NextResponse.json({ 
         success: false, 
@@ -36,11 +39,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     
     // 检查提示词是否属于当前用户
-    const prompt = await findOwnedResource(
-      resourceId => db.getUserPromptById(resourceId),
-      promptId,
-      userId
-    )
+    const prompt = await db.getOwnedUserPromptById(promptId, userId)
     if (!prompt) {
       return NextResponse.json({ 
         success: false, 
@@ -48,34 +47,39 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       }, { status: 404 })
     }
     
-    // 检查提示词是否已经在该文件夹中（防止重复）
-    const existingResult = await db.query(
-      'SELECT COUNT(*) as count FROM user_prompt_folders WHERE user_prompt_id = ? AND folder_id = ?',
+    // 唯一键与 INSERT IGNORE 在一条写语句中处理并发重复添加。
+    const insertResult = await db.query(
+      'INSERT IGNORE INTO user_prompt_folders (user_prompt_id, folder_id) VALUES (?, ?)',
       [promptId, folderId]
-    );
-    
-    if (Number((existingResult.rows as Record<string, unknown>[])[0]?.count) > 0) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '提示词已在该文件夹中，请勿重复添加' 
+    )
+    if (Number((insertResult.rows as MutationResult).affectedRows) !== 1) {
+      return NextResponse.json({
+        success: false,
+        error: '提示词已在该文件夹中，请勿重复添加',
       }, { status: 409 })
     }
-    
-    // 添加到关联表
+
+    // `user_prompt_folders` is canonical; keep the legacy single-folder column
+    // populated only as a compatibility projection for older exports/clients.
     await db.query(
-      'INSERT INTO user_prompt_folders (user_prompt_id, folder_id) VALUES (?, ?)',
-      [promptId, folderId]
-    );
+      `UPDATE user_prompts
+       SET folder_id = COALESCE(folder_id, ?), updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND user_id = ?`,
+      [folderId, promptId, userId],
+    )
     
     return NextResponse.json({ 
       success: true, 
       message: '添加成功' 
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.status })
+    }
     console.error('添加提示词到文件夹失败:', error)
     return NextResponse.json({ 
       success: false, 
-      error: error instanceof Error ? error.message : '添加失败，请稍后重试' 
+      error: '添加失败，请稍后重试',
     }, { status: 500 })
   }
 }

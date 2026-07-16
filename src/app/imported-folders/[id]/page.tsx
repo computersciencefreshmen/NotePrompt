@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
@@ -12,7 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Folder, User, Calendar, FileText } from 'lucide-react'
-import Header from '@/components/Header'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
 export default function ImportedFolderDetailPage() {
@@ -28,13 +27,7 @@ export default function ImportedFolderDetailPage() {
   const [selectedPrompt, setSelectedPrompt] = useState<PublicPrompt | null>(null)
   const [showPromptDialog, setShowPromptDialog] = useState(false)
 
-  useEffect(() => {
-    if (user && folderId) {
-      fetchFolderData()
-    }
-  }, [user, folderId])
-
-  const fetchFolderData = async () => {
+  const fetchFolderData = useCallback(async () => {
     setLoading(true)
     try {
       // 获取导入文件夹信息
@@ -69,7 +62,13 @@ export default function ImportedFolderDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [folderId, router, toast])
+
+  useEffect(() => {
+    if (user && folderId) {
+      void fetchFolderData()
+    }
+  }, [fetchFolderData, folderId, user])
 
   const formatDate = (dateString: string) => {
     try {
@@ -111,7 +110,6 @@ export default function ImportedFolderDetailPage() {
     return (
       <ProtectedRoute>
         <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-          <Header />
           <div className="container mx-auto px-4 py-8">
             <div className="flex items-center justify-center h-64">
               <div className="text-center">
@@ -129,7 +127,6 @@ export default function ImportedFolderDetailPage() {
     return (
       <ProtectedRoute>
         <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-          <Header />
           <div className="container mx-auto px-4 py-8">
             <div className="text-center">
               <p className="text-gray-600">文件夹不存在</p>
@@ -143,7 +140,6 @@ export default function ImportedFolderDetailPage() {
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         <div className="container mx-auto px-4 py-8">
           {/* 返回按钮 */}
           <div className="mb-6">
@@ -297,4 +293,4 @@ export default function ImportedFolderDetailPage() {
       </div>
     </ProtectedRoute>
   )
-} 
+}

@@ -351,10 +351,14 @@ export default function ProfessionalEditor({
                     className="flex items-center gap-1"
                   >
                     {tag}
-                    <X
-                      className="h-3 w-3 cursor-pointer hover:text-teal-700"
+                    <button
+                      type="button"
+                      className="rounded-sm hover:text-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
                       onClick={() => removeTag(tag)}
-                    />
+                      aria-label={`移除标签：${tag}`}
+                    >
+                      <X className="h-3 w-3" aria-hidden="true" />
+                    </button>
                   </Badge>
                 ))}
               </div>
@@ -465,8 +469,8 @@ export default function ProfessionalEditor({
             <div key={field} className="rounded-[8px] border border-teal-100 bg-teal-50/40 p-3">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
-                <Button type="button" size="sm" variant="outline" onClick={() => addListItem(field)} disabled={loading} className="h-8 border-teal-200 text-teal-700 hover:bg-white">
-                  <Plus className="h-3.5 w-3.5" />
+                <Button type="button" size="sm" variant="outline" onClick={() => addListItem(field)} disabled={loading} className="h-8 border-teal-200 text-teal-700 hover:bg-white" aria-label={`添加${title}`}>
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               </div>
               <div className="space-y-2">
@@ -480,8 +484,8 @@ export default function ProfessionalEditor({
                       disabled={loading}
                       className="text-sm"
                     />
-                    <Button type="button" size="sm" variant="outline" onClick={() => removeListItem(field, index)} disabled={loading} className="h-10 border-teal-200 text-teal-700 hover:bg-white">
-                      <Minus className="h-4 w-4" />
+                    <Button type="button" size="sm" variant="outline" onClick={() => removeListItem(field, index)} disabled={loading} className="h-10 border-teal-200 text-teal-700 hover:bg-white" aria-label={`删除${title}第 ${index + 1} 项`}>
+                      <Minus className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
                 ))}
@@ -518,13 +522,15 @@ export default function ProfessionalEditor({
                 disabled={loading}
               />
               <Button
+                type="button"
                 size="sm"
                 variant="outline"
                 onClick={() => removeConstraint(index)}
                 disabled={loading}
                 className="border-teal-300 text-teal-700 hover:bg-teal-50"
+                aria-label={`删除约束条件 ${index + 1}`}
               >
-                <Minus className="h-4 w-4" />
+                <Minus className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           ))}
@@ -558,13 +564,15 @@ export default function ProfessionalEditor({
                   示例 {index + 1}
                 </label>
                 <Button
+                  type="button"
                   size="sm"
                   variant="outline"
                   onClick={() => removeExample(index)}
                   disabled={loading}
                   className="border-teal-300 text-teal-700 hover:bg-teal-50"
+                  aria-label={`删除示例 ${index + 1}`}
                 >
-                  <Minus className="h-4 w-4" />
+                  <Minus className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </div>
               <Textarea
@@ -616,13 +624,15 @@ export default function ProfessionalEditor({
                 disabled={loading}
               />
               <Button
+                type="button"
                 size="sm"
                 variant="outline"
                 onClick={() => removeVariable(key)}
                 disabled={loading}
                 className="border-teal-300 text-teal-700 hover:bg-teal-50"
+                aria-label={`删除变量：${key}`}
               >
-                <Minus className="h-4 w-4" />
+                <Minus className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           ))}

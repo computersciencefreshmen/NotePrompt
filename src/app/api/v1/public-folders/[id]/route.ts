@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
 import { findEnglishFeaturedFolder } from '@/data/english-featured-folders'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+const MAX_PUBLIC_FOLDER_UPDATE_BODY_BYTES = 8 * 1024
+
+type FolderUpdate = {
+  name?: string
+  description?: string | null
+}
+
+type MutationResult = { affectedRows?: number }
 
 // GET - 获取公共文件夹详情
 export async function GET(
@@ -10,12 +21,12 @@ export async function GET(
 ) {
   try {
     const { id: idStr } = await params
-    const id = parseInt(idStr)
+    const id = parsePositiveResourceId(idStr)
     const { searchParams } = new URL(request.url)
     const lang = searchParams.get('lang') || 'zh'
 
     // 验证ID是否为有效数字
-    if (isNaN(id) || id <= 0) {
+    if (id == null) {
       return NextResponse.json(
         { success: false, error: lang === 'en' ? 'Invalid folder ID' : '无效的文件夹ID' },
         { status: 400 }
@@ -65,57 +76,61 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    console.log('开始编辑公共文件夹...')
-    
     const auth = await requireAuth(request)
     if ('error' in auth) {
-      console.log('认证失败:', auth.error)
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const userId = auth.user.id
-    
+
     const { id: idStr } = await params
-    const id = parseInt(idStr)
-    const body = await request.json()
-    console.log('编辑数据:', body)
-
-    // 检查公共文件夹是否存在
-    const folder = await db.getPublicFolderById(id)
-    if (!folder) {
-      console.log('文件夹不存在')
-      return NextResponse.json(
-        { success: false, error: '公共文件夹不存在' },
-        { status: 404 }
-      )
+    const id = parsePositiveResourceId(idStr)
+    if (id == null) {
+      return NextResponse.json({ success: false, error: '无效的文件夹ID' }, { status: 400 })
     }
 
-    // 检查权限 - 只能编辑自己发布的文件夹
-    if ((folder as any).user_id !== userId) {
-      console.log('权限检查失败:', { folderUserId: (folder as any).user_id, currentUserId: userId })
-      return NextResponse.json(
-        { success: false, error: '没有权限编辑此文件夹' },
-        { status: 403 }
-      )
+    const input = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_PUBLIC_FOLDER_UPDATE_BODY_BYTES,
+    )
+    if (Object.keys(input).some(key => !['name', 'description'].includes(key))) {
+      return NextResponse.json({ success: false, error: '请求包含不支持的字段' }, { status: 400 })
+    }
+    const updateData: FolderUpdate = {}
+    if (input.name !== undefined) {
+      if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 100) {
+        return NextResponse.json({ success: false, error: '名称必须为 1-100 个字符' }, { status: 400 })
+      }
+      updateData.name = input.name.trim()
+    }
+    if (input.description !== undefined) {
+      if (input.description !== null && (typeof input.description !== 'string' || input.description.length > 1_000)) {
+        return NextResponse.json({ success: false, error: '描述不能超过 1000 个字符' }, { status: 400 })
+      }
+      updateData.description = input.description as string | null
     }
 
-    // 更新公共文件夹
-    const updateData: any = {}
-    if (body.name !== undefined) updateData.name = body.name
-    if (body.description !== undefined) updateData.description = body.description
+    const fields = Object.keys(updateData) as Array<keyof FolderUpdate>
+    if (fields.length === 0) {
+      return NextResponse.json({ success: false, error: '没有可更新的字段' }, { status: 400 })
+    }
 
-    console.log('更新数据:', updateData)
-
-    const query = `
-      UPDATE public_folders 
-      SET ${Object.keys(updateData).map(key => `${key} = ?`).join(', ')}, updated_at = NOW()
-      WHERE id = ?
-    `
-    const values = [...Object.values(updateData), id]
-    console.log('执行查询:', query)
-    console.log('查询参数:', values)
-    
-    await db.query(query, values)
-    console.log('更新成功')
+    const result = await db.query(
+      `UPDATE public_folders
+       SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND user_id = ?`,
+      [...fields.map((field) => updateData[field]), id, userId],
+    )
+    const affectedRows = Number((result.rows as MutationResult).affectedRows)
+    if (affectedRows > 1) throw new Error('Public folder update affected more than one row')
+    if (affectedRows === 0) {
+      const existingResult = await db.query(
+        'SELECT id FROM public_folders WHERE id = ? AND user_id = ? LIMIT 1',
+        [id, userId],
+      )
+      if ((existingResult.rows as Record<string, unknown>[]).length === 0) {
+        return NextResponse.json({ success: false, error: '公共文件夹不存在' }, { status: 404 })
+      }
+    }
 
     const updatedFolder = await db.getPublicFolderById(id)
 
@@ -125,10 +140,13 @@ export async function PUT(
       message: '公共文件夹更新成功'
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('Update public folder error:', error)
-    return NextResponse.json(
-      { success: false, error: '更新公共文件夹失败', details: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: '更新公共文件夹失败' }, { status: 500 })
   }
-} 
+}

@@ -1,6 +1,8 @@
+import 'server-only'
 import { AI_MODELS } from '@/config/ai'
 import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
 import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
+import { formatSafeAIError } from '@/lib/ai-error-sanitizer'
 
 type AIProviderKey = keyof typeof AI_MODELS
 type AIModelConfig = {
@@ -114,29 +116,8 @@ export function getAvailableModels(provider: string): Array<{key: string, name: 
 
 // 格式化AI错误信息
 export function formatAIError(error: unknown, provider: string): string {
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  if (error instanceof Error) {
-    const message = error.message;
-
-    if (provider === 'deepseek') {
-      if (message.includes('Model Not Exist')) {
-        return 'DeepSeek模型不存在，请检查模型名称是否正确';
-      }
-      if (message.includes('invalid_request_error')) {
-        return 'DeepSeek API请求参数错误';
-      }
-      if (message.includes('authentication')) {
-        return 'DeepSeek API密钥无效，请检查配置';
-      }
-    }
-    
-    return message;
-  }
-
-  return '未知错误';
+  void provider
+  return formatSafeAIError(error)
 }
 
 // 获取推荐的模型配置

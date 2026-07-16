@@ -11,7 +11,7 @@ import {
 } from '@/lib/ai-runtime-policy'
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAIUser(request)
+  const auth = await requireAIUser(request, 'attachments')
   if (!auth.ok) return auth.response
 
   try {

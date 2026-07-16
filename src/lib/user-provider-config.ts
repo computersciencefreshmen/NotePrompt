@@ -1,3 +1,4 @@
+import 'server-only'
 import crypto from 'crypto'
 import { AI_MODELS } from '@/config/ai'
 import db from '@/lib/mysql-database'
@@ -19,8 +20,6 @@ export type UserProviderRuntimeConfig = {
   baseURL?: string
   source: 'user'
 }
-
-let userProviderSchemaReady = false
 
 function assertProvider(provider: string): provider is AIProviderKey {
   return Object.prototype.hasOwnProperty.call(AI_MODELS, provider)
@@ -55,28 +54,12 @@ function decryptSecret(value: string) {
   ]).toString('utf8')
 }
 
-async function ensureUserProviderConfigTable() {
-  if (userProviderSchemaReady) return
-
-  await db.queryRaw(`CREATE TABLE IF NOT EXISTS user_provider_configs (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    provider VARCHAR(50) NOT NULL,
-    encrypted_api_key TEXT NOT NULL,
-    base_url VARCHAR(500) NULL,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY unique_user_provider_config (user_id, provider),
-    INDEX idx_user_provider_active (user_id, provider, is_active),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
-
-  userProviderSchemaReady = true
+async function assertUserProviderSchemaReady() {
+  await db.assertSchemaReady()
 }
 
 async function getStoredConfig(userId: number, provider: string): Promise<UserProviderRow | null> {
-  await ensureUserProviderConfigTable()
+  await assertUserProviderSchemaReady()
   const result = await db.query(
     `SELECT provider, encrypted_api_key, base_url, is_active, updated_at
      FROM user_provider_configs
@@ -88,7 +71,7 @@ async function getStoredConfig(userId: number, provider: string): Promise<UserPr
 }
 
 export async function listUserProviderConfigs(userId: number) {
-  await ensureUserProviderConfigTable()
+  await assertUserProviderSchemaReady()
   const result = await db.query(
     `SELECT provider, encrypted_api_key, base_url, is_active, updated_at
      FROM user_provider_configs
@@ -137,7 +120,7 @@ export async function upsertUserProviderConfig(userId: number, provider: string,
     throw new Error('API Key is required')
   }
 
-  await ensureUserProviderConfigTable()
+  await assertUserProviderSchemaReady()
   const trimmedBaseURL = normalizeProviderBaseURL(provider, baseURL) || null
   await db.query(
     `INSERT INTO user_provider_configs (user_id, provider, encrypted_api_key, base_url, is_active)
@@ -156,7 +139,7 @@ export async function deleteUserProviderConfig(userId: number, provider: string)
     throw new Error('Unsupported AI provider')
   }
 
-  await ensureUserProviderConfigTable()
+  await assertUserProviderSchemaReady()
   await db.query('DELETE FROM user_provider_configs WHERE user_id = ? AND provider = ?', [userId, provider])
 }
 

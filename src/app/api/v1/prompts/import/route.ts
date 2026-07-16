@@ -1,99 +1,162 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+import { entitlementLimitResponse } from '@/lib/entitlement-http'
+import {
+  getCuratedPublicPromptById,
+  resolvePublicPromptSource,
+  type PublicPromptSource,
+} from '@/lib/curated-public-prompts'
 import db from '@/lib/mysql-database'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
 
-// POST - 批量导入用户提示词
+const MAX_BATCH_IMPORT_BODY_BYTES = 64 * 1024
+const MAX_BATCH_IMPORT_ITEMS = 100
+
 export async function POST(request: NextRequest) {
+  const auth = await requireAuth(request)
+  if ('error' in auth) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+  }
+
   try {
-    const auth = await requireAuth(request)
-    if ('error' in auth) {
-      return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_BATCH_IMPORT_BODY_BYTES,
+    )
+    if (!Array.isArray(body.prompts) || body.prompts.length === 0) {
+      return NextResponse.json(
+        { success: false, error: '请选择要导入的提示词' },
+        { status: 400 },
+      )
+    }
+    if (body.prompts.length > MAX_BATCH_IMPORT_ITEMS) {
+      return NextResponse.json(
+        { success: false, error: `单次最多导入 ${MAX_BATCH_IMPORT_ITEMS} 个提示词` },
+        { status: 400 },
+      )
     }
 
-    const user_id = auth.user.id
-    const body = await request.json()
-    const { prompts }: { prompts: Array<{ id: number; title?: string }> } = body
-
-    if (!prompts || !Array.isArray(prompts) || prompts.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: '请选择要导入的提示词'
-      }, { status: 400 })
+    const promptReferences: Array<{ id: number; source: PublicPromptSource }> = []
+    const seenReferences = new Set<string>()
+    let hasInvalidReference = false
+    for (const item of body.prompts) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        hasInvalidReference = true
+        break
+      }
+      const input = item as Record<string, unknown>
+      const id = parsePositiveResourceId(input.id)
+      const requestedSource = input.source == null
+        ? null
+        : typeof input.source === 'string'
+          ? input.source
+          : 'invalid'
+      const source = id == null ? null : resolvePublicPromptSource(id, requestedSource)
+      if (id == null || !source) {
+        hasInvalidReference = true
+        break
+      }
+      const key = `${source}:${id}`
+      if (seenReferences.has(key)) {
+        hasInvalidReference = true
+        break
+      }
+      seenReferences.add(key)
+      promptReferences.push({ id, source })
+    }
+    if (hasInvalidReference || promptReferences.length !== body.prompts.length) {
+      return NextResponse.json(
+        { success: false, error: '提示词列表包含无效或重复资源引用' },
+        { status: 400 },
+      )
     }
 
-    // 获取用户的默认文件夹
-    const folders = await db.getFoldersByUserId(user_id)
-    const defaultFolder = folders[0] as Record<string, unknown> | undefined
-
-    if (!defaultFolder) {
-      return NextResponse.json({
-        success: false,
-        error: '用户没有文件夹，请先创建文件夹'
-      }, { status: 400 })
+    const folders = await db.getFoldersByUserId(auth.user.id)
+    const defaultFolderId = parsePositiveResourceId((folders[0] as Record<string, unknown> | undefined)?.id)
+    if (defaultFolderId == null) {
+      return NextResponse.json(
+        { success: false, error: '用户没有文件夹，请先创建文件夹' },
+        { status: 400 },
+      )
     }
 
     let successCount = 0
-    let errorCount = 0
-    const errors: string[] = []
+    const failures: Array<{
+      id: number
+      source: PublicPromptSource
+      reason: 'NOT_FOUND' | 'IMPORT_FAILED' | 'QUOTA_EXCEEDED'
+    }> = []
 
-    for (const promptData of prompts) {
+    for (const reference of promptReferences) {
+      const { id: promptId, source } = reference
       try {
-        // 从数据库查询公共提示词
-        const publicPrompt = await db.getPublicPromptById(promptData.id)
-
-        if (!publicPrompt) {
-          errors.push(`提示词 "${promptData.title || promptData.id}" 不存在`)
-          errorCount++
+        const curatedPrompt = source === 'curated'
+          ? getCuratedPublicPromptById(promptId)
+          : null
+        const publicPrompt = source === 'published'
+          ? await db.getPublicPromptById(promptId)
+          : null
+        const sourcePrompt = curatedPrompt || publicPrompt
+        if (!sourcePrompt) {
+          failures.push({ id: promptId, source, reason: 'NOT_FOUND' })
           continue
         }
 
-        // 导入到用户提示词表
-        await db.createUserPrompt({
-          title: `[导入] ${String(publicPrompt.title || '')}`,
-          content: String(publicPrompt.content || ''),
-          description: publicPrompt.description ? String(publicPrompt.description) : null,
-          user_id: user_id,
-          folder_id: Number(defaultFolder.id),
-          category_id: publicPrompt.category_id == null ? null : Number(publicPrompt.category_id)
+        const importedPrompt = await db.createUserPrompt({
+          title: `[导入] ${String(sourcePrompt.title || '')}`.slice(0, 200),
+          content: String(sourcePrompt.content || ''),
+          description: sourcePrompt.description == null ? null : String(sourcePrompt.description),
+          user_id: auth.user.id,
+          folder_id: defaultFolderId,
+          category_id: 'category_id' in sourcePrompt && sourcePrompt.category_id != null
+            ? Number(sourcePrompt.category_id)
+            : null,
+          mode: 'normal',
         })
+        const importedPromptId = parsePositiveResourceId(
+          (importedPrompt as Record<string, unknown> | null)?.id,
+        )
+        if (importedPromptId == null) throw new Error('Imported prompt has no valid ID')
 
-        // 复制标签
-        try {
-          const tags = await db.getPublicPromptTags(promptData.id)
-          if (tags && tags.length > 0) {
-            const importedPrompt = await db.getUserPromptsByUserId(user_id)
-            const latestPrompt = importedPrompt[0]
-            if (latestPrompt) {
-              const tagNames = tags.map((tag: Record<string, unknown>) => tag.name as string)
-              await db.addUserPromptTags(Number(latestPrompt.id), tagNames)
-            }
-          }
-        } catch (tagError) {
-          console.error('复制标签失败:', tagError)
-        }
-
-        successCount++
+        const tagNames = curatedPrompt?.tags || (await db.getPublicPromptTags(promptId))
+          .map((tag) => (tag as Record<string, unknown>).name)
+          .filter((name): name is string => typeof name === 'string')
+        if (tagNames.length > 0) await db.addUserPromptTags(importedPromptId, tagNames)
+        successCount += 1
       } catch (error) {
-        console.error('导入提示词失败:', error)
-        errors.push(`"${promptData.title || promptData.id}": ${error instanceof Error ? error.message : '未知错误'}`)
-        errorCount++
+        const limitResponse = entitlementLimitResponse(error)
+        if (limitResponse) {
+          failures.push({ id: promptId, source, reason: 'QUOTA_EXCEEDED' })
+          if (successCount === 0) return limitResponse
+          break
+        }
+        console.error(`Import ${source} prompt ${promptId} failed:`, error)
+        failures.push({ id: promptId, source, reason: 'IMPORT_FAILED' })
       }
     }
 
     return NextResponse.json({
-      success: true,
+      success: successCount > 0,
       data: {
         imported: successCount,
-        errors: errorCount,
-        errorDetails: errors
+        errors: failures.length,
+        errorDetails: failures,
+        partial: successCount > 0 && failures.length > 0,
       },
-      message: `成功导入 ${successCount} 个提示词${errorCount > 0 ? `，${errorCount} 个失败` : ''}`
-    })
+      message: `成功导入 ${successCount} 个提示词${failures.length > 0 ? `，${failures.length} 个失败` : ''}`,
+    }, { status: failures.length > 0 && successCount === 0 ? 422 : 200 })
   } catch (error) {
-    console.error('批量导入提示词失败:', error)
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
+    console.error('Batch import prompts error:', error)
     return NextResponse.json(
       { success: false, error: '导入失败' },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }

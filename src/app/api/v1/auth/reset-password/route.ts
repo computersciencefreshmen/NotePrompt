@@ -1,137 +1,157 @@
-import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
-import db from '@/lib/mysql-database';
+import { NextRequest, NextResponse } from 'next/server'
+import bcrypt from 'bcryptjs'
+import db from '@/lib/mysql-database'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+import { getPasswordPolicyError } from '@/lib/password-security'
+import {
+  MAX_AUTH_JSON_BODY_BYTES,
+  getVerificationCodeSecret,
+  hashVerificationCode,
+  isSixDigitVerificationCode,
+  parseVerificationEmail,
+  verifyVerificationCodeHash,
+} from '@/lib/verification-code-security'
+import {
+  checkAccountRateLimit,
+  checkIpRateLimit,
+  createRateLimitResponse,
+  RateLimitRules,
+  rateLimitHttpStatus,
+} from '@/lib/rate-limit'
 
-/**
- * POST /api/v1/auth/reset-password
- * 验证验证码并重置密码
- */
+const INVALID_RESET_RESPONSE = {
+  success: false,
+  error: '邮箱或验证码无效、已过期，请重新获取验证码',
+}
+
+/** POST /api/v1/auth/reset-password */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, code, newPassword } = body;
-
-    // 参数验证
-    if (!email || !code || !newPassword) {
+    const ipLimit = await checkIpRateLimit(
+      request,
+      'reset-password',
+      RateLimitRules.resetPassword.ip,
+    )
+    if (!ipLimit.allowed) {
       return NextResponse.json(
-        { success: false, error: '请填写所有必填字段' },
-        { status: 400 }
-      );
+        createRateLimitResponse(ipLimit),
+        { status: rateLimitHttpStatus(ipLimit) },
+      )
     }
 
-    // 验证邮箱格式
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(email)) {
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_AUTH_JSON_BODY_BYTES,
+    )
+    const email = parseVerificationEmail(body.email)
+    const code = body.code
+    const newPassword = body.newPassword
+
+    if (!email || !isSixDigitVerificationCode(code)) {
       return NextResponse.json(
-        { success: false, error: '邮箱格式不正确' },
-        { status: 400 }
-      );
+        { success: false, error: '邮箱或验证码格式不正确' },
+        { status: 400 },
+      )
+    }
+    const passwordError = getPasswordPolicyError(newPassword)
+    if (typeof newPassword !== 'string' || passwordError) {
+      return NextResponse.json(
+        { success: false, error: passwordError || '密码格式无效' },
+        { status: 400 },
+      )
     }
 
-    // 验证码格式检查（6位数字）
-    if (!/^\d{6}$/.test(code)) {
+    const accountLimit = await checkAccountRateLimit(
+      'reset-password',
+      email,
+      RateLimitRules.resetPassword.account,
+    )
+    if (!accountLimit.allowed) {
       return NextResponse.json(
-        { success: false, error: '验证码格式不正确' },
-        { status: 400 }
-      );
+        createRateLimitResponse(accountLimit),
+        { status: rateLimitHttpStatus(accountLimit) },
+      )
     }
 
-    // 密码强度验证
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        { success: false, error: '密码长度不能少于6位' },
-        { status: 400 }
-      );
-    }
+    const verificationSecret = getVerificationCodeSecret()
+    const submittedCodeHash = hashVerificationCode(
+      email,
+      'password-reset',
+      code,
+      verificationSecret,
+    )
+    const user = await db.getUserByEmail(email)
+    const verificationAttempts = Number(user?.verification_attempts || 0)
+    const expiresAt = user?.verification_expires
+      ? new Date(String(user.verification_expires)).getTime()
+      : Number.NaN
+    const codeMatches = verifyVerificationCodeHash(
+      user?.verification_code,
+      email,
+      'password-reset',
+      code,
+      verificationSecret,
+    )
+    const canReset = Boolean(user) &&
+      verificationAttempts < 5 &&
+      Number.isFinite(expiresAt) &&
+      expiresAt >= Date.now() &&
+      codeMatches
 
-    if (newPassword.length > 50) {
-      return NextResponse.json(
-        { success: false, error: '密码长度不能超过50位' },
-        { status: 400 }
-      );
-    }
-
-    // 查找用户
-    const user = await db.getUserByEmail(email);
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: '用户不存在' },
-        { status: 404 }
-      );
-    }
-
-    // 检查验证尝试次数（防止暴力破解）
-    const maxAttempts = 5;
-    if (user.verification_attempts && (user.verification_attempts as number) >= maxAttempts) {
-      return NextResponse.json(
-        { success: false, error: '验证尝试次数过多，请重新获取验证码' },
-        { status: 429 }
-      );
-    }
-
-    // 检查验证码是否存在
-    if (!user.verification_code) {
-      return NextResponse.json(
-        { success: false, error: '请先获取验证码' },
-        { status: 400 }
-      );
-    }
-
-    // 检查验证码是否过期
-    if (user.verification_expires) {
-      const expiresTime = new Date(user.verification_expires as string);
-      const now = new Date();
-      if (now > expiresTime) {
-        return NextResponse.json(
-          { success: false, error: '验证码已过期，请重新获取' },
-          { status: 400 }
-        );
+    if (!canReset) {
+      if (
+        user?.verification_code &&
+        verificationAttempts < 5 &&
+        Number.isFinite(expiresAt) &&
+        expiresAt >= Date.now() &&
+        !codeMatches
+      ) {
+        await db.query(
+          `UPDATE users
+           SET verification_attempts = COALESCE(verification_attempts, 0) + 1
+           WHERE id = ? AND verification_code = ?`,
+          [user.id, String(user.verification_code)],
+        )
       }
+      return NextResponse.json(INVALID_RESET_RESPONSE, { status: 400 })
     }
 
-    // 验证码比对（使用 constant-time 比较防止时序攻击）
-    const codeMatch = crypto.timingSafeEqual(
-      Buffer.from(user.verification_code as string),
-      Buffer.from(code)
-    );
-
-    if (!codeMatch) {
-      // 增加失败计数
-      await db.query(
-        'UPDATE users SET verification_attempts = COALESCE(verification_attempts, 0) + 1 WHERE id = ?',
-        [user.id]
-      );
-
-      return NextResponse.json(
-        { success: false, error: '验证码不正确' },
-        { status: 400 }
-      );
-    }
-
-    // 验证码正确，加密新密码并更新
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
-
-    await db.query(
+    const newPasswordHash = await bcrypt.hash(newPassword, 12)
+    const updateResult = await db.query(
       `UPDATE users
        SET password_hash = ?,
            verification_code = NULL,
            verification_expires = NULL,
            verification_attempts = 0,
+           email_verify_sent_at = NULL,
+           session_version = COALESCE(session_version, 1) + 1,
            updated_at = NOW()
-       WHERE id = ?`,
-      [newPasswordHash, user.id]
-    );
+       WHERE id = ?
+         AND verification_code = ?
+         AND verification_expires >= NOW()
+         AND COALESCE(verification_attempts, 0) < 5`,
+      [newPasswordHash, user!.id, submittedCodeHash],
+    )
+
+    if (Number((updateResult.rows as { affectedRows?: number }).affectedRows) !== 1) {
+      return NextResponse.json(INVALID_RESET_RESPONSE, { status: 400 })
+    }
 
     return NextResponse.json({
       success: true,
       message: '密码重置成功，请使用新密码登录',
-    });
+    })
   } catch (error) {
-    console.error('密码重置失败:', error);
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
+    console.error('密码重置失败:', error instanceof Error ? error.message : 'unknown')
     return NextResponse.json(
       { success: false, error: '服务器错误，请稍后重试' },
-      { status: 500 }
-    );
+      { status: 500 },
+    )
   }
 }

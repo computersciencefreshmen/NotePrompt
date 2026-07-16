@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
 import { normalizeResourceIds } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+const MAX_BATCH_PUBLISH_BODY_BYTES = 16 * 1024
 
 // POST - 批量发布用户提示词到公共库
 export async function POST(request: NextRequest) {
@@ -11,7 +14,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
 
-    const { prompt_ids } = await request.json()
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_BATCH_PUBLISH_BODY_BYTES,
+    )
+    if (Object.keys(body).some(key => key !== 'prompt_ids')) {
+      return NextResponse.json(
+        { success: false, error: '请求包含不支持的字段' },
+        { status: 400 },
+      )
+    }
+    const prompt_ids = body.prompt_ids
 
     if (!Array.isArray(prompt_ids) || prompt_ids.length === 0 || prompt_ids.length > 100) {
       return NextResponse.json(
@@ -44,6 +57,12 @@ export async function POST(request: NextRequest) {
       message: `成功发布 ${publishedPrompts.length} 个提示词`
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('Batch publish prompts error:', error)
     return NextResponse.json(
       { success: false, error: '批量发布提示词失败' },

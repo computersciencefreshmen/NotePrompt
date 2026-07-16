@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
 
 // GET - 获取提示词版本列表
 export async function GET(
@@ -14,16 +15,15 @@ export async function GET(
     }
 
     const { id: idStr } = await params
-    const promptId = parseInt(idStr)
+    const promptId = parsePositiveResourceId(idStr)
 
-    if (isNaN(promptId)) {
-      return NextResponse.json({ success: false, error: '无效的提示词ID' }, { status: 400 })
+    if (promptId == null) {
+      return NextResponse.json({ success: false, error: '提示词不存在' }, { status: 404 })
     }
 
-    // 验证提示词属于当前用户
-    const prompt = await db.getUserPromptById(promptId)
-    if (!prompt || prompt.user_id !== auth.user.id) {
-      return NextResponse.json({ success: false, error: '提示词不存在或无权访问' }, { status: 404 })
+    const prompt = await db.getOwnedUserPromptById(promptId, auth.user.id)
+    if (!prompt) {
+      return NextResponse.json({ success: false, error: '提示词不存在' }, { status: 404 })
     }
 
     const versions = await db.getPromptVersions(promptId)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -9,7 +9,6 @@ import { SearchInput } from '@/components/ui/search-input'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import ProtectedRoute from '@/components/ProtectedRoute'
-import Header from '@/components/Header'
 import { useToast } from '@/hooks/use-toast'
 import { Prompt, Folder, ImportedFolder, PublicPrompt } from '@/types'
 import PromptCard, { PromptCardSkeleton } from '@/components/PromptCard'
@@ -142,9 +141,11 @@ export default function PromptsPage() {
   const [showFolderSelectDialog, setShowFolderSelectDialog] = useState(false)
   const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
+  const loadingMoreRef = useRef(false)
+  const userId = user?.id
 
   // 获取用户统计
-  const fetchUserStats = async () => {
+  const fetchUserStats = useCallback(async () => {
     try {
       const response = await api.user.getStats()
       if (response.success && response.data) {
@@ -154,10 +155,10 @@ export default function PromptsPage() {
       console.warn('Failed to fetch user stats, using fallback stats:', error)
       setUserStats(DEFAULT_USER_STATS)
     }
-  }
+  }, [])
 
   // 获取文件夹列表
-  const fetchFolders = async () => {
+  const fetchFolders = useCallback(async () => {
     try {
       const response = await api.folders.list()
       
@@ -167,10 +168,10 @@ export default function PromptsPage() {
     } catch (error) {
       console.error('Failed to fetch folders:', error)
     }
-  }
+  }, [])
 
   // 获取导入文件夹列表
-  const fetchImportedFolders = async () => {
+  const fetchImportedFolders = useCallback(async () => {
     try {
       const response = await api.user.getImportedFolders()
       
@@ -180,7 +181,7 @@ export default function PromptsPage() {
     } catch (error) {
       console.error('Failed to fetch imported folders:', error)
     }
-  }
+  }, [])
 
   // 处理查看导入文件夹
   const handleViewImportedFolder = (folder: ImportedFolder) => {
@@ -188,24 +189,25 @@ export default function PromptsPage() {
   }
 
   // 获取提示词列表
-  const fetchPrompts = async (params: {
+  const fetchPrompts = useCallback(async (params: {
     search?: string;
     folder_id?: number | undefined;
     page?: number;
     limit?: number;
   } = {}) => {
+    const requestedPage = params.page ?? 1
     setLoading(true)
     try {
       const response = await api.prompts.list({
         search: searchTerm || undefined,
         folder_id: selectedFolderId || undefined,
-        page: page,
+        page: requestedPage,
         limit: 12,
         ...params
       })
 
       if (response.success && response.data) {
-        if (params.page === 1) {
+        if (requestedPage === 1) {
           setPrompts(response.data.items)
         } else {
           setPrompts(prev => [...prev, ...response.data!.items])
@@ -221,9 +223,10 @@ export default function PromptsPage() {
         variant: 'destructive',
       })
     } finally {
+      loadingMoreRef.current = false
       setLoading(false)
     }
-  }
+  }, [copy.fetchFailedDesc, copy.fetchFailedTitle, searchTerm, selectedFolderId, toast])
 
   // 创建新文件夹
   const handleCreateFolder = async () => {
@@ -470,15 +473,14 @@ export default function PromptsPage() {
 
   // 初始加载
   useEffect(() => {
-    if (user) {
-      Promise.all([
+    if (userId) {
+      void Promise.all([
         fetchUserStats(),
         fetchFolders(),
-        fetchImportedFolders(),
-        fetchPrompts({ page: 1 })
+        fetchImportedFolders()
       ])
     }
-  }, [user])
+  }, [fetchFolders, fetchImportedFolders, fetchUserStats, userId])
 
   // 监听滚动事件，显示/隐藏回到顶部按钮
   useEffect(() => {
@@ -492,17 +494,19 @@ export default function PromptsPage() {
 
   // 下拉加载更多
   const handleScroll = useCallback(() => {
-    if (loading || !hasMore) return
+    if (loading || loadingMoreRef.current || !hasMore) return
 
     const scrollTop = window.scrollY
     const windowHeight = window.innerHeight
     const documentHeight = document.documentElement.scrollHeight
 
     if (scrollTop + windowHeight >= documentHeight - 100) {
-      setPage(prev => prev + 1)
-      fetchPrompts({ page: page + 1 })
+      const nextPage = page + 1
+      loadingMoreRef.current = true
+      setPage(nextPage)
+      void fetchPrompts({ page: nextPage })
     }
-  }, [loading, hasMore, page])
+  }, [fetchPrompts, hasMore, loading, page])
 
   useEffect(() => {
     window.addEventListener('scroll', handleScroll)
@@ -521,16 +525,15 @@ export default function PromptsPage() {
 
   // 搜索和筛选变化时重新加载
   useEffect(() => {
-    if (user) {
+    if (userId) {
       setPage(1)
-      fetchPrompts({ page: 1 })
+      void fetchPrompts({ page: 1 })
     }
-  }, [searchTerm, selectedFolderId, user])
+  }, [fetchPrompts, userId])
 
   return (
     <ProtectedRoute locale={locale}>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* 页面标题 */}
@@ -695,11 +698,13 @@ export default function PromptsPage() {
         {/* 回到顶部按钮 */}
         {showBackToTop && (
           <Button
+            type="button"
             onClick={scrollToTop}
             className="fixed bottom-8 right-8 z-50 rounded-full w-12 h-12 shadow-lg bg-blue-600 hover:bg-blue-700 text-white"
             size="sm"
+            aria-label={locale === 'en' ? 'Back to top' : '返回顶部'}
           >
-            <ArrowUp className="h-5 w-5" />
+            <ArrowUp className="h-5 w-5" aria-hidden="true" />
           </Button>
         )}
 
@@ -725,4 +730,4 @@ export default function PromptsPage() {
       </div>
     </ProtectedRoute>
   )
-} 
+}

@@ -1,3 +1,4 @@
+import 'server-only'
 import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER, getAvailableAIProviders, getAIProviderModels } from './ai-models'
 import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
 import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'

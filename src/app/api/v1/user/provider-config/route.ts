@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AI_MODELS } from '@/config/ai'
 import { requireAuth } from '@/lib/auth'
-import { checkRateLimit, createRateLimitResponse } from '@/lib/rate-limit'
+import { checkRateLimit, createRateLimitResponse, rateLimitHttpStatus } from '@/lib/rate-limit'
 import {
   deleteUserProviderConfig,
   listUserProviderConfigs,
@@ -24,8 +24,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const rateCheck = await checkRateLimit(`user-provider-config:${auth.user.id}`, { windowMs: 60000, maxRequests: 10 })
-    if (!rateCheck.allowed && rateCheck.resetAt) {
-      return NextResponse.json(createRateLimitResponse(rateCheck.resetAt), { status: 429 })
+    if (!rateCheck.allowed) {
+      return NextResponse.json(createRateLimitResponse(rateCheck), { status: rateLimitHttpStatus(rateCheck) })
     }
 
     const providers = await listUserProviderConfigs(auth.user.id)
@@ -43,14 +43,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
     const rateCheck = await checkRateLimit(`user-provider-config:${auth.user.id}`, { windowMs: 60000, maxRequests: 10 })
-    if (!rateCheck.allowed && rateCheck.resetAt) {
-      return NextResponse.json(createRateLimitResponse(rateCheck.resetAt), { status: 429 })
+    if (!rateCheck.allowed) {
+      return NextResponse.json(createRateLimitResponse(rateCheck), { status: rateLimitHttpStatus(rateCheck) })
     }
 
     const body = await readLimitedJson<{ provider?: unknown; apiKey?: unknown; baseURL?: unknown }>(
       request,
       MAX_PROVIDER_CONFIG_BODY_BYTES,
     )
+    if (Object.keys(body).some(key => !['provider', 'apiKey', 'baseURL'].includes(key))) {
+      return NextResponse.json(
+        { success: false, error: '请求包含不支持的字段' },
+        { status: 400 },
+      )
+    }
     if (!isSupportedProvider(body.provider)) {
       return NextResponse.json({ success: false, error: '不支持的模型供应商' }, { status: 400 })
     }
@@ -72,10 +78,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: { providers } })
   } catch (error) {
-    console.error('Failed to save user provider config:', error)
     if (error instanceof RequestPolicyError) {
       return NextResponse.json({ success: false, error: error.message }, { status: error.status })
     }
+    console.error('Failed to save user provider config')
     return NextResponse.json({ success: false, error: '保存个人模型配置失败' }, { status: 500 })
   }
 }
@@ -85,6 +91,10 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireAuth(request)
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+    }
+    const rateCheck = await checkRateLimit(`user-provider-config:${auth.user.id}`, { windowMs: 60000, maxRequests: 10 })
+    if (!rateCheck.allowed) {
+      return NextResponse.json(createRateLimitResponse(rateCheck), { status: rateLimitHttpStatus(rateCheck) })
     }
 
     const provider = request.nextUrl.searchParams.get('provider')

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, CheckCircle2, KeyRound, Loader2, Save, Trash2 } from 'lucide-react'
@@ -9,7 +9,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
-import { auth } from '@/lib/api'
 import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
 
 type ProviderConfigRow = {
@@ -72,6 +71,7 @@ export default function ProviderSettingsPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const [locale, setLocale] = useState<Locale>('zh')
+  const [localeReady, setLocaleReady] = useState(false)
   const text = copy[locale]
   const [providers, setProviders] = useState<ProviderConfigRow[]>([])
   const [formState, setFormState] = useState<ProviderFormState>({})
@@ -80,23 +80,19 @@ export default function ProviderSettingsPage() {
   const [removingProvider, setRemovingProvider] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const userId = user?.id
 
-  const authHeaders = (): Record<string, string> => {
-    const token = auth.getToken()
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }
-
-  const applyRows = (rows: ProviderConfigRow[]) => {
+  const applyRows = useCallback((rows: ProviderConfigRow[]) => {
     setProviders(rows)
     setFormState(Object.fromEntries(rows.map(row => [row.provider, { apiKey: '', baseURL: row.baseURL || '' }])))
-  }
+  }, [])
 
-  const loadProviders = async () => {
-    if (!user) return
+  const loadProviders = useCallback(async () => {
+    if (!userId) return
     setLoading(true)
     setError('')
     try {
-      const response = await fetch('/api/v1/user/provider-config', { headers: authHeaders() })
+      const response = await fetch('/api/v1/user/provider-config', { credentials: 'same-origin' })
       const payload = await response.json()
       if (!response.ok || !payload.success) {
         setError(payload.error || text.loadFailed)
@@ -108,20 +104,21 @@ export default function ProviderSettingsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [applyRows, text.loadFailed, userId])
 
   useEffect(() => {
     setLocale(detectLocaleFromSearch())
+    setLocaleReady(true)
   }, [])
 
   useEffect(() => {
-    if (authLoading) return
-    if (!user) {
+    if (authLoading || !localeReady) return
+    if (!userId) {
       router.push(withLocaleHref('/login', locale))
       return
     }
-    loadProviders()
-  }, [authLoading, user, locale])
+    void loadProviders()
+  }, [authLoading, loadProviders, locale, localeReady, router, userId])
 
   const saveProvider = async (provider: string) => {
     setSavingProvider(provider)
@@ -130,8 +127,9 @@ export default function ProviderSettingsPage() {
     try {
       const response = await fetch('/api/v1/user/provider-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, ...formState[provider] }),
+        credentials: 'same-origin',
       })
       const payload = await response.json()
       if (!response.ok || !payload.success) {
@@ -154,7 +152,7 @@ export default function ProviderSettingsPage() {
     try {
       const response = await fetch(`/api/v1/user/provider-config?provider=${encodeURIComponent(provider)}`, {
         method: 'DELETE',
-        headers: authHeaders(),
+        credentials: 'same-origin',
       })
       const payload = await response.json()
       if (!response.ok || !payload.success) {

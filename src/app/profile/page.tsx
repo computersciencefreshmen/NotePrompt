@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -27,15 +27,6 @@ import { api } from '@/lib/api'
 import { UserStats } from '@/types'
 import { toast } from '@/hooks/use-toast'
 
-const DEFAULT_USER_STATS: UserStats = {
-  total_prompts: 0,
-  total_folders: 0,
-  total_favorites: 0,
-  monthly_usage: 0,
-  ai_optimize_count: 0,
-  max_prompts: 50,
-}
-
 export default function ProfilePage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
@@ -47,6 +38,7 @@ export default function ProfilePage() {
   const [editMode, setEditMode] = useState(false)
   const [upgradeData, setUpgradeData] = useState<{
     currentType: string
+    programEnabled: boolean
     canUpgrade: boolean
     conditionsMet: number
     conditionsRequired: number
@@ -57,6 +49,37 @@ export default function ProfilePage() {
     username: '',
     email: ''
   })
+
+  const fetchUserStats = useCallback(async () => {
+    setLoading(true)
+    try {
+      const response = await api.user.getStats()
+      if (response.success && response.data) {
+        setStats(response.data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch user stats')
+      setStats(null)
+      toast({
+        title: '统计数据暂不可用',
+        description: '未使用占位数据覆盖真实状态，请稍后重试。',
+        variant: 'destructive',
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const fetchUpgradeData = useCallback(async () => {
+    try {
+      const response = await api.user.getUpgradeProgress()
+      if (response.success && response.data) {
+        setUpgradeData(response.data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch upgrade data:', error)
+    }
+  }, [])
 
   // 检查登录状态
   useEffect(() => {
@@ -70,40 +93,12 @@ export default function ProfilePage() {
         username: user.username,
         email: user.email
       })
-      fetchUserStats()
+      void fetchUserStats()
       if (user.user_type === 'free') {
-        fetchUpgradeData()
+        void fetchUpgradeData()
       }
     }
-  }, [user, authLoading, router])
-
-  const fetchUserStats = async () => {
-    if (!user) return
-
-    setLoading(true)
-    try {
-      const response = await api.user.getStats()
-      if (response.success && response.data) {
-        setStats(response.data)
-      }
-    } catch (error) {
-      console.warn('Failed to fetch user stats, using fallback stats:', error)
-      setStats(DEFAULT_USER_STATS)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchUpgradeData = async () => {
-    try {
-      const response = await api.user.getUpgradeProgress()
-      if (response.success && response.data) {
-        setUpgradeData(response.data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch upgrade data:', error)
-    }
-  }
+  }, [authLoading, fetchUpgradeData, fetchUserStats, router, user])
 
   const handleUpgrade = async () => {
     setUpgrading(true)
@@ -392,7 +387,7 @@ export default function ProfilePage() {
         </div>
 
         {/* Pro 升级进度 */}
-        {user.user_type === 'free' && upgradeData && (
+        {user.user_type === 'free' && upgradeData?.programEnabled && (
           <Card className="mt-6 border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30">
             <CardHeader>
               <CardTitle className="flex items-center text-amber-800 dark:text-amber-300">
@@ -400,7 +395,7 @@ export default function ProfilePage() {
                 升级到 Pro 版本
               </CardTitle>
               <p className="text-sm text-amber-600 dark:text-amber-400">
-                通过贡献内容即可免费升级，满足以下 {upgradeData.conditionsRequired} 项中的任意 {upgradeData.conditionsRequired} 项条件
+                通过贡献内容免费升级，需要同时满足以下全部 {upgradeData.conditionsRequired} 项条件
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -467,7 +462,7 @@ export default function ProfilePage() {
             <CardContent className="py-4">
               <div className="flex items-center">
                 <Crown className="h-5 w-5 mr-2 text-teal-600" />
-                <span className="font-medium text-teal-800 dark:text-teal-300">您已是 Pro 用户，享有无限制使用权限</span>
+                <span className="font-medium text-teal-800 dark:text-teal-300">您已是 Pro 用户，享有更高的有界月度 AI 配额与不限量提示词容量</span>
               </div>
             </CardContent>
           </Card>

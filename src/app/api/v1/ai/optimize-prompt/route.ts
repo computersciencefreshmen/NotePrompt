@@ -196,8 +196,6 @@ ${contextInstruction}
     try {
       if (effectiveProvider === 'local') {
         // 使用本地AI服务
-        console.log('尝试连接本地AI服务:', aiConfig.baseURL)
-        
         // 先测试连接
         try {
           const testResponse = await fetch(`${aiConfig.baseURL}/api/tags`, {
@@ -211,8 +209,6 @@ ${contextInstruction}
           }
           
           const testData = await testResponse.json()
-          console.log('可用模型:', testData.models?.map((m: { name: string }) => m.name) || [])
-          
           // 检查模型是否可用
           const availableModels = testData.models?.map((m: { name: string }) => m.name) || []
           if (!availableModels.includes(aiConfig.model)) {
@@ -220,7 +216,7 @@ ${contextInstruction}
           }
           
         } catch (testError) {
-          console.error('连接测试失败:', testError)
+          console.error('本地 AI 连接测试失败')
           throw new Error(`无法连接到本地AI服务: ${testError instanceof Error ? testError.message : '未知错误'}`)
         }
         
@@ -421,8 +417,7 @@ ${contextInstruction}
       return NextResponse.json(
         {
           success: false,
-          error: formattedError,
-          details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : 'Internal server error'
+          error: formattedError
         },
         { status: 500 }
       )

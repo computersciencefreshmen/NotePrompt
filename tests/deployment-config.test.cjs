@@ -37,6 +37,7 @@ test('production Compose fails closed on Redis and checks database readiness plu
 test('runtime image contains the migration runner without build-time secret files', () => {
   const dockerfile = read('Dockerfile')
   const dockerignore = read('.dockerignore')
+  const runnerImage = dockerfile.slice(dockerfile.indexOf('FROM ${NODE_IMAGE} AS runner'))
 
   assert.match(dockerfile, /COPY --from=builder \/app\/scripts\/mysql-migrate\.cjs/)
   assert.match(dockerfile, /COPY --from=builder \/app\/database\/migrations/)
@@ -46,6 +47,12 @@ test('runtime image contains the migration runner without build-time secret file
   assert.match(dockerfile, /tesseract-ocr-data-chi_sim/)
   assert.match(dockerfile, /PDFTOTEXT_PATH=\/usr\/bin\/pdftotext/)
   assert.match(dockerfile, /TESSERACT_PATH=\/usr\/bin\/tesseract/)
+  assert.match(runnerImage, /RUN rm -rf[\s\S]*\/usr\/local\/lib\/node_modules\/npm/)
+  assert.match(runnerImage, /\/usr\/local\/bin\/npm/)
+  assert.match(runnerImage, /\/usr\/local\/bin\/npx/)
+  assert.match(runnerImage, /test ! -e \/usr\/local\/lib\/node_modules\/npm/)
+  assert.match(runnerImage, /! command -v npm/)
+  assert.match(runnerImage, /! command -v npx/)
   assert.match(dockerignore, /\*\*\/\.env\*/)
   assert.match(dockerignore, /\*\*\/\.provider-config\*\.local\.json/)
   assert.match(dockerignore, /^_scripts\/$/m)

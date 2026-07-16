@@ -35,6 +35,17 @@ RUN apk add --no-cache \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-chi_sim
 
+# The final container executes Node directly and never installs packages.
+# Remove npm/npx from the runtime layer to shrink the attack surface and keep
+# vulnerabilities in package-manager-only dependencies out of production.
+RUN rm -rf \
+    /usr/local/lib/node_modules/npm \
+    /usr/local/bin/npm \
+    /usr/local/bin/npx
+RUN test ! -e /usr/local/lib/node_modules/npm \
+    && ! command -v npm \
+    && ! command -v npx
+
 ARG APP_VERSION=unknown
 LABEL org.opencontainers.image.title="Note Prompt" \
       org.opencontainers.image.revision="${APP_VERSION}"

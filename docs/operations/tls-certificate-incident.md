@@ -212,3 +212,48 @@ docker network inspect mysql8_default --format '{{.Name}}'
 ## 7. 回滚
 
 deploy hook 在 `nginx -t` 失败时自动恢复上一份证书。若新证书本身需要人工回退，只能恢复一份仍有效、私钥匹配、来源受控且覆盖两个域名的证书，再运行 `nginx -t` 和 reload；不得生成自签名证书冒充恢复。独立 ACME 边缘应继续运行，以免回滚再次破坏后续签发入口。
+
+## 8. 2026-07-16 实际事故记录
+
+### 8.1 现场证据
+
+服务器侧检查排除了“ECS 时钟错误”和“Certbot 没有续签”：
+
+- 2026-07-16 05:21 UTC，服务器时钟正确；
+- `certbot-renew.timer` 已启用并正常调度；
+- Certbot 源证书在 2026-07-06 签发，覆盖 `noteprompt.cn`、`www.noteprompt.cn`，有效至 2026-10-04；
+- Nginx 实际提供的仍是 2026-03-02 签发、2026-05-31 已过期的旧证书；
+- 旧 Compose 把 `/opt/note-prompt/nginx/ssl` 挂载到 `/etc/nginx/ssl`，并未使用新部署规范中的 `/opt/note-prompt-secrets/tls`；
+- Certbot 源证书成功更新后，没有 deploy hook 把它同步到旧挂载目录并 reload Nginx；
+- 业务应用容器从 2026-05-28 起处于 `Exited (0)`，重启策略为 `no`，镜像仍是可变标签 `note-prompt:latest`；
+- Nginx 一直运行，因此 HTTP 返回 301，但 HTTPS 转发到已停止的应用时返回 502；
+- MySQL 3306 被发布到 `0.0.0.0`/`::`，属于必须单独处置的公网暴露风险。
+
+根因因此确定为两个独立但同时存在的问题：
+
+1. **证书发布链断裂**：Certbot 续签成功，但旧 Nginx 证书复制件没有更新和 reload；
+2. **业务进程没有自愈**：应用被正常停止后，由于 `restart=no`，六周内没有自动恢复。
+
+### 8.2 恢复动作与结果
+
+2026-07-16 05:28 UTC 执行了受控恢复：
+
+1. 启动原有应用容器，不重建镜像、不修改数据库；
+2. 校验 Certbot 源证书至少七天有效、覆盖两个域名，并验证证书公钥与私钥公钥一致；
+3. 将旧证书备份到 `/root/note-prompt-tls-backup-20260716T052818Z`；
+4. 把新证书成对暂存并安装到旧 Nginx 的真实挂载目录；
+5. `nginx -t` 成功，仅报告旧版 `listen ... http2` 指令弃用警告；
+6. 向 Nginx 发送 HUP，重新加载证书；
+7. 本机 SNI 验证确认 Nginx 已提供有效至 2026-10-04 的新证书；
+8. 应用容器保持 `running`，本机 HTTPS 从 502 恢复为 HTTP 200。
+
+这是**事故恢复**，不是新版本发布。恢复后的实例仍运行旧 `latest` 镜像和旧 Compose。必须在单独变更窗口完成本仓库的 commit-SHA 部署、迁移检查、独立 ACME 边缘、deploy hook、`unless-stopped` 重启策略和公网验收，不能把本次手工恢复当作长期完成状态。
+
+### 8.3 待关闭事项
+
+- 从用户浏览器或独立公网探针确认 HTTPS 200 与新证书；仅本机回环验证不能证明阿里云安全组、EIP、CDN/WAF 和公网路由均正常；
+- 部署 `5918a00` 或其后续已审核 commit，迁移到本文档描述的独立 ACME/TLS 架构；
+- 完成 `certbot renew --dry-run`，并验证真实续签后 deploy hook 会更新实际提供的证书；
+- 用完整 Git SHA 镜像替换 `note-prompt:latest`，将应用重启策略改为 `unless-stopped`；
+- 在确认应用通过 Docker/VPC 私网访问 MySQL 后，移除宿主机 3306 公网发布并关闭安全组/防火墙规则；
+- 在数据库备份、回滚方案和维护窗口就绪后安装 ECS 安全更新，不在网站恢复过程中直接执行系统级升级。

@@ -3,13 +3,49 @@ import crypto from 'crypto';
 
 // 邮件配置接口
 interface EmailConfig {
-  host?: string;
-  port?: number;
-  secure?: boolean;
-  auth?: {
+  host: string;
+  port: number;
+  secure: boolean;
+  auth: {
     user: string;
     pass: string;
   };
+}
+
+interface EmailEnvironment {
+  EMAIL_HOST?: string;
+  EMAIL_PORT?: string;
+  EMAIL_SECURE?: string;
+  EMAIL_USER?: string;
+  EMAIL_PASS?: string;
+  EMAIL_FROM?: string;
+  EMAIL_FROM_NAME?: string;
+}
+
+type MailTransporter = Pick<nodemailer.Transporter, 'sendMail'>;
+type EmailEnvironmentProvider = () => EmailEnvironment;
+type TransporterFactory = (config: EmailConfig) => MailTransporter;
+
+interface EmailClient {
+  transporter: MailTransporter;
+  fromEmail: string;
+  fromName: string;
+}
+
+function readEmailEnvironment(): EmailEnvironment {
+  return {
+    EMAIL_HOST: process.env.EMAIL_HOST,
+    EMAIL_PORT: process.env.EMAIL_PORT,
+    EMAIL_SECURE: process.env.EMAIL_SECURE,
+    EMAIL_USER: process.env.EMAIL_USER,
+    EMAIL_PASS: process.env.EMAIL_PASS,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+    EMAIL_FROM_NAME: process.env.EMAIL_FROM_NAME,
+  };
+}
+
+function createMailTransporter(config: EmailConfig): MailTransporter {
+  return nodemailer.createTransport(config);
 }
 
 // 验证码邮件模板
@@ -24,47 +60,64 @@ interface VerificationEmailData {
  * 用于发送邮箱验证相关邮件
  */
 export class EmailService {
-  private transporter: nodemailer.Transporter;
-  private fromEmail: string;
-  private fromName: string;
+  private client: EmailClient | null = null;
+  private readonly environmentProvider: EmailEnvironmentProvider;
+  private readonly transporterFactory: TransporterFactory;
 
-  constructor() {
-    // 从环境变量读取邮件配置
-    const emailHost = process.env.EMAIL_HOST || 'smtp.qq.com';
-    const emailPort = parseInt(process.env.EMAIL_PORT || '587');
-    const emailUser = process.env.EMAIL_USER || '';
-    const emailPass = process.env.EMAIL_PASS || '';
-    const emailSecure = process.env.EMAIL_SECURE === 'true';
-
-    // 发件人信息
-    this.fromEmail = process.env.EMAIL_FROM || emailUser;
-    this.fromName = process.env.EMAIL_FROM_NAME || 'Note Prompt';
-
-    // 创建邮件传输器
-    this.transporter = nodemailer.createTransport({
-      host: emailHost,
-      port: emailPort,
-      secure: emailSecure, // true for 465, false for other ports
-      auth: {
-        user: emailUser,
-        pass: emailPass,
-      },
-    });
-
-    // 验证配置
-    this.verifyConfig();
+  constructor(
+    environmentProvider: EmailEnvironmentProvider = readEmailEnvironment,
+    transporterFactory: TransporterFactory = createMailTransporter,
+  ) {
+    this.environmentProvider = environmentProvider;
+    this.transporterFactory = transporterFactory;
   }
 
-  /**
-   * 验证邮件配置
-   */
-  private async verifyConfig(): Promise<void> {
-    try {
-      await this.transporter.verify();
+  private getClient(): EmailClient {
+    if (this.client) return this.client;
 
-    } catch (error) {
-      console.warn('邮件服务配置验证失败:', error);
-      console.warn('请检查环境变量 EMAIL_HOST, EMAIL_USER, EMAIL_PASS');
+    const environment = this.environmentProvider();
+    const emailUser = environment.EMAIL_USER?.trim() || '';
+    const emailPass = environment.EMAIL_PASS || '';
+    if (!emailUser || !emailPass) {
+      throw new Error('Email delivery is not configured');
+    }
+
+    const emailPort = Number(environment.EMAIL_PORT || '587');
+    if (!Number.isSafeInteger(emailPort) || emailPort <= 0 || emailPort > 65535) {
+      throw new Error('Email delivery is not configured');
+    }
+
+    const secureValue = environment.EMAIL_SECURE?.trim().toLowerCase() || 'false';
+    if (secureValue !== 'true' && secureValue !== 'false') {
+      throw new Error('Email delivery is not configured');
+    }
+
+    this.client = {
+      transporter: this.transporterFactory({
+        host: environment.EMAIL_HOST?.trim() || 'smtp.qq.com',
+        port: emailPort,
+        secure: secureValue === 'true',
+        auth: { user: emailUser, pass: emailPass },
+      }),
+      fromEmail: environment.EMAIL_FROM?.trim() || emailUser,
+      fromName: environment.EMAIL_FROM_NAME?.trim() || 'Note Prompt',
+    };
+
+    return this.client;
+  }
+
+  private async deliver(to: string, subject: string, html: string): Promise<boolean> {
+    try {
+      const client = this.getClient();
+      await client.transporter.sendMail({
+        from: `"${client.fromName}" <${client.fromEmail}>`,
+        to,
+        subject,
+        html,
+      });
+      return true;
+    } catch {
+      throw new Error('邮件发送失败，请稍后重试');
     }
   }
 
@@ -94,19 +147,7 @@ export class EmailService {
     const subject = '【Note Prompt】邮箱验证码';
     const html = this.getVerificationEmailTemplate(username, code);
 
-    try {
-      const info = await this.transporter.sendMail({
-        from: `"${this.fromName}" <${this.fromEmail}>`,
-        to,
-        subject,
-        html,
-      });
-
-      return true;
-    } catch (error) {
-      console.error('验证码邮件发送失败:', error);
-      throw new Error('邮件发送失败，请稍后重试');
-    }
+    return this.deliver(to, subject, html);
   }
 
   /**
@@ -174,19 +215,7 @@ export class EmailService {
     const subject = '【Note Prompt】密码重置验证码';
     const html = this.getPasswordResetEmailTemplate(username, code);
 
-    try {
-      await this.transporter.sendMail({
-        from: `"${this.fromName}" <${this.fromEmail}>`,
-        to,
-        subject,
-        html,
-      });
-
-      return true;
-    } catch (error) {
-      console.error('密码重置邮件发送失败:', error);
-      throw new Error('邮件发送失败，请稍后重试');
-    }
+    return this.deliver(to, subject, html);
   }
 
   /**
@@ -284,16 +313,8 @@ export class EmailService {
     `;
 
     try {
-      const info = await this.transporter.sendMail({
-        from: `"${this.fromName}" <${this.fromEmail}>`,
-        to,
-        subject,
-        html,
-      });
-
-      return true;
-    } catch (error) {
-      console.error('密码重置邮件发送失败:', error);
+      return await this.deliver(to, subject, html);
+    } catch {
       return false;
     }
   }

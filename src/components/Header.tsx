@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/contexts/AuthContext'
-import { User, Settings, LogOut, Star, FileText, Shield, Palette, Wand2 } from 'lucide-react'
+import { User, Settings, LogOut, Star, FileText, Shield, Palette, Wand2, Menu, X } from 'lucide-react'
 import ThemeToggle from '@/components/ThemeToggle'
 import GlobalSearch from '@/components/GlobalSearch'
 import { visualStyleOptions, VisualStyle } from '@/config/visual-styles'
@@ -50,6 +50,13 @@ const headerCopy = {
     logout: '退出登录',
     login: '登录',
     register: '注册',
+    primaryNavigation: '主导航',
+    openNavigation: '打开导航菜单',
+    closeNavigation: '关闭导航菜单',
+    accountMenu: '账户菜单',
+    language: '语言',
+    chinese: '切换为中文',
+    english: 'Switch to English',
     roles: { admin: '管理员', pro: '专业版', free: '免费版' },
   },
   en: {
@@ -66,6 +73,13 @@ const headerCopy = {
     logout: 'Sign out',
     login: 'Log in',
     register: 'Sign up',
+    primaryNavigation: 'Primary navigation',
+    openNavigation: 'Open navigation menu',
+    closeNavigation: 'Close navigation menu',
+    accountMenu: 'Account menu',
+    language: 'Language',
+    chinese: '切换为中文',
+    english: 'Switch to English',
     roles: { admin: 'Admin', pro: 'Pro', free: 'Free' },
   },
 }
@@ -74,12 +88,47 @@ export default function Header() {
   const { user, logout, loading } = useAuth()
   const { visualStyle, setVisualStyle } = useUISettings()
   const router = useRouter()
+  const pathname = usePathname()
   const [locale, setLocale] = useState<Locale>('zh')
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
   const copy = headerCopy[locale]
 
   useEffect(() => {
     setLocale(detectLocaleFromSearch())
   }, [])
+
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [pathname])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false)
+        mobileMenuButtonRef.current?.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [mobileMenuOpen])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const frame = window.requestAnimationFrame(() => {
+      const currentLink = mobileMenuRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+      const firstControl = mobileMenuRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')
+      const focusTarget = currentLink ?? firstControl
+      focusTarget?.focus()
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [mobileMenuOpen])
 
   const href = (path: string) => withLocaleHref(path, locale)
 
@@ -88,8 +137,8 @@ export default function Header() {
     updateLocaleInAddressBar(nextLocale)
   }
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     router.push(href('/'))
   }
 
@@ -104,9 +153,19 @@ export default function Header() {
   }
 
   const navLinkClass = `text-gray-700 dark:text-gray-300 transition-colors ${styleAccentClass[visualStyle]}`
+  const navigationItems = [
+    { path: '/public-prompts', label: copy.publicPrompts },
+    { path: '/public-folders', label: copy.publicFolders },
+    ...(featureFlags.promptOptimizerV2 ? [{ path: '/optimizer', label: copy.optimizer }] : []),
+    ...(user ? [
+      { path: '/prompts', label: copy.myPrompts },
+      { path: '/favorites', label: copy.favorites },
+    ] : []),
+  ]
+  const isCurrentPath = (path: string) => pathname === path || pathname.startsWith(`${path}/`)
 
   return (
-    <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+    <header className="relative z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo and Navigation */}
@@ -115,56 +174,47 @@ export default function Header() {
               <span className="note-prompt-brand text-xl font-bold text-teal-600 dark:text-teal-400">Note Prompt</span>
             </Link>
 
-            <nav className="hidden md:flex space-x-6">
-              <Link
-                href={href('/public-prompts')}
-                className={navLinkClass}
-              >
-                {copy.publicPrompts}
-              </Link>
-              <Link
-                href={href('/public-folders')}
-                className={navLinkClass}
-              >
-                {copy.publicFolders}
-              </Link>
-              {featureFlags.promptOptimizerV2 && (
+            <nav aria-label={copy.primaryNavigation} className="hidden md:flex space-x-6">
+              {navigationItems.map(item => (
                 <Link
-                  href={href('/optimizer')}
-                  className={navLinkClass}
+                  key={item.path}
+                  href={href(item.path)}
+                  aria-current={isCurrentPath(item.path) ? 'page' : undefined}
+                  className={`${navLinkClass} ${isCurrentPath(item.path) ? 'font-semibold' : ''}`}
                 >
-                  {copy.optimizer}
+                  {item.label}
                 </Link>
-              )}
-              {user && (
-                <>
-                  <Link
-                    href={href('/prompts')}
-                    className={navLinkClass}
-                  >
-                    {copy.myPrompts}
-                  </Link>
-                  <Link
-                    href={href('/favorites')}
-                    className={navLinkClass}
-                  >
-                    {copy.favorites}
-                  </Link>
-                </>
-              )}
+              ))}
             </nav>
           </div>
 
           {/* User Actions */}
           <div className="flex items-center space-x-2">
+            <button
+              ref={mobileMenuButtonRef}
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 md:hidden"
+              aria-label={mobileMenuOpen ? copy.closeNavigation : copy.openNavigation}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-primary-navigation"
+              onClick={() => setMobileMenuOpen(open => !open)}
+            >
+              {mobileMenuOpen ? <X className="h-4 w-4" aria-hidden="true" /> : <Menu className="h-4 w-4" aria-hidden="true" />}
+            </button>
             <GlobalSearch locale={locale} />
             <ThemeToggle />
-            <div className="hidden items-center rounded-full border border-gray-200 bg-gray-50 p-0.5 text-xs dark:border-gray-700 dark:bg-gray-800 sm:flex">
+            <div
+              className="hidden items-center rounded-full border border-gray-200 bg-gray-50 p-0.5 text-xs dark:border-gray-700 dark:bg-gray-800 md:flex"
+              role="group"
+              aria-label={copy.language}
+            >
               {(['zh', 'en'] as Locale[]).map(item => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => handleLocaleChange(item)}
+                  aria-label={item === 'zh' ? copy.chinese : copy.english}
+                  aria-pressed={locale === item}
                   className={`rounded-full px-2 py-1 font-medium transition-colors ${locale === item ? 'bg-teal-600 text-white dark:bg-teal-400 dark:text-gray-950' : 'text-gray-500 hover:text-teal-700 dark:text-gray-400 dark:hover:text-teal-200'}`}
                 >
                   {item === 'zh' ? 'ZH' : 'EN'}
@@ -172,11 +222,15 @@ export default function Header() {
               ))}
             </div>
             {loading ? (
-              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" />
+              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" aria-hidden="true" />
             ) : user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                  <Button
+                    variant="ghost"
+                    className="relative h-8 w-8 rounded-full"
+                    aria-label={`${copy.accountMenu}: ${getUserDisplayName()}`}
+                  >
                     <Avatar className="h-8 w-8">
                       <AvatarFallback className="bg-blue-100 text-blue-600">
                         {getUserInitials()}
@@ -289,7 +343,7 @@ export default function Header() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="flex items-center space-x-3">
+              <div className="hidden items-center space-x-3 md:flex">
                 <Button variant="ghost" asChild>
                   <Link href={href('/login')}>{copy.login}</Link>
                 </Button>
@@ -300,6 +354,54 @@ export default function Header() {
             )}
           </div>
         </div>
+      </div>
+      <div
+        ref={mobileMenuRef}
+        id="mobile-primary-navigation"
+        className={`${mobileMenuOpen ? 'block' : 'hidden'} border-t border-gray-200 bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-900 md:hidden`}
+      >
+        <nav aria-label={copy.primaryNavigation} className="mx-auto max-w-7xl space-y-1">
+          {navigationItems.map(item => (
+            <Link
+              key={item.path}
+              href={href(item.path)}
+              aria-current={isCurrentPath(item.path) ? 'page' : undefined}
+              className={`block rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800 ${isCurrentPath(item.path) ? 'bg-gray-100 font-semibold dark:bg-gray-800' : ''}`}
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              {item.label}
+            </Link>
+          ))}
+
+          <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-800">
+            <div className="mb-2 px-3 text-xs font-medium text-gray-500 dark:text-gray-400">{copy.language}</div>
+            <div className="flex gap-2 px-3" role="group" aria-label={copy.language}>
+              {(['zh', 'en'] as Locale[]).map(item => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => handleLocaleChange(item)}
+                  aria-label={item === 'zh' ? copy.chinese : copy.english}
+                  aria-pressed={locale === item}
+                  className={`min-h-9 rounded-md px-3 text-sm font-medium ${locale === item ? 'bg-teal-600 text-white dark:bg-teal-400 dark:text-gray-950' : 'border border-gray-200 text-gray-600 dark:border-gray-700 dark:text-gray-300'}`}
+                >
+                  {item === 'zh' ? 'ZH' : 'EN'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {!user && !loading && (
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
+              <Button variant="outline" asChild>
+                <Link href={href('/login')} onClick={() => setMobileMenuOpen(false)}>{copy.login}</Link>
+              </Button>
+              <Button asChild>
+                <Link href={href('/register')} onClick={() => setMobileMenuOpen(false)}>{copy.register}</Link>
+              </Button>
+            </div>
+          )}
+        </nav>
       </div>
     </header>
   )

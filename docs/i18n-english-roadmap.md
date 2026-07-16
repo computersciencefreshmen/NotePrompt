@@ -12,8 +12,8 @@ The first English version is implemented as a low-risk, frontend/API compatible 
 - Landing copy, navigation, pricing, V2 update copy, stats, product preview, and footer roadmap are localized.
 - Public prompt library supports `?lang=en`.
 - English prompt library uses curated built-in templates from `src/data/english-featured-prompts.ts`.
-- The public prompt API supports `lang=en` and returns English featured prompts without changing the database schema.
-- English template cards use copy behavior instead of database import, because these templates are not yet persisted as public prompt rows.
+- The public prompt API supports `lang=en` and returns English featured prompts from the curated catalog boundary.
+- Curated IDs, metrics, and favorites are deliberately separate from user-owned `public_prompts`; English template cards can be copied or imported without consuming a business AUTO_INCREMENT ID.
 
 This approach gives users a usable English surface immediately while keeping production database risk low.
 
@@ -35,7 +35,7 @@ Why this phase matters:
 - Avoids schema churn while the product direction is still changing.
 - Lets us validate English copy, prompt categories, and template quality before permanent import.
 
-### Phase 2: Persist English prompts in the database
+### Phase 2: Add locale metadata to user publications
 
 Add fields to `public_prompts`:
 - `locale VARCHAR(10) DEFAULT 'zh-CN'`
@@ -49,9 +49,9 @@ Add indexes:
 
 Migration strategy:
 - Mark existing prompts as `zh-CN`.
-- Seed reviewed English prompts as `en`.
+- Keep built-in reviewed templates in the curated catalog. Do not seed their fixed IDs into `public_prompts`.
 - Update public prompt API to filter by `locale` rather than static data.
-- Enable import for English prompts once they are database rows.
+- Continue importing curated content directly into the user's private library.
 
 ### Phase 3: Route-level i18n
 

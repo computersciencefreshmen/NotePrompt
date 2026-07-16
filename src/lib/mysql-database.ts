@@ -29,7 +29,7 @@ type PromptVersionRow = DbRow & { title?: string; content?: string };
 type SchemaColumnRow = { TABLE_NAME: string; COLUMN_NAME: string };
 type MySQLParameter = string | number | bigint | boolean | Date | null | Buffer | Uint8Array;
 type SnapshotQuery = (sql: string, params?: unknown[]) => Promise<{ rows: unknown }>;
-const MYSQL_DB_INSTANCE_VERSION = 6;
+const MYSQL_DB_INSTANCE_VERSION = 7;
 
 function normalizeMySQLParameter(value: unknown): MySQLParameter {
   if (value === undefined || value === null) return null;
@@ -87,6 +87,26 @@ class MySQLDB {
       this.schemaValidation = this.validateSchema();
     }
     return this.schemaValidation;
+  }
+
+  async checkReadiness() {
+    const host = process.env.MYSQL_HOST;
+    const user = process.env.MYSQL_USER;
+    const password = process.env.MYSQL_PASSWORD;
+    const database = process.env.MYSQL_DATABASE;
+    const port = Number.parseInt(process.env.MYSQL_PORT || '3306', 10);
+
+    if (!host || !user || !password || !database || !Number.isInteger(port)) {
+      throw new Error('Database readiness configuration is incomplete');
+    }
+    if (user.trim().toLowerCase() === 'root') {
+      throw new Error('Database readiness refuses the root account');
+    }
+
+    // Reuse the application pool so repeated readiness probes cannot create an
+    // independent connection storm. mysql2 releases the pooled connection when
+    // the query settles, including timeout and error paths.
+    await this.pool.query({ sql: 'SELECT 1', timeout: 1500 });
   }
 
   private async validateSchema() {

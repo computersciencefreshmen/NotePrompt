@@ -11,7 +11,7 @@
 - 应用不得使用 MySQL `root`；3306 和 6379 不得暴露到公网。
 - 长期运行的应用账号只有 DML 权限；DDL 只由一次性迁移账号执行，两个账号不得相同。
 - 生产环境必须使用私网 Redis，且明确禁用内存限流降级。
-- `/api/health` 是数据库 readiness；Compose healthcheck 在此基础上还核对 Redis 与 commit version。旧 `/api/v1/health-check` 与数据库检查完全相同，不再是固定成功的假健康检查。
+- `/api/live` 是可公开探测、完全不访问依赖的应用 liveness。`/api/health` 是数据库 readiness；旧 `/api/v1/health-check` 与它保持兼容。公网 Nginx 对两个 readiness 地址无条件返回 404；readiness 只允许从应用容器内部访问，Compose 直接探测并额外核对 Redis 与 commit version。
 - Nginx 只有在应用 readiness 通过后才启动。
 
 `database/migrations/*.cjs` 是唯一 schema 事实来源。请求处理期间不得建表、改列或回填；生产应用账号不需要且不得持有 DDL 权限。
@@ -215,7 +215,7 @@ openssl pkey -in /opt/note-prompt-secrets/tls/privkey.pem -pubout | sha256sum
 
 openssl s_client -connect noteprompt.cn:443 -servername noteprompt.cn </dev/null 2>/dev/null \
   | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
-curl --fail --show-error --silent --tlsv1.2 https://noteprompt.cn/api/health
+curl --fail --show-error --silent --tlsv1.2 https://noteprompt.cn/api/live
 ```
 
 前两条公钥摘要必须相同，`-checkend 604800` 必须成功。当前仓库无法证明线上证书有效；这些检查必须在真实部署主机和公网链路执行并保存变更记录。
@@ -346,8 +346,11 @@ docker compose -f compose.acme.yml \
 docker compose --env-file /opt/note-prompt-secrets/runtime.env ps
 
 curl -fsS --max-time 15 http://127.0.0.1/health
-curl -fsS --max-time 15 https://noteprompt.cn/api/health
-curl -fsS --max-time 15 https://noteprompt.cn/api/v1/health-check
+docker compose --env-file /opt/note-prompt-secrets/runtime.env exec -T note-prompt-app \
+  node -e "(async()=>{for(const p of ['/api/health','/api/v1/health-check']){const r=await fetch('http://127.0.0.1:3000'+p,{cache:'no-store'});const b=await r.json();if(!r.ok||b.status!=='ready')throw new Error(p)}})().catch(()=>process.exit(1))"
+curl -fsS --max-time 15 https://noteprompt.cn/api/live
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://noteprompt.cn/api/health)" = "404"
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://noteprompt.cn/api/v1/health-check)" = "404"
 curl -fsSI --max-time 15 https://noteprompt.cn/
 
 docker compose --env-file /opt/note-prompt-secrets/runtime.env exec -T note-prompt-app \
@@ -359,7 +362,7 @@ docker inspect "$APP_CONTAINER_ID" \
   --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
-两个 API 健康地址应返回相同的 `status: ready`、`checks.database: up` 和完整当前 commit `version`。应用容器 healthcheck 同时核对这些字段、`APP_VERSION` 和 Redis `PING`，而非只接受任意 HTTP 200。数据库不可用时 API 必须返回 HTTP 503；数据库或 Redis 不可用、版本不符时 Compose 都会把应用标记为 unhealthy，Nginx 初始启动不会把它当成可用版本。生产限流不允许退回进程内存。
+应用容器内的两个 readiness 地址应返回相同的 `status: ready`、`checks.database: up` 和完整当前 commit `version`；公网边缘必须对两个地址都返回 404。`/api/live` 只证明应用进程能够响应，不读取数据库、Redis 或模型供应商。应用容器 healthcheck 同时核对 readiness 字段、`APP_VERSION` 和 Redis `PING`，而非只接受任意 HTTP 200。数据库不可用时容器内 readiness 必须返回 HTTP 503；数据库或 Redis 不可用、版本不符时 Compose 都会把应用标记为 unhealthy，Nginx 初始启动不会把它当成可用版本。生产限流不允许退回进程内存。
 
 禁止用 `docker exec ... env` 排障，因为它会把全部运行时秘密写入终端或日志。只检查非敏感单项配置，或直接使用 readiness。
 
@@ -464,11 +467,13 @@ docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --tail 200 n
 
 ```bash
 git rev-parse HEAD
-APP_CONTAINER_ID="$(docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q note-prompt-app)"
-test -n "$APP_CONTAINER_ID"
+APP_CONTAINER_IDS="$(docker ps --filter label=com.docker.compose.service=note-prompt-app --format '{{.ID}}')"
+test "$(printf '%s\n' "$APP_CONTAINER_IDS" | sed '/^$/d' | wc -l)" -eq 1
+APP_CONTAINER_ID="$APP_CONTAINER_IDS"
 docker inspect "$APP_CONTAINER_ID" \
   --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
-curl -fsS https://noteprompt.cn/api/health
+docker exec "$APP_CONTAINER_ID" \
+  node -e "fetch('http://127.0.0.1:3000/api/health',{cache:'no-store'}).then(async r=>{const b=await r.json();if(!r.ok)process.exitCode=1;console.log(JSON.stringify(b))})"
 ```
 
 四处版本必须一致；否则停止发布并重新按第 5、6 节构建部署。

@@ -28,6 +28,8 @@ The workflow in [`.github/workflows/release-quality.yml`](../../.github/workflow
 
 The repository history predating the credential cleanup contains deleted operational scripts that were already classified as sensitive. The full-history Gitleaks job is intentionally fail-closed until the owners complete credential rotation and the coordinated Stage 1C history rewrite. Do not make CI green by printing findings, adding fingerprints to an ignore file, scanning only the working tree, or weakening `Release gate`.
 
+The operational source of truth for that incident is [Credential exposure recovery](../operations/credential-exposure-recovery.md). A green checkout job alone cannot prove that GitHub pull-request refs, forks, cached views, Actions artifacts, or other derived stores were cleaned.
+
 After rotation and the coordinated force-push:
 
 1. Re-clone the repository instead of pulling the rewritten history.

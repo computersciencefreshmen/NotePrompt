@@ -86,8 +86,8 @@ Route adapters only parse HTTP, authenticate, validate with Zod, call an applica
 | --- | --- | --- | --- |
 | 0 | `security: isolate public liveness from private readiness` | Complete at `c40b9d8` | Public liveness works, public readiness is 404, private readiness and cache tests pass |
 | 1A | `docs: define SOTA product and architecture baseline` | Complete at `3892108` | Product, design, plan, ADRs reviewed and documentation tests pass |
-| 1B | `ci: enforce release quality and security gates` | Implemented; blocked on 1C history cleanup | Node 24 lint/test/build, real MySQL migration, Docker build, audit, Gitleaks, and Trivy enforced |
-| 1C | Credential rotation and full-history rewrite | External security window | All affected credentials revoked, all-history Gitleaks clean, coordinated force-push complete |
+| 1B | `ci: enforce release quality and security gates` | Complete at `f1c417f`; CI follow-ups through `49aa2a8` | Node 24 lint/test/build, real MySQL migration, Docker build, audit, Compose, Gitleaks, and both Trivy scans enforced; only the intentional Stage 1C history gate is red |
+| 1C | Credential rotation and full-history rewrite | [Runbook complete](../operations/credential-exposure-recovery.md); external security window required | All affected credentials revoked, all-history Gitleaks clean, coordinated force-push and derived-store cleanup complete |
 | 2A | `core: give publications stable source identity` | Pending | Migration 010 passes empty, legacy, and replay tests; same-source publish is atomic and idempotent |
 | 2B | `security: separate moderation from private content` | Pending | Cross-user and administrator privacy tests pass |
 | 2C | `core: canonicalize prompt collections` | Pending | Canonical relation is active, legacy projection containment and same-tenant integrity stay clean, and no supported code depends on `folder_id` |

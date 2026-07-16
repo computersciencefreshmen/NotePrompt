@@ -1,0 +1,327 @@
+name: Release Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  quality:
+    name: Node quality and production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Use Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Keep lint and build sequential: both use generated .next types.
+      - name: Lint and type-check
+        run: npm run lint
+
+      - name: Run the complete unit and policy test suite
+        run: npm test
+
+      - name: Build the production application
+        run: npm run build
+
+      - name: Reject runtime configuration in the standalone output
+        run: |
+          mapfile -t runtime_configs < <(
+            find .next/standalone -type f \
+              \( -name '.env*' -o -name '.provider-config*.local.json' \) \
+              -print
+          )
+          if (( ${#runtime_configs[@]} > 0 )); then
+            printf 'Runtime configuration entered the standalone build:\n' >&2
+            printf '  %s\n' "${runtime_configs[@]}" >&2
+            exit 1
+          fi
+
+      - name: Validate the offline migration plan
+        run: npm run db:plan
+
+  mysql-migrations:
+    name: Empty MySQL 8.4 migration replay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.4.10@sha256:d36d39a64cd12a5c1cc9e6aa2bfb5f8d4c81a2f6586e0a04a9ae13939db02209
+        env:
+          MYSQL_ROOT_PASSWORD: aaaaaaaaaaaaaaaa
+          MYSQL_DATABASE: note_prompt_migration_smoke
+          MYSQL_USER: note_prompt_migrator
+          MYSQL_PASSWORD: bbbbbbbbbbbbbbbb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Use Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Apply every migration twice and verify the schema contract
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: "3306"
+          MYSQL_MIGRATION_TEST_DATABASE: note_prompt_migration_smoke
+          MYSQL_USER: note_prompt_migrator
+          MYSQL_PASSWORD: bbbbbbbbbbbbbbbb
+        run: npm run test:migrations
+
+  dependency-security:
+    name: Production dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Use Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Reject high or critical production advisories
+        run: npm audit --omit=dev --audit-level=high
+
+  compose-config:
+    name: Compose configuration validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Render production and ACME Compose configurations
+        env:
+          IMAGE_REPOSITORY: note-prompt-ci
+          IMAGE_TAG: ${{ github.sha }}
+          MIGRATION_IMAGE_TAG: ${{ github.sha }}
+          MYSQL_HOST: mysql
+          MYSQL_PORT: "3306"
+          MYSQL_DATABASE: note_prompt_ci
+          MYSQL_MIGRATION_USER: note_prompt_migrator
+          MYSQL_MIGRATION_PASSWORD: aaaaaaaaaaaaaaaa
+          MYSQL_USER: note_prompt_app
+          MYSQL_PASSWORD: bbbbbbbbbbbbbbbb
+          REDIS_URL: redis://redis:6379/0
+          JWT_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          PROVIDER_KEY_ENCRYPTION_SECRET: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          VERIFICATION_CODE_SECRET: cccccccccccccccccccccccccccccccc
+          TLS_CERT_DIR: ./nginx/ssl
+          CERTBOT_WEBROOT: ./certbot/www
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f compose.acme.yml config --quiet
+
+  gitleaks-history:
+    name: Full-history secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out every reachable commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Zero fetch depth obtains all branch and tag history before the
+          # checkout action removes its temporary read-only credentials.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan all refs without printing secret values
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/repo" \
+            --workdir /repo \
+            --env GIT_CONFIG_COUNT=1 \
+            --env GIT_CONFIG_KEY_0=safe.directory \
+            --env GIT_CONFIG_VALUE_0=/repo \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git . --log-opts="--all HEAD" --redact --no-banner --no-color
+
+  trivy-filesystem:
+    name: Source and configuration vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Create report directory
+        run: mkdir -p reports
+
+      - name: Reject high or critical source findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          skip-dirs: .git,node_modules,.next
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+          format: json
+          output: reports/trivy-filesystem.json
+
+      - name: Preserve the filesystem scan report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-filesystem-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/trivy-filesystem.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  container-security:
+    name: Immutable image build and vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build the exact commit without pushing it
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: note-prompt-ci:${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          provenance: false
+
+      - name: Verify the OCI revision label
+        run: |
+          revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "note-prompt-ci:${GITHUB_SHA}")"
+          test "${revision}" = "${GITHUB_SHA}"
+
+      - name: Create report directory
+        run: mkdir -p reports
+
+      - name: Reject high or critical image findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_EXIT_ON_EOL: "1"
+        with:
+          scan-type: image
+          image-ref: note-prompt-ci:${{ github.sha }}
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+          format: json
+          output: reports/trivy-image.json
+
+      - name: Preserve the image scan report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/trivy-image.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  release-gate:
+    name: Release gate
+    if: ${{ always() }}
+    needs:
+      - quality
+      - mysql-migrations
+      - dependency-security
+      - compose-config
+      - gitleaks-history
+      - trivy-filesystem
+      - container-security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every release check to pass
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          MYSQL_RESULT: ${{ needs.mysql-migrations.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-security.result }}
+          COMPOSE_RESULT: ${{ needs.compose-config.result }}
+          GITLEAKS_RESULT: ${{ needs.gitleaks-history.result }}
+          TRIVY_FILESYSTEM_RESULT: ${{ needs.trivy-filesystem.result }}
+          CONTAINER_RESULT: ${{ needs.container-security.result }}
+        run: |
+          results=(
+            "${QUALITY_RESULT}"
+            "${MYSQL_RESULT}"
+            "${DEPENDENCY_RESULT}"
+            "${COMPOSE_RESULT}"
+            "${GITLEAKS_RESULT}"
+            "${TRIVY_FILESYSTEM_RESULT}"
+            "${CONTAINER_RESULT}"
+          )
+          for result in "${results[@]}"; do
+            if [[ "${result}" != success ]]; then
+              printf 'Release gate rejected job result: %s\n' "${result}" >&2
+              exit 1
+            fi
+          done

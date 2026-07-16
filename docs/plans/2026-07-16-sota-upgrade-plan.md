@@ -85,8 +85,8 @@ Route adapters only parse HTTP, authenticate, validate with Zod, call an applica
 | Stage | Atomic batch | Status | Exit gate |
 | --- | --- | --- | --- |
 | 0 | `security: isolate public liveness from private readiness` | Complete at `c40b9d8` | Public liveness works, public readiness is 404, private readiness and cache tests pass |
-| 1A | `docs: define SOTA product and architecture baseline` | In progress | Product, design, plan, ADRs reviewed and documentation tests pass |
-| 1B | `ci: enforce release quality and security gates` | Pending | Node 24 lint/test/build, real MySQL migration, Docker build, audit, Gitleaks, and Trivy enforced |
+| 1A | `docs: define SOTA product and architecture baseline` | Complete at `3892108` | Product, design, plan, ADRs reviewed and documentation tests pass |
+| 1B | `ci: enforce release quality and security gates` | Implemented; blocked on 1C history cleanup | Node 24 lint/test/build, real MySQL migration, Docker build, audit, Gitleaks, and Trivy enforced |
 | 1C | Credential rotation and full-history rewrite | External security window | All affected credentials revoked, all-history Gitleaks clean, coordinated force-push complete |
 | 2A | `core: give publications stable source identity` | Pending | Migration 010 passes empty, legacy, and replay tests; same-source publish is atomic and idempotent |
 | 2B | `security: separate moderation from private content` | Pending | Cross-user and administrator privacy tests pass |
@@ -150,7 +150,7 @@ docker compose --env-file <non-secret-ci-env> config --quiet
 docker compose -f compose.acme.yml --env-file <non-secret-ci-env> config --quiet
 ```
 
-`npm run check` currently means lint plus tests only. Phase 1B must not misrepresent it as the full release gate.
+`npm run check` means lint plus tests only. The authoritative Linux release contract is [`.github/workflows/release-quality.yml`](../../.github/workflows/release-quality.yml), documented in [`release-quality-gates.md`](../engineering/release-quality-gates.md).
 
 ### Phase 1B enforced gates
 
@@ -163,7 +163,7 @@ docker compose -f compose.acme.yml --env-file <non-secret-ci-env> config --quiet
 - Docker image build with full SHA metadata.
 - `npm audit --omit=dev --audit-level=high` with zero critical or high production advisories.
 - Gitleaks on the full fetched history.
-- Trivy filesystem and image scans with zero unfixed critical or high findings unless a time-bounded reviewed exception exists.
+- Trivy filesystem and image scans with zero critical or high findings.
 - Compose static validation.
 
 ### Final product gates

@@ -37,13 +37,13 @@ const homeCopy = {
     libraryTitle: '内置可直接上手的高质量模板库',
     libraryDesc: '覆盖内容创作、代码审查、数据分析、教学设计、商业营销、项目管理和专业咨询。每条模板都按 Role、输入、输出、约束和验收标准组织。',
     pricingEyebrow: 'Pricing',
-    pricingTitle: '按使用强度选择套餐',
-    pricingDesc: '从免费个人库到团队级协作空间，Note Prompt 让提示词资产随着使用规模自然升级。',
-    currentPlan: '当前可用',
-    featured: '推荐',
+    pricingTitle: 'Free 当前开放，Pro 与 Team 按路线图推进',
+    pricingDesc: '目前仅 Free 方案开放使用；贡献升级、Pro、Team 与商业化能力仍处于规划或灰度准备阶段，不构成已上线或可购买承诺。',
+    currentPlan: '当前开放',
+    featured: '规划中',
     footerRoadmapLabel: 'Feature Roadmap',
     footerRoadmapHint: '公开规划',
-    footerLinks: { library: '提示词库', optimizer: '优化台', pro: '升级 Pro', providers: '模型配置' },
+    footerLinks: { library: '提示词库', optimizer: '优化台', pro: 'Pro 路线图', providers: '模型配置' },
     preview: {
       eyebrow: 'Prompt Console', title: '模型与执行', ready: 'Ready', url: 'optimizer.note-prompt.local', chips: ['结构清晰', 'Markdown', '专业稳重'], probe: '低成本模型探针', rollback: '版本快照回滚', result: '优化结果', score: 'Score 94', role: 'Role: 专业任务执行助手', lines: ['Goal：明确目标与验收标准', 'Rules：不编造事实，信息不足先提问', 'Workflow：识别目标、拆解约束、输出结果'],
     },
@@ -54,14 +54,14 @@ const homeCopy = {
       { icon: Gauge, title: '可控成本策略', desc: '模型检测默认不消耗额度，真实调用才走低成本探针。' },
     ],
     pricing: [
-      { name: 'Free', price: '¥0', note: '适合个人试用和轻量管理', cta: '免费开始', href: '/register', features: ['50 个私有提示词', '10 个文件夹', '每月 10 次 AI 优化', '公共提示词库浏览与收藏', '基础版本历史'] },
-      { name: 'Pro', price: '¥29', suffix: '/月', note: '适合高频创作者和独立开发者', cta: '升级 Pro', href: '/profile', featured: true, features: ['无限提示词和文件夹', '更高 AI 优化额度', '多模型高级参数', '批量导入与发布', '优先体验新功能', '可通过贡献优质内容解锁'] },
-      { name: 'Team', price: '¥99', suffix: '/月起', note: '适合团队知识库和内容协作', cta: '联系开通', href: '/register', features: ['团队空间与权限', '共享提示词规范库', '管理员审查与统计', '私有部署咨询', '发票与合同支持'] },
+      { name: 'Free', price: '¥0', suffix: '', note: '适合个人试用和轻量管理', cta: '免费开始', href: '/register', features: ['私有提示词、文件夹与标签管理', '每月 10 次 AI 优化', '公共提示词库浏览、收藏与导入', '提示词发布与批量导入', '基础版本历史'] },
+      { name: 'Pro', price: '规划中', note: '面向高频创作者；贡献升级计划尚未默认开放', cta: '查看路线图', href: '#roadmap', featured: true, features: ['计划包含全部 Free 功能', '更高且有明确上限的月度 AI 配额', '账户展示 Pro 身份', '贡献条件公开、可核验', '当前不提供购买或支付入口'] },
+      { name: 'Team', price: '规划中', note: '面向团队知识库；尚未开放销售或签约', cta: '查看路线图', href: '#roadmap', features: ['团队空间与权限', '共享提示词规范库', '管理员审查与统计', '私有部署咨询', '发票与合同支持'] },
     ],
     roadmap: [
-      { quarter: '2026 Q3', title: '团队协作空间', desc: '共享提示词库、成员权限、团队模板规范与使用统计。' },
-      { quarter: '2026 Q4', title: '商业化与企业版', desc: 'Pro 套餐、团队席位、发票合同、私有化部署咨询。' },
-      { quarter: '2027 Q1', title: '智能评测系统', desc: '提示词评分、A/B 结果对比、自动生成优化建议。' },
+      { quarter: '2026 Q3', title: '贡献升级机制', desc: '在反滥用、配额和运营开关验证完成后，分阶段试运行 Pro 贡献升级。' },
+      { quarter: '2026 Q4', title: '团队协作空间', desc: '共享提示词库、成员权限、团队模板规范与使用统计。' },
+      { quarter: '2027 Q1', title: '商业化与智能评测', desc: '团队席位、合同支持，以及提示词评分和 A/B 结果对比。' },
     ],
     v2Updates: ['全新优化工作台：文件解析、OCR、模型选择、参数控制和流式输出集中在一个界面', '模型诊断更省额度：默认只做配置检查，真实调用使用低成本探针和缓存', '公共提示词库升级：导入 50+ 高质量结构化模板，支持搜索、收藏和一键导入', 'AI 使用统计升级：本月用量、优化次数和管理员统计实时汇总'],
     stats: [['50+', '精选提示词模板'], ['6', '主流模型供应商'], ['2 token', '低成本可用性探针'], ['30s', '统计自动刷新']],
@@ -80,13 +80,13 @@ const homeCopy = {
     libraryTitle: 'Curated prompt frameworks ready to use',
     libraryDesc: 'Explore English prompt frameworks for content, code review, research, marketing, operations, product management, sales, education, and data analysis.',
     pricingEyebrow: 'Pricing',
-    pricingTitle: 'Choose a plan by usage intensity',
-    pricingDesc: 'Start with a personal library, then scale into professional workflows and team collaboration as your prompt assets grow.',
-    currentPlan: 'Available now',
-    featured: 'Recommended',
+    pricingTitle: 'Free is open; Pro and Team remain on the roadmap',
+    pricingDesc: 'Only Free is currently open. Contribution upgrades, Pro, Team, and commercial capabilities are planned or being prepared for a controlled rollout—not available products or purchase commitments.',
+    currentPlan: 'Open now',
+    featured: 'Planned',
     footerRoadmapLabel: 'Feature Roadmap',
     footerRoadmapHint: 'Public plan',
-    footerLinks: { library: 'Prompt Library', optimizer: 'Optimizer', pro: 'Upgrade Pro', providers: 'Model Settings' },
+    footerLinks: { library: 'Prompt Library', optimizer: 'Optimizer', pro: 'Pro roadmap', providers: 'Model Settings' },
     preview: {
       eyebrow: 'Prompt Console', title: 'Model and execution', ready: 'Ready', url: 'optimizer.note-prompt.local', chips: ['Structured', 'Markdown', 'Professional'], probe: 'Low-cost model probe', rollback: 'Version rollback', result: 'Optimized result', score: 'Score 94', role: 'Role: professional task assistant', lines: ['Goal: define outcomes and acceptance criteria', 'Rules: do not invent facts; ask first when context is missing', 'Workflow: identify goal, unpack constraints, produce result'],
     },
@@ -97,14 +97,14 @@ const homeCopy = {
       { icon: Gauge, title: 'Cost-aware model checks', desc: 'Availability checks avoid paid calls by default; real probes use tiny cached requests.' },
     ],
     pricing: [
-      { name: 'Free', price: '$0', note: 'For personal trials and lightweight prompt management', cta: 'Start free', href: '/register', features: ['50 private prompts', '10 folders', '10 AI optimizations per month', 'Browse and save public prompts', 'Basic version history'] },
-      { name: 'Pro', price: '$4', suffix: '/mo', note: 'For frequent creators and independent builders', cta: 'Upgrade Pro', href: '/profile', featured: true, features: ['Unlimited prompts and folders', 'Higher AI optimization quota', 'Advanced model parameters', 'Batch import and publishing', 'Early access features', 'Can be unlocked through quality contributions'] },
-      { name: 'Team', price: '$14', suffix: '/mo+', note: 'For shared knowledge bases and team workflows', cta: 'Contact sales', href: '/register', features: ['Team spaces and permissions', 'Shared prompt standards', 'Admin review and analytics', 'Private deployment consulting', 'Invoice and contract support'] },
+      { name: 'Free', price: '$0', suffix: '', note: 'For personal trials and lightweight prompt management', cta: 'Start free', href: '/register', features: ['Private prompts, folders, and tags', '10 AI optimizations per month', 'Browse, save, and import public prompts', 'Publish and batch-import prompts', 'Basic version history'] },
+      { name: 'Pro', price: 'Planned', note: 'For frequent creators; contribution upgrades are not enabled by default', cta: 'View roadmap', href: '#roadmap', featured: true, features: ['Planned to include everything in Free', 'A higher, explicitly bounded monthly AI quota', 'Visible Pro account status', 'Public, verifiable contribution criteria', 'No purchase or payment flow today'] },
+      { name: 'Team', price: 'Planned', note: 'For shared knowledge bases; not yet available for sale', cta: 'View roadmap', href: '#roadmap', features: ['Team spaces and permissions', 'Shared prompt standards', 'Admin review and analytics', 'Private deployment consulting', 'Invoice and contract support'] },
     ],
     roadmap: [
-      { quarter: '2026 Q3', title: 'Team collaboration spaces', desc: 'Shared prompt libraries, member permissions, team standards, and usage analytics.' },
-      { quarter: '2026 Q4', title: 'Commercial and enterprise plans', desc: 'Pro plans, team seats, invoices, contracts, and private deployment consulting.' },
-      { quarter: '2027 Q1', title: 'Prompt evaluation system', desc: 'Prompt scoring, A/B result comparison, and automated improvement suggestions.' },
+      { quarter: '2026 Q3', title: 'Contribution upgrade controls', desc: 'A staged Pro contribution pilot after anti-abuse, quota, and operations controls are verified.' },
+      { quarter: '2026 Q4', title: 'Team collaboration spaces', desc: 'Shared prompt libraries, member permissions, team standards, and usage analytics.' },
+      { quarter: '2027 Q1', title: 'Commercial and evaluation tools', desc: 'Team seats and contract support, plus prompt scoring and A/B result comparison.' },
     ],
     v2Updates: ['New optimizer workbench with file parsing, OCR, model selection, parameters, and streaming output', 'Lower-cost model diagnostics with config-first checks and tiny cached probes', 'Public library upgraded with 50+ curated structured templates', 'Usage analytics upgraded with monthly counts and admin summaries'],
     stats: [['50+', 'Curated templates'], ['6', 'Model providers'], ['2 token', 'Low-cost probe'], ['30s', 'Stats refresh']],
@@ -113,7 +113,7 @@ const homeCopy = {
 
 function FeatureRoadmap({ copy }: { copy: typeof homeCopy.zh }) {
   return (
-    <details className="group w-full max-w-md rounded-[8px] border border-zinc-200 bg-white/92 p-4 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-[#111312]/90">
+    <details id="roadmap" className="group w-full max-w-md scroll-mt-24 rounded-[8px] border border-zinc-200 bg-white/92 p-4 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-[#111312]/90">
       <summary className="flex cursor-pointer list-none items-center justify-between">
         <span className="text-sm font-bold text-zinc-950 dark:text-white">{copy.footerRoadmapLabel}</span>
         <span className="rounded-[6px] bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-200">{copy.footerRoadmapHint}</span>
@@ -244,14 +244,15 @@ export default function Home() {
                 <button
                   key={item}
                   onClick={() => handleLocaleChange(item)}
+                  aria-label={item === 'zh' ? '切换为中文' : 'Switch to English'}
+                  aria-pressed={locale === item}
                   className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${locale === item ? 'bg-teal-700 text-white' : 'text-zinc-500 hover:text-teal-700 dark:text-zinc-300'}`}
                 >
                   {item === 'zh' ? 'ZH' : 'EN'}
                 </button>
               ))}
             </div>
-            <Button variant="ghost" size="sm" className="hidden text-zinc-700 hover:text-teal-700 dark:text-teal-100/80 dark:hover:text-teal-50 sm:inline-flex" asChild><Link href={withLocale('/login')}>{copy.nav.login}</Link></Button>
-            <Button variant="outline" size="sm" className="hidden rounded-[8px] border-teal-200 bg-white text-teal-800 hover:bg-teal-50 dark:border-teal-800 dark:bg-[#0b1815] dark:text-teal-100 dark:hover:bg-[#10221e] sm:inline-flex" asChild><Link href={withLocale('/register')}>{copy.nav.register}</Link></Button>
+            {!user && <Button variant="ghost" size="sm" className="hidden text-zinc-700 hover:text-teal-700 dark:text-teal-100/80 dark:hover:text-teal-50 sm:inline-flex" asChild><Link href={withLocale('/login')}>{copy.nav.login}</Link></Button>}
             <Button size="sm" className="rounded-[8px] bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-400 dark:text-[#06110f] dark:hover:bg-teal-300" asChild><Link href={withLocale(user ? '/prompts' : '/register')}>{user ? copy.nav.workspace : copy.nav.register}</Link></Button>
           </div>
         </div>
@@ -357,7 +358,7 @@ export default function Home() {
                     ))}
                   </ul>
                   <Button className={`mt-8 w-full rounded-[8px] ${plan.featured ? 'bg-teal-700 text-white hover:bg-teal-800' : 'border border-teal-200 bg-white text-teal-800 hover:bg-teal-50 dark:bg-transparent dark:text-teal-200 dark:hover:bg-teal-950/40'}`} asChild>
-                    <Link href={withLocale(user && plan.name === 'Free' ? '/prompts' : plan.href)}>{user && plan.name === 'Free' ? copy.currentPlan : plan.cta}</Link>
+                    <Link href={plan.href.startsWith('#') ? plan.href : withLocale(user && plan.name === 'Free' ? '/prompts' : plan.href)}>{user && plan.name === 'Free' ? copy.currentPlan : plan.cta}</Link>
                   </Button>
                 </div>
               ))}

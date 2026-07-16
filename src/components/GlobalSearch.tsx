@@ -47,8 +47,11 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
   const [results, setResults] = useState<SearchResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wasOpenRef = useRef(false)
 
   // Ctrl+K / Cmd+K to open
   useEffect(() => {
@@ -60,6 +63,21 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
       if (e.key === 'Escape' && open) {
         setOpen(false)
       }
+      if (e.key === 'Tab' && open && dialogRef.current) {
+        const controls = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+        ))
+        const firstControl = controls[0]
+        const lastControl = controls[controls.length - 1]
+
+        if (e.shiftKey && document.activeElement === firstControl) {
+          e.preventDefault()
+          lastControl?.focus()
+        } else if (!e.shiftKey && document.activeElement === lastControl) {
+          e.preventDefault()
+          firstControl?.focus()
+        }
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
@@ -67,11 +85,20 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
 
   // Focus input when opened
   useEffect(() => {
+    let frame: number | undefined
+
     if (open) {
-      setTimeout(() => inputRef.current?.focus(), 100)
+      frame = window.requestAnimationFrame(() => inputRef.current?.focus())
       setQuery('')
       setResults(null)
       setSelectedIndex(0)
+    } else if (wasOpenRef.current) {
+      triggerRef.current?.focus()
+    }
+
+    wasOpenRef.current = open
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame)
     }
   }, [open])
 
@@ -125,7 +152,7 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
         id: item.id,
         title: item.title,
         subtitle: `by ${item.author} · ${item.content.substring(0, 60)}`,
-        href: withLocaleHref(`/public-prompts/${item.id}`, locale)
+        href: withLocaleHref(`/public-prompts/${item.id}?source=published`, locale)
       })
     }
     for (const item of results.folders.items) {
@@ -180,7 +207,13 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
     <>
       {/* Trigger button in header */}
       <button
+        ref={triggerRef}
+        type="button"
         onClick={() => setOpen(true)}
+        aria-label={copy.trigger}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="global-search-dialog"
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors border border-gray-200 dark:border-gray-700"
       >
         <Search className="h-3.5 w-3.5" />
@@ -201,27 +234,36 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
 
           {/* Search dialog */}
           <div
+            ref={dialogRef}
+            id="global-search-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="global-search-title"
             className="relative w-full max-w-2xl mx-4 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
+            <h2 id="global-search-title" className="sr-only">{copy.placeholder}</h2>
             {/* Search input */}
             <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
               <Search className="h-5 w-5 text-gray-400 flex-shrink-0" />
               <input
                 ref={inputRef}
                 type="text"
+                aria-label={copy.placeholder}
                 placeholder={copy.placeholder}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
                 className="flex-1 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 outline-none text-base"
               />
-              {loading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+              {loading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" aria-hidden="true" />}
               <button
+                type="button"
                 onClick={() => setOpen(false)}
                 className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label={copy.close}
               >
-                <X className="h-4 w-4 text-gray-400" />
+                <X className="h-4 w-4 text-gray-400" aria-hidden="true" />
               </button>
             </div>
 
@@ -233,8 +275,8 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
                   <p className="text-sm">{copy.empty}</p>
                 </div>
               ) : loading && !results ? (
-                <div className="py-12 text-center text-gray-400">
-                  <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                <div className="py-12 text-center text-gray-400" role="status" aria-live="polite">
+                  <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" aria-hidden="true" />
                   <p className="text-sm">{copy.loading}</p>
                 </div>
               ) : allItems.length === 0 && query.trim() ? (
@@ -289,7 +331,7 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
                         return (
                           <button
                             key={`pp-${item.id}`}
-                            onClick={() => handleSelect(withLocaleHref(`/public-prompts/${item.id}`, locale))}
+                            onClick={() => handleSelect(withLocaleHref(`/public-prompts/${item.id}?source=published`, locale))}
                             className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
                               selectedIndex === globalIdx
                                 ? 'bg-blue-50 dark:bg-blue-900/20'

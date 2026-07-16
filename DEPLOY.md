@@ -37,6 +37,8 @@ bash scripts/deployment-diagnose.sh
 
 按输出依次确认：宿主机监听端口、容器状态、`mysql8_default` 网络、firewalld 活动 zone、TLS 文件存在性与证书有效期。公网仍不可达时，在阿里云 ECS 控制台核对实例安全组入方向是否允许 TCP 80、443；Ping 成功只代表 ICMP 可达，不代表这两个 TCP 端口已放行。
 
+浏览器出现 `NET::ERR_CERT_DATE_INVALID`，或 Certbot 源文件、Docker 证书复制件和公网实际证书不一致时，直接按 [TLS 与入口不可用事故手册](./docs/operations/tls-certificate-incident.md) 处理。ECS 实例“运行中”不代表 Nginx、证书和业务依赖健康。
+
 不要使用 `docker exec ... env`、`docker inspect ...Config.Env`、不带 `--quiet` 的 `docker compose config`，也不要把 `/opt/note-prompt-secrets/runtime.env` 内容贴入工单或聊天。
 
 确认 MySQL/Redis 端口未公开：
@@ -86,8 +88,8 @@ DEPLOY_USER="$(id -un)"
 DEPLOY_GROUP="$(id -gn)"
 test "$(id -u)" -ne 0
 
-sudo install -d -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 0700 /opt/note-prompt-secrets
-sudo install -d -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 0700 /opt/note-prompt-secrets/tls
+sudo install -d -o root -g "$DEPLOY_GROUP" -m 0750 /opt/note-prompt-secrets
+sudo install -d -o root -g root -m 0750 /opt/note-prompt-secrets/tls
 sudo install -d -m 0755 /opt/note-prompt-certbot/www
 if [ ! -e /opt/note-prompt-secrets/runtime.env ]; then
   sudo install -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 0600 /dev/null /opt/note-prompt-secrets/runtime.env
@@ -152,33 +154,57 @@ EMAIL_FROM_NAME=Note Prompt
 
 运行时文件中不要写 `IMAGE_TAG` 或 `MIGRATION_IMAGE_TAG`：每次发布都必须从已签出的 Git commit 重新导出，避免陈旧标签把旧镜像伪装成当前版本。Redis URI 如果含密码，同样属于秘密；只允许部署账号读取。生产 Compose 固定写入 `RATE_LIMIT_ALLOW_MEMORY_FALLBACK=false` 和 `TRUST_PROXY=true`，无需在文件中覆盖。
 
-`TLS_CERT_DIR` 必须是项目外的受限目录，并真实包含：
+`TLS_CERT_DIR` 必须是项目外、root 拥有且不可被组或其他用户写入的受限目录。这样 root 身份运行的 Certbot hook 不会在可被低权限账号替换的目录中操作证书。该目录真实包含：
 
 ```text
 fullchain.pem
 privkey.pem
 ```
 
-本仓库不包含证书，也不声称证书已续签。首次启动 Nginx 前必须完成真实签发和文件安装。每次 Certbot 实际续签成功后，再原子更新上述两个文件并执行：
+本仓库不包含证书，也不声称证书已续签。首次启动业务 Nginx 前必须完成真实签发和文件安装；后续只允许 deploy hook 在 Certbot 实际续签成功后更新上述文件并 reload。
 
-首次签发时 Nginx 尚未运行，可在确认 80 端口空闲后使用 Certbot standalone（或改用受控的 DNS-01）：
-
-```bash
-sudo certbot certonly --standalone -d noteprompt.cn -d www.noteprompt.cn
-sudo install -m 0644 /etc/letsencrypt/live/noteprompt.cn/fullchain.pem \
-  /opt/note-prompt-secrets/tls/fullchain.pem
-sudo install -m 0600 /etc/letsencrypt/live/noteprompt.cn/privkey.pem \
-  /opt/note-prompt-secrets/tls/privkey.pem
-```
-
-上述命令只有 Certbot 实际成功后才能执行。后续续签可使用已运行 Nginx 暴露的 webroot challenge；deploy hook 也必须只在续签成功后安装新文件。
+公网 80 由独立的 `compose.acme.yml` 提供，只服务 HTTP-01 challenge、健康检查和固定 HTTPS 跳转。它不依赖迁移、应用、MySQL 或 Redis；业务 Nginx 只占用 443。首次签发和日常发布前都应确保该边缘容器在运行：
 
 ```bash
-docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx -t
-docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx -s reload
+cd /opt/note-prompt
+docker compose \
+  -f compose.acme.yml \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  up -d --wait
+curl -fsS http://127.0.0.1/health
 ```
 
-应先运行 `certbot renew --dry-run` 验证续签链路；只有真实成功后才能配置自动 deploy hook。
+安装 Certbot deploy hook。该 hook 只处理覆盖 `noteprompt.cn` 和 `www.noteprompt.cn` 的证书；复制前校验证书剩余时间、SAN 和私钥匹配，复制后用 `nginx -t` 验证并 reload。业务 Nginx 尚未运行时，新证书仍会安全写入 bind mount，并在容器下次启动时加载：
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+sudo install -o root -g root -m 0750 scripts/certbot-deploy-hook.sh \
+  /etc/letsencrypt/renewal-hooks/deploy/note-prompt
+```
+
+使用独立 webroot 首次签发或修复已过期证书。不要让日常续签继续使用会与 80 端口冲突的 standalone：
+
+```bash
+sudo certbot certonly \
+  --cert-name noteprompt.cn \
+  --webroot --webroot-path /opt/note-prompt-certbot/www \
+  -d noteprompt.cn -d www.noteprompt.cn \
+  --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/note-prompt
+
+# Certbot >= 2.3.0：测试成功后持久化 webroot 续签配置。
+sudo certbot reconfigure \
+  --cert-name noteprompt.cn \
+  --webroot --webroot-path /opt/note-prompt-certbot/www
+sudo certbot renew --cert-name noteprompt.cn --dry-run
+```
+
+`deploy.sh` 会启用系统包自带的 Certbot timer；系统没有 timer 时会安装 `ops/systemd` 中的仓库自带 timer。部署后必须看到至少一个已启用的调度器：
+
+```bash
+systemctl list-timers --all | grep -i certbot
+```
+
+不要把 `--force-renewal` 放进定时任务。续签是否成功和 deploy hook 是否成功都需要监控；Certbot 源文件有效并不等于公网 Nginx 已加载新证书。
 
 证书安装或续签后必须核对私钥与证书公钥匹配、证书尚未过期且覆盖两个域名，再执行 `nginx -t` 与 reload。最后从公网验证实际提供的证书，而不是只检查宿主机文件：
 
@@ -303,6 +329,11 @@ docker compose \
 
 ```bash
 docker compose \
+  -f compose.acme.yml \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  up -d --wait
+
+docker compose \
   --env-file /opt/note-prompt-secrets/runtime.env \
   up -d --no-build --wait --wait-timeout 180 note-prompt-app nginx
 ```
@@ -310,6 +341,8 @@ docker compose \
 验证容器、版本、readiness 与安全头：
 
 ```bash
+docker compose -f compose.acme.yml \
+  --env-file /opt/note-prompt-secrets/runtime.env ps
 docker compose --env-file /opt/note-prompt-secrets/runtime.env ps
 
 curl -fsS --max-time 15 http://127.0.0.1/health
@@ -333,6 +366,8 @@ docker inspect "$APP_CONTAINER_ID" \
 ## 7. Nginx 与代理信任
 
 当前 Nginx 是公网边缘代理，会用 `$remote_addr` 覆盖客户端提交的 `X-Forwarded-For`，应用不会信任伪造的首段 IP。不要改回 `$proxy_add_x_forwarded_for`。
+
+宿主机 80 与 443 分属两个容器：`compose.acme.yml` 的最小化边缘长期占用 80，业务 Compose 的 `nginx` 只占用 443。不要把 80 重新并回依赖应用 readiness 的业务 Nginx，否则应用或数据库故障会再次破坏 ACME 续签入口。
 
 如果未来在 Nginx 前新增阿里云 SLB/CDN，只能为供应商公布且已核对的精确 CIDR 配置 `set_real_ip_from`，再启用 `real_ip_header`。不得使用 `0.0.0.0/0` 作为可信代理。
 
@@ -416,10 +451,12 @@ docker compose --env-file /opt/note-prompt-secrets/runtime.env \
 ```bash
 test -s /opt/note-prompt-secrets/tls/fullchain.pem
 test -s /opt/note-prompt-secrets/tls/privkey.pem
+docker compose -f compose.acme.yml \
+  --env-file /opt/note-prompt-secrets/runtime.env ps
 docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --tail 200 nginx
 ```
 
-不要生成伪证书绕过启动；完成真实签发或恢复最近一份仍有效且受控的证书。
+独立 ACME 边缘正常而业务 Nginx 未启动时，继续检查迁移、应用、MySQL、Redis readiness 和 443 证书。不要生成伪证书绕过启动；完成真实签发或恢复最近一份仍有效且受控的证书。
 
 ### 当前网站不是当前代码
 

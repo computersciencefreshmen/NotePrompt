@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Note Prompt TLS certificates twice daily
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=1h
+Persistent=true
+AccuracySec=1m
+Unit=note-prompt-certbot-renew.service
+
+[Install]
+WantedBy=timers.target

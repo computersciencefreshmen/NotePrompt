@@ -1,0 +1,27 @@
+name: note-prompt-acme
+
+services:
+  certbot-edge:
+    image: "nginx:1.30.3-alpine@sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1"
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    user: nginx
+    ports:
+      - "80:8080"
+    volumes:
+      - ./nginx/acme.conf:/etc/nginx/nginx.conf:ro
+      - "${CERTBOT_WEBROOT:-/opt/note-prompt-certbot/www}:/var/www/certbot:ro"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health | grep -qx healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped

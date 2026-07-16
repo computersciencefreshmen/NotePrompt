@@ -11,7 +11,7 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript)
 ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-06B6D4?style=flat-square&logo=tailwindcss)
 ![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?style=flat-square&logo=mysql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
@@ -22,9 +22,9 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 ## 📖 Overview
 
-**NotePrompt** is a production-ready AI prompt management platform built with Next.js 15. It provides a comprehensive workspace for creating, organizing, optimizing, and sharing AI prompts across multiple AI providers. Designed for both individual users and teams, it features a dual-mode editor, 17+ AI model integrations, a community-driven public prompt library with 15 curated categories, and a full admin dashboard.
+**NotePrompt** is an AI prompt management platform built with Next.js 15. It provides a workspace for creating, organizing, optimizing, and sharing AI prompts across multiple AI providers, with a dual-mode editor, community library, and administration tools.
 
-> 🌐 **Live at [noteprompt.cn](https://noteprompt.cn)** — Deployed on Alibaba Cloud with Docker, Nginx reverse proxy, and SSL.
+> 🌐 Production endpoint: [noteprompt.cn](https://noteprompt.cn). A release is considered healthy only after the commit-SHA image, migration status, database/Redis readiness, and live TLS checks in [DEPLOY.md](./DEPLOY.md) pass.
 
 ---
 
@@ -42,6 +42,7 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 - **Multi-Turn Optimization** — Iterative prompt refinement through AI-guided conversations
 - **Model Presets** — Creative / Balanced / Precise temperature presets for different use cases
 - **Auto-Fallback** — Seamless failover between providers if one is unavailable
+- **Bounded Attachment Parsing** — Local PDF extraction and Chinese/English OCR in the production image, with a finite OCR work queue
 
 ### Community & Sharing
 - **Public Prompt Library** — Browse, search, and collect community-shared prompts
@@ -63,7 +64,7 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 | Layer | Technology |
 |-------|-----------|
-| **Frontend** | Next.js 15, React 18, TypeScript, Tailwind CSS 4 |
+| **Frontend** | Next.js 15, React 18, TypeScript, Tailwind CSS 3.4 |
 | **UI Components** | shadcn/ui, Radix UI, Lucide Icons |
 | **Backend** | Next.js App Router API Routes (Node.js) |
 | **Database** | MySQL 8.0 |
@@ -79,9 +80,9 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 ### Prerequisites
 
-- **Node.js** >= 18
+- **Node.js** 24 LTS
 - **MySQL** >= 8.0
-- **Redis** >= 6 (optional, for rate limiting)
+- **Redis** >= 6 (optional only for local development; mandatory in production)
 - At least one AI provider API key
 
 ### 1. Clone the Repository
@@ -94,7 +95,7 @@ cd NotePrompt
 ### 2. Install Dependencies
 
 ```bash
-npm install
+npm ci
 ```
 
 ### 3. Configure Environment Variables
@@ -106,19 +107,28 @@ cp .env.example .env.local
 Edit `.env.local` with your configuration:
 
 ```env
-# ── Database ─────────────────────────────────
+# ── Long-running application database account (DML only) ──
 MYSQL_HOST=localhost
 MYSQL_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=your_password
+MYSQL_USER=note_prompt_app
+MYSQL_PASSWORD=local_app_password
 MYSQL_DATABASE=agent_report
 
-# ── Authentication ───────────────────────────
-JWT_SECRET=your_jwt_secret_at_least_32_chars
+# ── One-shot migration account (DML + reviewed schema DDL) ──
+MYSQL_MIGRATION_USER=note_prompt_migrator
+MYSQL_MIGRATION_PASSWORD=local_migration_password
 
-# ── Redis (optional) ────────────────────────
-REDIS_HOST=localhost
-REDIS_PORT=6379
+# ── Authentication ──────────────────────────
+JWT_SECRET=your_jwt_secret_at_least_32_chars
+PROVIDER_KEY_ENCRYPTION_SECRET=an_independent_encryption_secret
+VERIFICATION_CODE_SECRET=an_independent_verification_hmac_secret
+NEXTAUTH_URL=http://localhost:3000
+ENABLE_CONTRIBUTION_UPGRADES=false
+PRO_AI_MONTHLY_LIMIT=100
+
+# ── Redis (recommended locally, required in production) ──
+# REDIS_URL=redis://localhost:6379/0
+RATE_LIMIT_ALLOW_MEMORY_FALLBACK=true
 
 # ── AI API Keys (configure at least one) ────
 DEEPSEEK_API_KEY=sk-xxx
@@ -127,18 +137,28 @@ QWEN_API_KEY=sk-xxx
 ZHIPU_API_KEY=xxx.xxx
 
 # ── Email (optional) ────────────────────────
-SMTP_HOST=smtp.example.com
-SMTP_PORT=465
-SMTP_USER=your_email@example.com
-SMTP_PASS=your_password
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=your_email@example.com
+EMAIL_PASS=your_password_or_app_token
+EMAIL_FROM=your_email@example.com
+EMAIL_FROM_NAME=Note Prompt
 ENABLE_EMAIL_VERIFICATION=false
 ```
 
-### 4. Initialize Database
+The application and migration usernames must differ and neither may be `root`. The application account receives only `SELECT`, `INSERT`, `UPDATE`, and `DELETE`; see [DEPLOY.md](./DEPLOY.md) for production grants.
+
+### 4. Apply Versioned Migrations
 
 ```bash
-mysql -u root -p agent_report < database/mysql-schema-new.sql
+npm run db:plan
+npm run db:status
+npm run db:migrate
+npm run db:status
 ```
+
+`database/migrations/*.cjs` is the only schema source of truth. The server does not perform request-time DDL. Never replace production with a checked-in schema dump; back up first and apply the ordered, checksummed migrations using the dedicated account.
 
 ### 5. Start Development Server
 
@@ -152,24 +172,14 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## 🐳 Docker Deployment
 
-Deploy the full stack (App + MySQL + Redis + Nginx) with a single command:
-
-```bash
-# 1. Configure production environment
-cp .env.example .env.production
-
-# 2. Launch all services
-docker-compose up -d
-
-# 3. Access the application
-# → http://localhost (or your domain)
-```
+Production is not a one-command `latest` deployment. Follow [DEPLOY.md](./DEPLOY.md) for the required backup, full commit-SHA image build, one-shot migration, readiness, TLS validation, rollback, credential rotation, and cache cleanup workflow.
 
 The Docker Compose stack includes:
-- **note-prompt-app** — Next.js application (port 3001)
-- **docker_mysql8** — MySQL 8.0 with persistent volume
-- **note-prompt-redis** — Redis 7 for caching and rate limiting
-- **note-prompt-nginx** — Nginx reverse proxy with SSL termination
+- **note-prompt-migrate** — one-shot schema migration using a dedicated DDL account
+- **note-prompt-app** — read-only Next.js runtime using a DML-only account
+- **nginx** — pinned reverse proxy with TLS termination and readiness dependency
+
+MySQL and Redis are private external dependencies and are deliberately not exposed or bootstrapped by this Compose file.
 
 ---
 
@@ -211,8 +221,11 @@ NotePrompt/
 │   │   └── email-service.ts    #   Email service
 │   └── types/                  # TypeScript type definitions
 ├── database/
-│   ├── mysql-schema-new.sql    # Full database schema
-│   └── migrations/             # SQL migrations
+│   ├── migrations/             # Ordered, checksummed CJS migrations
+│   ├── schema-requirements.json# Runtime schema contract
+│   └── README.md               # Migration lifecycle and recovery rules
+├── scripts/
+│   └── mysql-migrate.cjs       # plan / status / up migration CLI
 ├── nginx/
 │   └── nginx.conf              # Nginx config (Cloudflare-ready)
 ├── docker-compose.yml          # Docker Compose orchestration

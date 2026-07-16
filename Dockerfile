@@ -27,6 +27,14 @@ RUN npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM ${NODE_IMAGE} AS runner
 
+# Runtime document extraction is fully local: no production OCR language-pack
+# download and no Windows-only PDF binary assumptions.
+RUN apk add --no-cache \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    tesseract-ocr-data-chi_sim
+
 ARG APP_VERSION=unknown
 LABEL org.opencontainers.image.title="Note Prompt" \
       org.opencontainers.image.revision="${APP_VERSION}"
@@ -36,7 +44,9 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
-    APP_VERSION=${APP_VERSION}
+    APP_VERSION=${APP_VERSION} \
+    PDFTOTEXT_PATH=/usr/bin/pdftotext \
+    TESSERACT_PATH=/usr/bin/tesseract
 
 # The official Node image already provides the unprivileged `node` user. Keep
 # application code root-owned; only explicit tmpfs mounts are writable at run time.
@@ -45,6 +55,10 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts/ocr-image.cjs ./scripts/ocr-image.cjs
+COPY --from=builder /app/scripts/mysql-migrate.cjs ./scripts/mysql-migrate.cjs
+COPY --from=builder /app/scripts/lib ./scripts/lib
+COPY --from=builder /app/database/migrations ./database/migrations
+COPY --from=builder /app/database/schema-requirements.json ./database/schema-requirements.json
 
 USER node
 EXPOSE 3000

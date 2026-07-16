@@ -1,6 +1,45 @@
 name: "${COMPOSE_PROJECT_NAME:-note-prompt}"
 
+x-database-connection: &database-connection
+  MYSQL_HOST: "${MYSQL_HOST:-docker_mysql8}"
+  MYSQL_PORT: "${MYSQL_PORT:-3306}"
+  MYSQL_DATABASE: "${MYSQL_DATABASE:-agent_report}"
+
 services:
+  note-prompt-migrate:
+    image: "${IMAGE_REPOSITORY:-note-prompt}:${MIGRATION_IMAGE_TAG:?Set MIGRATION_IMAGE_TAG to the full Git SHA containing the migration set}"
+    environment:
+      <<: *database-connection
+      MYSQL_USER: "${MYSQL_MIGRATION_USER:?Set MYSQL_MIGRATION_USER to the dedicated schema migration account}"
+      MYSQL_PASSWORD: "${MYSQL_MIGRATION_PASSWORD:?MYSQL_MIGRATION_PASSWORD is required}"
+      APP_DATABASE_USER: "${MYSQL_USER:?Set MYSQL_USER to the dedicated application account}"
+    command:
+      - sh
+      - -ec
+      - |
+        migration_user="$$(printf '%s' "$$MYSQL_USER" | tr '[:upper:]' '[:lower:]')"
+        app_user="$$(printf '%s' "$$APP_DATABASE_USER" | tr '[:upper:]' '[:lower:]')"
+        if [ "$$migration_user" = "root" ]; then
+          echo "Refusing to run migrations with MYSQL_MIGRATION_USER=root" >&2
+          exit 1
+        fi
+        if [ "$$migration_user" = "$$app_user" ]; then
+          echo "Refusing to share one MySQL account between migrations and the application" >&2
+          exit 1
+        fi
+        exec node scripts/mysql-migrate.cjs up
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    restart: "no"
+    networks:
+      - mysql-network
+
   note-prompt-app:
     image: "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG:?Set IMAGE_TAG to the git commit SHA being deployed}"
     build:
@@ -10,17 +49,22 @@ services:
         NODE_IMAGE: "node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd"
         APP_VERSION: "${IMAGE_TAG:?Set IMAGE_TAG to the git commit SHA being deployed}"
     environment:
+      <<: *database-connection
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
       APP_VERSION: "${IMAGE_TAG:?Set IMAGE_TAG to the git commit SHA being deployed}"
 
       # Runtime-only database configuration. Never use the MySQL root account here.
-      MYSQL_HOST: "${MYSQL_HOST:-docker_mysql8}"
-      MYSQL_PORT: "${MYSQL_PORT:-3306}"
       MYSQL_USER: "${MYSQL_USER:?Set MYSQL_USER to a dedicated application account, not root}"
       MYSQL_PASSWORD: "${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}"
-      MYSQL_DATABASE: "${MYSQL_DATABASE:-agent_report}"
+
+      # Distributed abuse controls are mandatory in production. No in-memory fallback is allowed.
+      REDIS_URL: "${REDIS_URL:?REDIS_URL is required in production}"
+      RATE_LIMIT_ALLOW_MEMORY_FALLBACK: "false"
+      TRUST_PROXY: "true"
+      RATE_LIMIT_KEY_PREFIX: "${RATE_LIMIT_KEY_PREFIX:-note-prompt}"
+      AI_GLOBAL_DAILY_LIMIT: "${AI_GLOBAL_DAILY_LIMIT:-1000}"
 
       # AI provider configuration is injected only when the container starts.
       OLLAMA_HOST: "${OLLAMA_HOST:-}"
@@ -39,8 +83,14 @@ services:
       XIAOMI_BASE_URL: "${XIAOMI_BASE_URL:-}"
 
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required}"
-      JWT_EXPIRES_IN: "${JWT_EXPIRES_IN:-7d}"
+      JWT_EXPIRES_IN: "${JWT_EXPIRES_IN:-2h}"
       PROVIDER_KEY_ENCRYPTION_SECRET: "${PROVIDER_KEY_ENCRYPTION_SECRET:?PROVIDER_KEY_ENCRYPTION_SECRET is required}"
+      VERIFICATION_CODE_SECRET: "${VERIFICATION_CODE_SECRET:?VERIFICATION_CODE_SECRET is required}"
+      NEXTAUTH_URL: "${NEXTAUTH_URL:-https://noteprompt.cn}"
+
+      # Self-service entitlement changes stay opt-in; only admins are unlimited.
+      ENABLE_CONTRIBUTION_UPGRADES: "${ENABLE_CONTRIBUTION_UPGRADES:-false}"
+      PRO_AI_MONTHLY_LIMIT: "${PRO_AI_MONTHLY_LIMIT:-100}"
 
       ENABLE_EMAIL_VERIFICATION: "${ENABLE_EMAIL_VERIFICATION:-false}"
       EMAIL_HOST: "${EMAIL_HOST:-smtp.qq.com}"
@@ -85,13 +135,16 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:3000/api/health',{cache:'no-store'}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "(async()=>{const r=await fetch('http://127.0.0.1:3000/api/health',{cache:'no-store'});const b=await r.json();if(!r.ok||b.status!=='ready'||b.checks?.database!=='up'||b.version!==process.env.APP_VERSION)throw new Error();const Redis=require('ioredis');const c=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1,connectTimeout:2000});try{await c.connect();if(await c.ping()!=='PONG')throw new Error()}finally{c.disconnect()}})().then(()=>process.exit(0)).catch(()=>process.exit(1))"
       interval: 30s
-      timeout: 5s
+      timeout: 8s
       retries: 5
       start_period: 30s
     stop_grace_period: 30s
     restart: unless-stopped
+    depends_on:
+      note-prompt-migrate:
+        condition: service_completed_successfully
     networks:
       - note-prompt-network
       - mysql-network

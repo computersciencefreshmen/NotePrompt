@@ -1,11 +1,13 @@
+import 'server-only'
 import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER, getAvailableAIProviders, getAIProviderModels } from './ai-models'
 import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
+import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
 
 // AI模型配置 (2026最新)
 export const DEFAULT_AI_PROVIDER = process.env.DEFAULT_AI_PROVIDER || DEFAULT_PUBLIC_AI_PROVIDER
 export const DEFAULT_AI_MODEL = process.env.DEFAULT_AI_MODEL || DEFAULT_PUBLIC_AI_MODEL
-export const FALLBACK_AI_PROVIDER = 'deepseek'
-export const FALLBACK_AI_MODEL = 'deepseek-v4-flash'
+export const FALLBACK_AI_PROVIDER = 'xiaomi'
+export const FALLBACK_AI_MODEL = 'mimo-v2-flash'
 
 export const aiConfig = {
   defaultProvider: DEFAULT_AI_PROVIDER,
@@ -120,7 +122,7 @@ export const AI_MODELS = {
   }
 };
 
-export function getAIRequestConfig(provider?: string, modelId?: string): AIRequestConfig {
+export function getAIRequestConfig(provider?: string, modelId?: string, runtimeOverride?: { apiKey?: string; baseURL?: string }): AIRequestConfig {
   const resolvedProvider = (provider || aiConfig.defaultProvider) as AIProviderKey;
   const providerConfig = AI_MODELS[resolvedProvider];
   if (!providerConfig) throw new Error('无可用的AI提供商');
@@ -130,10 +132,18 @@ export function getAIRequestConfig(provider?: string, modelId?: string): AIReque
   if (!modelConfig) throw new Error('不支持的模型');
   
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const runtimeConfig = getProviderRuntimeConfig(resolvedProvider, {
+  const globalRuntimeConfig = getProviderRuntimeConfig(resolvedProvider, {
     apiKey: providerConfig.apiKey,
     baseURL: providerConfig.baseURL,
   });
+  const userBaseURL = runtimeOverride?.baseURL
+    ? normalizeProviderBaseURL(resolvedProvider, runtimeOverride.baseURL)
+    : undefined;
+  const globalBaseURL = normalizeProviderBaseURL(resolvedProvider, globalRuntimeConfig.baseURL);
+  const runtimeConfig = {
+    apiKey: runtimeOverride?.apiKey || globalRuntimeConfig.apiKey,
+    baseURL: userBaseURL || globalBaseURL || '',
+  }
   if (runtimeConfig.apiKey) headers['Authorization'] = 'Bearer ' + runtimeConfig.apiKey;
   
   return {

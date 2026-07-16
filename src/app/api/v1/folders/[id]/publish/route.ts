@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+const MAX_FOLDER_PUBLISH_BODY_BYTES = 8 * 1024
 
 // POST - 发布文件夹到公共库（需要认证）
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -11,49 +15,37 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
 
     const { id } = await context.params
-    const folderId = parseInt(id)
+    const folderId = parsePositiveResourceId(id)
     const userId = auth.user.id
-
-    // 获取请求体
-    const body = await request.json()
-    const { description } = body
-
-    // 检查文件夹是否存在且属于当前用户
-    const folder = await db.getFolderById(folderId)
-    console.log('获取到的文件夹:', folder)
-    console.log('当前用户ID:', userId)
-    
-    if (!folder) {
+    if (folderId == null) {
       return NextResponse.json(
         { success: false, error: '文件夹不存在' },
         { status: 404 }
       )
     }
 
-    if ((folder as any).user_id !== userId) {
-      console.log('权限检查失败:', { folderUserId: (folder as any).user_id, currentUserId: userId })
-      return NextResponse.json(
-        { success: false, error: '无权限发布此文件夹' },
-        { status: 403 }
-      )
+    const input = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_FOLDER_PUBLISH_BODY_BYTES,
+    )
+    if (Object.keys(input).some(key => key !== 'description')) {
+      return NextResponse.json({ success: false, error: '请求包含不支持的字段' }, { status: 400 })
+    }
+    if (input.description !== undefined && typeof input.description !== 'string') {
+      return NextResponse.json({ success: false, error: '描述格式无效' }, { status: 400 })
+    }
+    const description = typeof input.description === 'string' ? input.description.trim() : ''
+    if (description.length > 2_000) {
+      return NextResponse.json({ success: false, error: '描述不能超过 2000 个字符' }, { status: 400 })
     }
 
-    // 创建公共文件夹
-    console.log('创建公共文件夹，参数:', {
-      name: (folder as any).name,
-      description: description || '',
-      user_id: userId,
-      original_folder_id: folderId
-    })
-    
-    const publicFolder = await db.createPublicFolder({
-      name: (folder as any).name,
-      description: description || '',
-      user_id: userId,
-      original_folder_id: folderId
-    })
-
-    console.log('公共文件夹创建成功:', publicFolder)
+    const publicFolder = await db.publishOwnedFolderSnapshot(folderId, userId, description)
+    if (!publicFolder) {
+      return NextResponse.json(
+        { success: false, error: '文件夹不存在' },
+        { status: 404 }
+      )
+    }
 
     return NextResponse.json({
       success: true,
@@ -61,15 +53,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       message: '文件夹发布成功'
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('发布文件夹失败:', error)
-    console.error('错误详情:', {
-      message: error instanceof Error ? error.message : '未知错误',
-      stack: error instanceof Error ? error.stack : undefined,
-      name: error instanceof Error ? error.name : undefined
-    })
     return NextResponse.json(
       { success: false, error: '发布文件夹失败' },
       { status: 500 }
     )
   }
-} 
+}

@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAIRequestConfig, aiConfig } from '@/config/ai'
+import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
+import { AIUsageReservation, requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
+import {
+  MAX_AI_INPUT_CHARS,
+  MAX_CONVERSATION_HISTORY_MESSAGES,
+  parseConversationHistory,
+  readLimitedJson,
+  RequestPolicyError,
+} from '@/lib/ai-runtime-policy'
 import { ConversationMessage } from '@/types'
 
 function buildLocalRefinement({
@@ -57,41 +66,50 @@ function buildVisibleThinkingSummary(optimizationMode: 'optimize' | 'rewrite', u
 
 /**
 * 多轮优化提示词API
-* 请求体大小限制: 10MB (通过Next.js默认配置)
+* 请求体大小限制: 256KiB（服务端按实际读取字节强制执行）
 * 输入验证: 各输入字段长度不能超过10000字符
 * 对话历史长度限制: 最多20条
 */
 export async function POST(request: NextRequest) {
+  const auth = await requireAIUser(request)
+  if (!auth.ok) return auth.response
+
   let fallbackOriginalPrompt = ''
   let fallbackCurrentPrompt = ''
   let fallbackUserFeedback = ''
   let fallbackOptimizationMode: 'optimize' | 'rewrite' = 'optimize'
   let fallbackConversationHistory: ConversationMessage[] = []
+  let reservation: AIUsageReservation | undefined
 
   try {
-    const body = await request.json()
-    const {
-      originalPrompt,
-      currentPrompt,
-      userFeedback,
-      conversationHistory,
-      optimizationMode = 'optimize',
-    } = body
-    fallbackOriginalPrompt = originalPrompt || ''
-    fallbackCurrentPrompt = currentPrompt || ''
-    fallbackUserFeedback = userFeedback || ''
+    const body = await readLimitedJson<Record<string, unknown>>(request)
+    const originalPrompt = typeof body.originalPrompt === 'string' ? body.originalPrompt : ''
+    const currentPrompt = typeof body.currentPrompt === 'string' ? body.currentPrompt : ''
+    const userFeedback = typeof body.userFeedback === 'string' ? body.userFeedback : ''
+    const conversationHistory = parseConversationHistory(body.conversationHistory)
+    const optimizationMode: 'optimize' | 'rewrite' = body.optimizationMode === 'rewrite' ? 'rewrite' : 'optimize'
+    fallbackOriginalPrompt = originalPrompt
+    fallbackCurrentPrompt = currentPrompt
+    fallbackUserFeedback = userFeedback
     fallbackOptimizationMode = optimizationMode
-    fallbackConversationHistory = Array.isArray(conversationHistory) ? conversationHistory : []
-    const provider = body.provider ?? body.modelType
-    const model = body.model ?? body.modelName
-    const temperatureOverride = body.temperature as number | undefined
-    const topPOverride = (body.topP ?? body.top_p) as number | undefined
-    const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
+    fallbackConversationHistory = conversationHistory
+    const rawProvider = body.provider ?? body.modelType
+    const rawModel = body.model ?? body.modelName
+    const provider = typeof rawProvider === 'string' ? rawProvider : aiConfig.defaultProvider
+    const model = typeof rawModel === 'string' ? rawModel : undefined
+    const temperatureOverride = typeof body.temperature === 'number' ? body.temperature : undefined
+    const rawTopP = body.topP ?? body.top_p
+    const rawMaxTokens = body.maxTokens ?? body.max_tokens
+    const topPOverride = typeof rawTopP === 'number' ? rawTopP : undefined
+    const maxTokensOverride = typeof rawMaxTokens === 'number' ? rawMaxTokens : undefined
 
     // 输入长度限制
-    const MAX_INPUT_LENGTH = 10000;
-    if ((originalPrompt && originalPrompt.length > MAX_INPUT_LENGTH) || (currentPrompt && currentPrompt.length > MAX_INPUT_LENGTH)) {
-      return NextResponse.json({ error: "输入长度不能超过" + MAX_INPUT_LENGTH + "字符" }, { status: 400 });
+    if (
+      originalPrompt.length > MAX_AI_INPUT_CHARS ||
+      currentPrompt.length > MAX_AI_INPUT_CHARS ||
+      userFeedback.length > MAX_AI_INPUT_CHARS
+    ) {
+      return NextResponse.json({ error: "输入长度不能超过" + MAX_AI_INPUT_CHARS + "字符" }, { status: 400 });
     }
     if (!originalPrompt || !currentPrompt || !userFeedback) {
       // 对话历史长度限制
@@ -101,17 +119,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, provider)
+
     // 获取AI配置
-    const config = getAIRequestConfig(provider, model)
+    const config = getAIRequestConfig(provider, model, userRuntimeConfig || undefined)
     const systemPrompt = aiConfig.prompts.multiTurn
     const requestTemperature = Math.min(Math.max(temperatureOverride ?? config.temperature, 0), 2)
     const requestTopP = Math.min(Math.max(topPOverride ?? config.top_p, 0.1), 1)
     const requestMaxTokens = Math.min(Math.max(maxTokensOverride ?? config.max_tokens, 512), 8192)
     const usesCompletionTokensParam = config.provider === 'minimax' || config.provider === 'xiaomi'
+    const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+    if (!quota.ok) return quota.response
+    reservation = quota.reservation
 
     // 构建对话历史（带长度限制）
-    const MAX_HISTORY_LENGTH = 20;
-    const history = (conversationHistory || []).slice(-MAX_HISTORY_LENGTH);
+    const history = conversationHistory.slice(-(MAX_CONVERSATION_HISTORY_MESSAGES - 2))
     const messages = [
       {
         role: 'system' as const,
@@ -144,6 +166,7 @@ export async function POST(request: NextRequest) {
 
     const response = await fetch(`${config.baseURL}/chat/completions`, {
       method: 'POST',
+      redirect: 'error',
       headers: config.headers,
       body: JSON.stringify(requestBody),
       signal: controller.signal
@@ -151,6 +174,7 @@ export async function POST(request: NextRequest) {
     clearTimeout(timeoutId)
 
     if (!response.ok) {
+      await reservation.rollback()
       const localOptimized = buildLocalRefinement({ originalPrompt, currentPrompt, userFeedback, optimizationMode })
       const localHistory: ConversationMessage[] = [
         ...history,
@@ -263,6 +287,7 @@ export async function POST(request: NextRequest) {
     // 计算轮次
     const round = Math.floor(updatedHistory.length / 2)
 
+    reservation.commit()
     return NextResponse.json({
       success: true,
       optimizedPrompt: finalOptimizedPrompt,
@@ -273,7 +298,9 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Multi-turn optimization error:', error)
+    await reservation?.rollback()
+    if (error instanceof RequestPolicyError) return requestPolicyResponse(error)
+    console.error('Multi-turn optimization failed')
     if (fallbackOriginalPrompt && fallbackCurrentPrompt && fallbackUserFeedback) {
       const localOptimized = buildLocalRefinement({
         originalPrompt: fallbackOriginalPrompt,
@@ -282,7 +309,7 @@ export async function POST(request: NextRequest) {
         optimizationMode: fallbackOptimizationMode,
       })
       const localHistory: ConversationMessage[] = [
-        ...fallbackConversationHistory.slice(-20),
+        ...fallbackConversationHistory.slice(-(MAX_CONVERSATION_HISTORY_MESSAGES - 2)),
         { role: 'user', content: fallbackUserFeedback },
         { role: 'assistant', content: localOptimized }
       ]
@@ -301,8 +328,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        error: 'Failed to optimize prompt',
-        details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : 'Internal server error'
+        error: 'Failed to optimize prompt'
       },
       { status: 500 }
     )

@@ -168,6 +168,7 @@ export default function AdminPromptEditDialog({
               <Label>标签</Label>
               <div className="flex items-center space-x-2 mt-2">
                 <Input
+                  aria-label="新标签名称"
                   value={newTag}
                   onChange={(e) => setNewTag(e.target.value)}
                   onKeyPress={handleKeyPress}
@@ -179,8 +180,9 @@ export default function AdminPromptEditDialog({
                   onClick={handleAddTag}
                   disabled={!newTag.trim()}
                   size="sm"
+                  aria-label="添加标签"
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </div>
               
@@ -192,9 +194,10 @@ export default function AdminPromptEditDialog({
                       <button
                         type="button"
                         onClick={() => handleRemoveTag(tag)}
-                        className="ml-1 hover:text-red-500"
+                        className="ml-1 rounded-sm hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600"
+                        aria-label={`移除标签：${tag}`}
                       >
-                        <X className="h-3 w-3" />
+                        <X className="h-3 w-3" aria-hidden="true" />
                       </button>
                     </Badge>
                   ))}
@@ -220,4 +223,4 @@ export default function AdminPromptEditDialog({
       </DialogContent>
     </Dialog>
   )
-} 
+}

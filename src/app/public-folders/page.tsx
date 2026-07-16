@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import Header from '@/components/Header'
 import { PublicFolder } from '@/types'
 import { api } from '@/lib/api'
 import { Filter, Loader2, Folder, User, Calendar, FileText, Download, Check, X, Star } from 'lucide-react'
@@ -66,7 +65,7 @@ const publicFolderCopy = {
 }
 
 export default function PublicFoldersPage() {
-  const [locale, setLocale] = useState<Locale>('zh')
+  const [locale, setLocale] = useState<Locale>(() => detectLocaleFromSearch())
   const [folders, setFolders] = useState<PublicFolder[]>([])
   const [localeReady, setLocaleReady] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -83,18 +82,19 @@ export default function PublicFoldersPage() {
     setLocaleReady(true)
   }, [])
 
-  const fetchFolders = async (params: { page?: number; search?: string } = {}) => {
+  const fetchFolders = useCallback(async (params: { page?: number; search?: string } = {}) => {
+    const requestedPage = params.page ?? 1
     setLoading(true)
     try {
       const response = await api.publicFolders.list({
-        page: page,
+        page: requestedPage,
         limit: 12,
         lang: locale,
         ...params
       })
 
       if (response.success && response.data) {
-        if (params.page === 1) {
+        if (requestedPage === 1) {
           setFolders(response.data.items)
         } else {
           setFolders(prev => [...prev, ...response.data!.items])
@@ -112,13 +112,13 @@ export default function PublicFoldersPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [copy.fetchFailedDesc, copy.fetchFailedTitle, locale, toast])
 
   // 搜索条件变化时重新加载
   useEffect(() => {
     if (!localeReady) return
-    fetchFolders({ page: 1, search: searchTerm })
-  }, [searchTerm, locale, localeReady])
+    void fetchFolders({ page: 1, search: searchTerm })
+  }, [fetchFolders, localeReady, searchTerm])
 
   // 搜索处理
   const handleSearch = (value: string) => {
@@ -152,7 +152,7 @@ export default function PublicFoldersPage() {
       if (response.success) {
         toast({
           title: copy.importSuccessTitle,
-          description: (response as any).message || copy.importSuccessDesc,
+          description: response.message || copy.importSuccessDesc,
           variant: 'success',
         })
         
@@ -191,7 +191,6 @@ export default function PublicFoldersPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 页面标题和操作区 */}
@@ -257,8 +256,8 @@ export default function PublicFoldersPage() {
 
         {/* 文件夹网格 */}
         {loading && folders.length === 0 ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-600" aria-hidden="true" />
             <span className="ml-2 text-gray-600 dark:text-gray-400">{copy.loading}</span>
           </div>
         ) : (
@@ -267,15 +266,21 @@ export default function PublicFoldersPage() {
               {folders.map((folder) => (
                 <Card 
                   key={folder.id} 
-                  className="hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => handleFolderClick(folder)}
+                  className="hover:shadow-md transition-shadow"
                 >
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center space-x-2 flex-1">
                         <Folder className="h-5 w-5 text-blue-600" />
-                        <CardTitle className="text-lg font-semibold line-clamp-2">
-                          {folder.name}
+                        <CardTitle className="text-lg font-semibold line-clamp-2" role="heading" aria-level={3}>
+                          <button
+                            type="button"
+                            className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                            onClick={() => handleFolderClick(folder)}
+                            aria-label={`${copy.viewFolder}: ${folder.name}`}
+                          >
+                            {folder.name}
+                          </button>
                         </CardTitle>
                         {folder.is_featured && (
                           <div className="flex items-center px-2 py-1 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-xs font-medium rounded-full">
@@ -312,9 +317,9 @@ export default function PublicFoldersPage() {
                   <CardContent className="pt-0">
                     <div className="flex items-center justify-between pt-2">
                       <Button
+                        type="button"
                         size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation()
+                        onClick={() => {
                           if (locale === 'en') {
                             handleFolderClick(folder)
                             return
@@ -374,4 +379,4 @@ export default function PublicFoldersPage() {
 
     </div>
   )
-} 
+}

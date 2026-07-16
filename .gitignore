@@ -54,3 +54,7 @@ docker-compose.override.yml
 
 # Claude settings (local only)
 .claude/
+
+# Codex project tooling (local only)
+.agents/
+skills-lock.json

@@ -1,95 +1,99 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import {
+  createPaginationMetadata,
+  parseBoundedPagination,
+  readBoundedSearchParam,
+} from '@/lib/pagination-policy'
 
-// GET - 获取用户发布的公共文件夹列表
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth(request)
+  if ('error' in auth) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+  }
+
   try {
-    console.log('开始获取用户发布的文件夹...')
-    
-    const auth = await requireAuth(request)
-    if ('error' in auth) {
-      console.log('认证失败:', auth.error)
-      return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
-    }
-    const userId = auth.user.id
-    console.log('用户ID:', userId)
-
-    // 获取查询参数
     const { searchParams } = new URL(request.url)
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '10')
-    const search = searchParams.get('search') || ''
-    const offset = (page - 1) * limit
-
-    console.log('查询参数:', { page, limit, search, offset })
-
-    // 简化的查询
-    const whereConditions = ['pf.user_id = ' + userId]
-    let searchConditions = ''
-
-    if (search) {
-      searchConditions = ` AND (pf.name LIKE '%${search}%' OR pf.description LIKE '%${search}%')`
+    const paginationResult = parseBoundedPagination(searchParams, {
+      defaultLimit: 10,
+      maxLimit: 50,
+    })
+    const searchResult = readBoundedSearchParam(searchParams)
+    if (!paginationResult.ok) {
+      return NextResponse.json(
+        { success: false, error: paginationResult.error },
+        { status: 400 },
+      )
     }
+    if (!searchResult.ok) {
+      return NextResponse.json(
+        { success: false, error: searchResult.error },
+        { status: 400 },
+      )
+    }
+    const { page, limit, offset } = paginationResult.value
+    const search = searchResult.value
 
-    // 获取总数
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM public_folders pf
-      WHERE ${whereConditions.join(' AND ')}${searchConditions}
-    `
-    console.log('计数查询:', countQuery)
-    
-    const countResult = await db.queryRaw(countQuery)
-    const total = (countResult.rows as Record<string, unknown>[])[0]?.total as number || 0
-    console.log('总数:', total)
+    const conditions = ['pf.user_id = ?']
+    const queryParams: Array<string | number> = [auth.user.id]
+    if (search) {
+      conditions.push('(pf.name LIKE ? OR pf.description LIKE ?)')
+      const pattern = `%${search}%`
+      queryParams.push(pattern, pattern)
+    }
+    const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    // 获取基本数据
-    const dataQuery = `
-      SELECT pf.id, pf.name, pf.description, pf.created_at, pf.updated_at,
-             u.username as author
-      FROM public_folders pf
-      JOIN users u ON pf.user_id = u.id
-      WHERE ${whereConditions.join(' AND ')}${searchConditions}
-      ORDER BY pf.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `
-    console.log('数据查询:', dataQuery)
-    
-    const result = await db.queryRaw(dataQuery)
-    const folders = result.rows || []
-    console.log('原始数据:', folders)
+    const countResult = await db.query(
+      `SELECT COUNT(*) AS total FROM public_folders pf ${whereClause}`,
+      queryParams,
+    )
+    const total = Number((countResult.rows as Record<string, unknown>[])[0]?.total) || 0
 
-    // 处理数据格式
-    const processedFolders = (folders as Record<string, unknown>[]).map(folder => ({
-      id: folder.id as number,
-      name: folder.name as string,
-      description: folder.description as string,
-      author: folder.author as string,
-      import_count: 0, // 暂时设为0
-      is_featured: false, // 暂时设为false
-      created_at: folder.created_at as string,
-      updated_at: folder.updated_at as string
+    const result = await db.query(
+      `SELECT
+         pf.id,
+         pf.name,
+         pf.description,
+         pf.user_id,
+         pf.original_folder_id,
+         pf.is_featured,
+         pf.created_at,
+         pf.updated_at,
+         u.username AS author,
+         (SELECT COUNT(*) FROM user_imported_folders uif WHERE uif.public_folder_id = pf.id) AS import_count,
+         (SELECT COUNT(*) FROM public_folder_prompts snapshot WHERE snapshot.public_folder_id = pf.id) AS prompt_count
+       FROM public_folders pf
+       JOIN users u ON u.id = pf.user_id
+       ${whereClause}
+       ORDER BY pf.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset],
+    )
+
+    const items = (result.rows as Record<string, unknown>[]).map((folder) => ({
+      ...folder,
+      import_count: Number(folder.import_count) || 0,
+      prompt_count: Number(folder.prompt_count) || 0,
+      is_featured: Boolean(folder.is_featured),
     }))
-
-    const totalPages = Math.ceil(total / limit)
-    console.log('处理后的数据:', processedFolders)
+    const pagination = createPaginationMetadata(total, paginationResult.value)
 
     return NextResponse.json({
       success: true,
       data: {
-        items: processedFolders,
-        total,
+        items,
+        total: pagination.total,
         page,
         limit,
-        totalPages
-      }
+        totalPages: pagination.totalPages,
+      },
     })
   } catch (error) {
     console.error('Get user published folders error:', error)
     return NextResponse.json(
-      { success: false, error: '获取发布的文件夹失败', details: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
+      { success: false, error: '获取发布的文件夹失败' },
+      { status: 500 },
     )
   }
-} 
+}

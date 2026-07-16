@@ -1,5 +1,5 @@
-export const DEFAULT_PUBLIC_AI_PROVIDER = 'deepseek'
-export const DEFAULT_PUBLIC_AI_MODEL = 'deepseek-v4-flash'
+export const DEFAULT_PUBLIC_AI_PROVIDER = 'minimax'
+export const DEFAULT_PUBLIC_AI_MODEL = 'MiniMax-M2.5-highspeed'
 
 export const AI_PROVIDER_MODEL_OPTIONS = {
   qwen: {

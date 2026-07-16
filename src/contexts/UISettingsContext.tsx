@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { DEFAULT_VISUAL_STYLE, isVisualStyle, VisualStyle } from '@/config/visual-styles'
 
 type UISettingsContextType = {
@@ -33,11 +33,11 @@ export function UISettingsProvider({ children }: { children: React.ReactNode }) 
     document.documentElement.dataset.visualStyle = DEFAULT_VISUAL_STYLE
   }, [])
 
-  const setVisualStyle = (nextVisualStyle: VisualStyle) => {
+  const setVisualStyle = useCallback((nextVisualStyle: VisualStyle) => {
     setVisualStyleState(nextVisualStyle)
     localStorage.setItem(VISUAL_STYLE_STORAGE_KEY, nextVisualStyle)
     document.documentElement.dataset.visualStyle = nextVisualStyle
-  }
+  }, [])
 
   return (
     <UISettingsContext.Provider value={{ visualStyle, setVisualStyle }}>

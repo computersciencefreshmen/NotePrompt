@@ -1,6 +1,7 @@
 "use client";
 
 import { Toaster } from "@/components/ui/toaster";
+import AppShell from "@/components/AppShell";
 
 export default function ClientBody({
   children,
@@ -9,7 +10,7 @@ export default function ClientBody({
 }) {
   return (
     <div className="antialiased">
-      {children}
+      <AppShell>{children}</AppShell>
       <Toaster />
     </div>
   );

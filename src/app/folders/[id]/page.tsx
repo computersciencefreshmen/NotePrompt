@@ -1,8 +1,7 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import Header from '@/components/Header'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import PromptCard from '@/components/PromptCard'
@@ -21,14 +20,7 @@ export default function FolderDetailPage() {
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (folderId) {
-      fetchFolderData()
-      fetchFolderPrompts()
-    }
-  }, [folderId])
-
-  const fetchFolderData = async () => {
+  const fetchFolderData = useCallback(async () => {
     try {
       const response = await api.folders.get(folderId)
       if (response.success && response.data) {
@@ -37,9 +29,9 @@ export default function FolderDetailPage() {
     } catch (error) {
       console.error('Failed to fetch folder data:', error)
     }
-  }
+  }, [folderId])
 
-  const fetchFolderPrompts = async () => {
+  const fetchFolderPrompts = useCallback(async () => {
     setLoading(true)
     try {
       // 使用apiRequest函数来确保添加认证头
@@ -56,7 +48,13 @@ export default function FolderDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [folderId])
+
+  useEffect(() => {
+    if (folderId) {
+      void Promise.all([fetchFolderData(), fetchFolderPrompts()])
+    }
+  }, [fetchFolderData, fetchFolderPrompts, folderId])
 
   const handlePromptClick = (prompt: Prompt) => {
     const currentPath = `/folders/${folderId}`
@@ -93,7 +91,6 @@ export default function FolderDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Header />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
           <Button
@@ -165,4 +162,4 @@ export default function FolderDetailPage() {
       </main>
     </div>
   )
-} 
+}

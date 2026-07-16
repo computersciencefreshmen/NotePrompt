@@ -1,26 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
-import { requireAuth } from '@/lib/auth'
+import { requireAdminAuth } from '@/lib/auth'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import {
+  createPaginationMetadata,
+  parseBoundedPagination,
+  readBoundedSearchParam,
+} from '@/lib/pagination-policy'
+import {
+  contentWasTruncated,
+  PROMPT_LIST_DESCRIPTION_CHARS,
+  PROMPT_LIST_PREVIEW_CHARS,
+} from '@/lib/prompt-list-policy'
 
 // GET - 获取可选的提示词列表（用于添加到文件夹）
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth(request)
+    const auth = await requireAdminAuth(request)
     if ('error' in auth) {
       return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
     }
-    
-    // 检查管理员权限
-    if (!auth.user.is_admin) {
-      return NextResponse.json(
-        { success: false, error: '需要管理员权限' },
-        { status: 403 }
-      )
-    }
 
     const { searchParams } = new URL(request.url)
-    const search = searchParams.get('search') || ''
-    const folderId = searchParams.get('folderId')
+    const paginationResult = parseBoundedPagination(searchParams, {
+      defaultLimit: 50,
+      maxLimit: 100,
+    })
+    const searchResult = readBoundedSearchParam(searchParams)
+    if (!paginationResult.ok) {
+      return NextResponse.json(
+        { success: false, error: paginationResult.error },
+        { status: 400 },
+      )
+    }
+    if (!searchResult.ok) {
+      return NextResponse.json(
+        { success: false, error: searchResult.error },
+        { status: 400 },
+      )
+    }
+    const { limit, offset } = paginationResult.value
+    const search = searchResult.value
+    const folderIdValue = searchParams.get('folderId')
+    const folderId = folderIdValue == null ? null : parsePositiveResourceId(folderIdValue)
+    if (folderIdValue != null && folderId == null) {
+      return NextResponse.json({ success: false, error: '无效的公共文件夹ID' }, { status: 400 })
+    }
 
     // 构建查询条件
     let whereClause = 'WHERE 1=1'
@@ -32,36 +57,55 @@ export async function GET(request: NextRequest) {
       queryParams.push(searchPattern, searchPattern)
     }
 
-    // 如果指定了文件夹ID，排除已经在文件夹中的提示词
-    if (folderId) {
-      whereClause += ' AND up.id NOT IN (SELECT user_prompt_id FROM user_prompt_folders WHERE folder_id = ?)'
-      queryParams.push(parseInt(folderId))
+    // Exclude prompts already copied into this publication snapshot.
+    if (folderId != null) {
+      whereClause += ` AND NOT EXISTS (
+        SELECT 1
+        FROM public_folder_prompts snapshot
+        WHERE snapshot.public_folder_id = ? AND snapshot.source_prompt_id = up.id
+      )`
+      queryParams.push(folderId)
     }
 
-    // 获取可选的提示词
+    const countResult = await db.query(
+      `SELECT COUNT(*) AS total
+         FROM user_prompts up
+         JOIN users u ON up.user_id = u.id
+         ${whereClause}`,
+      queryParams,
+    )
+    const total = Number((countResult.rows as Array<{ total?: number | string }>)[0]?.total) || 0
+
     const result = await db.query(`
-      SELECT up.id, up.title, up.content, up.description, up.created_at, up.updated_at,
+      SELECT up.id, up.title,
+             LEFT(up.content, ${PROMPT_LIST_PREVIEW_CHARS}) AS content,
+             CHAR_LENGTH(up.content) AS content_length,
+             LEFT(up.description, ${PROMPT_LIST_DESCRIPTION_CHARS}) AS description,
+             up.created_at, up.updated_at,
              u.username as author
       FROM user_prompts up
       JOIN users u ON up.user_id = u.id
       ${whereClause}
       ORDER BY up.created_at DESC
-      LIMIT 50
-    `, queryParams)
+      LIMIT ? OFFSET ?
+    `, [...queryParams, limit, offset])
 
-    const prompts = (result.rows as any[]).map(prompt => ({
+    const prompts = (result.rows as Array<Record<string, unknown>>).map(prompt => ({
       id: prompt.id,
       title: prompt.title,
       content: prompt.content,
+      content_is_truncated: contentWasTruncated(prompt.content_length),
       description: prompt.description,
       author: prompt.author,
       created_at: prompt.created_at,
       updated_at: prompt.updated_at
     }))
 
+    const pagination = createPaginationMetadata(total, paginationResult.value)
     return NextResponse.json({
       success: true,
-      data: prompts
+      data: prompts,
+      pagination,
     })
   } catch (error) {
     console.error('Get available prompts error:', error)
@@ -70,4 +114,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Sparkles, Flame, Calendar, TrendingUp } from 'lucide-react'
 import { api } from '@/lib/api'
+import { detectLocaleFromSearch, Locale } from '@/lib/i18n'
 
 interface DailyData {
   usage_date: string
@@ -25,6 +26,45 @@ interface HeatmapData {
   }
 }
 
+const heatmapCopy = {
+  zh: {
+    weekdays: ['日', '一', '二', '三', '四', '五', '六'],
+    months: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+    loading: '加载热力图...',
+    empty: '暂无真实使用数据',
+    title: 'AI 使用热力图',
+    range: '过去 6 个月',
+    source: '仅统计真实调用',
+    activeDays: '活跃天数',
+    totalOptimize: '总优化次数',
+    totalGenerate: '总生成次数',
+    maxDaily: '单日最高',
+    dayUnit: ' 天',
+    countUnit: ' 次',
+    less: '少',
+    more: '多',
+    tooltip: (count: number) => `${count} 次 AI 使用`,
+  },
+  en: {
+    weekdays: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
+    months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+    loading: 'Loading heatmap...',
+    empty: 'No real usage data yet',
+    title: 'AI Usage Heatmap',
+    range: 'Past 6 months',
+    source: 'Real calls only',
+    activeDays: 'Active days',
+    totalOptimize: 'Optimizations',
+    totalGenerate: 'Generations',
+    maxDaily: 'Best day',
+    dayUnit: ' days',
+    countUnit: ' calls',
+    less: 'Less',
+    more: 'More',
+    tooltip: (count: number) => `${count} AI call${count === 1 ? '' : 's'}`,
+  },
+}
+
 // 颜色等级 (GitHub 风格)
 function getColor(count: number, max: number): string {
   if (count === 0) return 'bg-gray-100 dark:bg-gray-800'
@@ -35,9 +75,6 @@ function getColor(count: number, max: number): string {
   return 'bg-emerald-700 dark:bg-emerald-400'
 }
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
-const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
-
 function isHeatmapData(value: unknown): value is HeatmapData {
   if (!value || typeof value !== 'object') return false
   const data = value as Partial<HeatmapData>
@@ -45,6 +82,8 @@ function isHeatmapData(value: unknown): value is HeatmapData {
 }
 
 export default function AIUsageHeatmap() {
+  const [locale] = useState<Locale>(() => detectLocaleFromSearch())
+  const copy = heatmapCopy[locale]
   const [data, setData] = useState<HeatmapData | null>(null)
   const [loading, setLoading] = useState(true)
   const [hoveredDay, setHoveredDay] = useState<{ date: string; count: number; x: number; y: number } | null>(null)
@@ -104,7 +143,7 @@ export default function AIUsageHeatmap() {
           const dateStr = cursor.toISOString().split('T')[0]
           const month = cursor.getMonth()
           if (month !== lastMonth) {
-            monthLabels.push({ label: MONTHS[month], col: weekIdx })
+              monthLabels.push({ label: copy.months[month], col: weekIdx })
             lastMonth = month
           }
           week.push({
@@ -120,7 +159,7 @@ export default function AIUsageHeatmap() {
     }
 
     return { weeks, monthLabels, maxCount }
-  }, [data])
+  }, [data, copy.months])
 
   if (loading) {
     return (
@@ -128,7 +167,7 @@ export default function AIUsageHeatmap() {
         <CardContent className="py-12">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto mb-2"></div>
-            <p className="text-sm text-gray-500">加载热力图...</p>
+            <p className="text-sm text-gray-500">{copy.loading}</p>
           </div>
         </CardContent>
       </Card>
@@ -139,7 +178,7 @@ export default function AIUsageHeatmap() {
     return (
       <Card>
         <CardContent className="py-8 text-center text-gray-500">
-          暂无使用数据
+          {copy.empty}
         </CardContent>
       </Card>
     )
@@ -151,10 +190,11 @@ export default function AIUsageHeatmap() {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center text-lg">
             <Sparkles className="h-5 w-5 mr-2 text-emerald-600" />
-            AI 使用热力图
+            {copy.title}
           </CardTitle>
           <div className="flex items-center space-x-3 text-xs text-gray-500">
-            <span>过去 6 个月</span>
+            <Badge variant="outline" className="text-[11px] font-normal">{copy.source}</Badge>
+            <span>{copy.range}</span>
           </div>
         </div>
       </CardHeader>
@@ -164,29 +204,29 @@ export default function AIUsageHeatmap() {
           <div className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2">
             <Flame className="h-4 w-4 text-orange-500" />
             <div>
-              <p className="text-xs text-gray-500">活跃天数</p>
-              <p className="font-bold text-sm">{data.summary.activeDays} 天</p>
+              <p className="text-xs text-gray-500">{copy.activeDays}</p>
+              <p className="font-bold text-sm">{data.summary.activeDays}{copy.dayUnit}</p>
             </div>
           </div>
           <div className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2">
             <Sparkles className="h-4 w-4 text-purple-500" />
             <div>
-              <p className="text-xs text-gray-500">总优化次数</p>
+              <p className="text-xs text-gray-500">{copy.totalOptimize}</p>
               <p className="font-bold text-sm">{data.summary.totalOptimize}</p>
             </div>
           </div>
           <div className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2">
             <TrendingUp className="h-4 w-4 text-blue-500" />
             <div>
-              <p className="text-xs text-gray-500">总生成次数</p>
+              <p className="text-xs text-gray-500">{copy.totalGenerate}</p>
               <p className="font-bold text-sm">{data.summary.totalGenerate}</p>
             </div>
           </div>
           <div className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2">
             <Calendar className="h-4 w-4 text-emerald-500" />
             <div>
-              <p className="text-xs text-gray-500">单日最高</p>
-              <p className="font-bold text-sm">{data.summary.maxDaily} 次</p>
+              <p className="text-xs text-gray-500">{copy.maxDaily}</p>
+              <p className="font-bold text-sm">{data.summary.maxDaily}{copy.countUnit}</p>
             </div>
           </div>
         </div>
@@ -209,7 +249,7 @@ export default function AIUsageHeatmap() {
           <div className="flex mt-4">
             {/* 星期标签 */}
             <div className="flex flex-col mr-1 mt-0">
-              {WEEKDAYS.map((d, i) => (
+              {copy.weekdays.map((d, i) => (
                 <div
                   key={i}
                   className="h-[13px] text-[9px] text-gray-400 flex items-center justify-end pr-1"
@@ -252,13 +292,13 @@ export default function AIUsageHeatmap() {
 
           {/* 图例 */}
           <div className="flex items-center justify-end mt-3 space-x-1 text-[10px] text-gray-400">
-            <span>少</span>
+            <span>{copy.less}</span>
             <div className="w-[11px] h-[11px] rounded-[2px] bg-gray-100 dark:bg-gray-800"></div>
             <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-200 dark:bg-emerald-900"></div>
             <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-400 dark:bg-emerald-700"></div>
             <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-500 dark:bg-emerald-500"></div>
             <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-700 dark:bg-emerald-400"></div>
-            <span>多</span>
+            <span>{copy.more}</span>
           </div>
         </div>
 
@@ -272,7 +312,7 @@ export default function AIUsageHeatmap() {
               transform: 'translate(-50%, -100%)',
             }}
           >
-            <span className="font-medium">{hoveredDay.count} 次 AI 使用</span>
+            <span className="font-medium">{copy.tooltip(hoveredDay.count)}</span>
             <span className="text-gray-300 ml-1.5">{hoveredDay.date}</span>
           </div>
         )}

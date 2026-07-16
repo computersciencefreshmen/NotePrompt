@@ -94,7 +94,7 @@ function LoginContent() {
         description: copy.verifiedDesc,
       });
     }
-  }, [verified, toast]);
+  }, [copy.verifiedDesc, copy.verifiedTitle, toast, verified]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,7 +132,7 @@ function LoginContent() {
         }
         toast({
           title: copy.failed,
-          description: result.error || copy.wrongCredentials,
+          description: locale === 'en' ? copy.wrongCredentials : result.error || copy.wrongCredentials,
           variant: 'destructive',
         });
       }

@@ -10,7 +10,7 @@ export default function GlobalError({
   return (
     <html lang="zh-CN">
       <body>
-        <div style={{
+        <main style={{
           minHeight: '100vh',
           display: 'flex',
           alignItems: 'center',
@@ -21,11 +21,11 @@ export default function GlobalError({
         }}>
           <div style={{ maxWidth: '28rem', textAlign: 'center', padding: '1rem' }}>
             <div style={{ marginBottom: '1.5rem' }}>
-              <span style={{ fontSize: '3rem' }}>⚠️</span>
+              <span style={{ fontSize: '3rem' }} aria-hidden="true">⚠️</span>
             </div>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>
               应用出现了严重错误
-            </h2>
+            </h1>
             <p style={{ fontSize: '0.875rem', color: '#9ca3af', marginBottom: '1.5rem' }}>
               {error.message || '发生了意外错误'}
             </p>
@@ -60,7 +60,7 @@ export default function GlobalError({
               </button>
             </div>
           </div>
-        </div>
+        </main>
       </body>
     </html>
   )

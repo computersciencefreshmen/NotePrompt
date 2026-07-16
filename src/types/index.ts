@@ -53,6 +53,26 @@ export interface ProfessionalModeData {
   variables?: Record<string, string>
 }
 
+export type PromptEditorState =
+  | {
+      editor_mode: 'normal'
+      payload: NormalModeData
+      schema_version: 1
+    }
+  | {
+      editor_mode: 'professional'
+      payload: ProfessionalModeData
+      schema_version: 1
+    }
+
+export type PromptEditorSaveData = PromptEditorState & {
+  title: string
+  content: string
+  mode: EditMode
+  tags: string[]
+  is_public: boolean
+}
+
 export interface EditorSettings {
   mode: EditMode
   autoSave: boolean
@@ -66,16 +86,12 @@ export interface User {
   id: number
   username: string
   email: string
-  password_hash?: string // 前端通常不需要
   user_type: 'free' | 'pro' | 'admin'
   is_admin: boolean
   permissions: string[] // JSON数组格式
   avatar_url?: string
   is_active: boolean
   email_verified?: boolean // 邮箱是否已验证
-  verification_code?: string // 验证码（前端通常不需要）
-  verification_expires?: string // 验证码过期时间
-  email_verify_sent_at?: string // 验证码发送时间
   created_at: string
   updated_at: string
 }
@@ -107,7 +123,6 @@ export interface AuthResponse {
   code?: string
   data?: {
     user?: User | Partial<User>
-    token?: string
     email_verified?: boolean
     email_sent?: boolean
     requireVerification?: boolean
@@ -152,8 +167,10 @@ export interface Category {
 // === 公共提示词相关类型 ===
 export interface PublicPrompt {
   id: number
+  source?: 'curated' | 'published'
   title: string
   content: string
+  content_is_truncated?: boolean
   description?: string
   author: string
   author_id: number
@@ -241,6 +258,7 @@ export interface Prompt {
   id: number
   title: string
   content: string
+  content_is_truncated?: boolean
   description?: string
   folder_id: number | null // 主要文件夹ID，支持null
   folder_ids?: number[] // 所有关联的文件夹ID
@@ -253,6 +271,10 @@ export interface Prompt {
   updated_at: string
   is_favorited?: boolean
   is_public?: boolean
+  mode?: string
+  editor_mode?: EditMode
+  payload?: NormalModeData | ProfessionalModeData
+  schema_version?: number
 }
 
 export interface Folder {
@@ -281,6 +303,9 @@ export interface CreatePromptData {
   category_id?: number | null
   tags?: string[] // 标签名数组
   mode?: string
+  editor_mode?: EditMode
+  payload?: NormalModeData | ProfessionalModeData
+  schema_version?: number
   is_public?: boolean
 }
 
@@ -288,9 +313,14 @@ export interface UpdatePromptData {
   title?: string
   content?: string
   description?: string
-  folder_id?: number
-  category_id?: number
+  folder_id?: number | null
+  category_id?: number | null
   tags?: string[]
+  mode?: string
+  editor_mode?: EditMode
+  payload?: NormalModeData | ProfessionalModeData
+  schema_version?: number
+  is_public?: boolean
 }
 
 // 创建文件夹的请求数据
@@ -333,6 +363,16 @@ export interface ApiResponse<T> {
   success: boolean
   data?: T
   error?: string
+  message?: string
+  pagination?: {
+    page: number
+    limit: number
+    offset?: number
+    total: number
+    totalPages: number
+    hasPreviousPage?: boolean
+    hasNextPage?: boolean
+  }
 }
 
 export interface PaginatedResponse<T> {
@@ -421,7 +461,7 @@ export interface PublicFolder {
   name: string
   description: string
   user_id: number
-  original_folder_id: number
+  original_folder_id: number | null
   is_featured: boolean
   created_at: string
   updated_at: string
@@ -469,6 +509,7 @@ export interface AdminPrompt {
   id: number
   title: string
   content: string
+  content_is_truncated?: boolean
   description?: string
   author_id: number
   author: string
@@ -486,7 +527,7 @@ export interface AdminFolder {
   description: string
   user_id: number
   author: string
-  original_folder_id: number
+  original_folder_id: number | null
   is_featured: boolean
   prompt_count: number
   created_at: string
@@ -502,5 +543,8 @@ export interface PromptVersion {
   content: string
   version_number: number
   change_summary: string | null
+  editor_mode?: EditMode
+  payload?: NormalModeData | ProfessionalModeData
+  schema_version?: number
   created_at: string
 }

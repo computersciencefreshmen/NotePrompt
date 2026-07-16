@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import { parseBoundedPagination, readBoundedQueryParam } from '@/lib/pagination-policy'
+import {
+  checkAccountRateLimit,
+  createRateLimitResponse,
+  rateLimitHttpStatus,
+} from '@/lib/rate-limit'
+
+const MAX_SEARCH_QUERY_CHARS = 200
 
 // GET - 全局搜索
 export async function GET(request: NextRequest) {
@@ -11,11 +19,33 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const keyword = searchParams.get('q') || ''
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '20')
+    const paginationResult = parseBoundedPagination(searchParams, {
+      defaultLimit: 20,
+      maxLimit: 50,
+    })
+    const keywordResult = readBoundedQueryParam(searchParams, 'q', MAX_SEARCH_QUERY_CHARS)
+    if (!paginationResult.ok) {
+      return NextResponse.json({ success: false, error: paginationResult.error }, { status: 400 })
+    }
+    if (!keywordResult.ok) {
+      return NextResponse.json({ success: false, error: keywordResult.error }, { status: 400 })
+    }
+    const { page, limit } = paginationResult.value
+    const keyword = keywordResult.value
 
-    if (!keyword.trim()) {
+    const rateLimit = await checkAccountRateLimit(
+      'search',
+      auth.user.id,
+      { windowMs: 60_000, maxRequests: 60 },
+    )
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        createRateLimitResponse(rateLimit),
+        { status: rateLimitHttpStatus(rateLimit) },
+      )
+    }
+
+    if (!keyword) {
       return NextResponse.json({
         success: true,
         data: {
@@ -26,7 +56,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const results = await db.globalSearch(auth.user.id, keyword.trim(), { page, limit })
+    const results = await db.globalSearch(auth.user.id, keyword, { page, limit })
 
     return NextResponse.json({
       success: true,

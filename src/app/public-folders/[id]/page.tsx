@@ -1,11 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import Header from '@/components/Header'
 import { PublicFolder, PublicPrompt } from '@/types'
 import { api } from '@/lib/api'
 import { 
@@ -93,6 +92,9 @@ export default function PublicFolderDetailPage() {
   
   const [folder, setFolder] = useState<PublicFolder | null>(null)
   const [prompts, setPrompts] = useState<PublicPrompt[]>([])
+  const [promptPage, setPromptPage] = useState(1)
+  const [promptTotal, setPromptTotal] = useState(0)
+  const [promptTotalPages, setPromptTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [copiedPromptId, setCopiedPromptId] = useState<number | null>(null)
   const [importing, setImporting] = useState(false)
@@ -104,19 +106,7 @@ export default function PublicFolderDetailPage() {
     setLocaleReady(true)
   }, [])
 
-  useEffect(() => {
-    if (folderId && localeReady) {
-      fetchFolderDetail()
-    }
-  }, [folderId, locale, localeReady])
-
-  useEffect(() => {
-    if (folder) {
-      fetchFolderPrompts()
-    }
-  }, [folder])
-
-  const fetchFolderDetail = async () => {
+  const fetchFolderDetail = useCallback(async () => {
     setLoading(true)
     try {
       const response = await api.publicFolders.get(folderId, locale)
@@ -128,21 +118,30 @@ export default function PublicFolderDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [folderId, locale])
 
-  const fetchFolderPrompts = async () => {
+  const fetchFolderPrompts = useCallback(async (page = 1) => {
     try {
       // 使用apiRequest函数来确保添加认证头
-      const response = await api.publicFolders.getPrompts(folderId, locale)
+      const response = await api.publicFolders.getPrompts(folderId, locale, { page, limit: 20 })
       if (response.success && response.data) {
         setPrompts(response.data)
+        setPromptPage(response.pagination?.page ?? page)
+        setPromptTotal(response.pagination?.total ?? response.data.length)
+        setPromptTotalPages(response.pagination?.totalPages ?? 1)
       } else {
         console.error('Failed to fetch public folder prompts:', response.error)
       }
     } catch (error) {
       console.error('Failed to fetch folder prompts:', error)
     }
-  }
+  }, [folderId, locale])
+
+  useEffect(() => {
+    if (folderId && localeReady) {
+      void Promise.all([fetchFolderDetail(), fetchFolderPrompts()])
+    }
+  }, [fetchFolderDetail, fetchFolderPrompts, folderId, localeReady])
 
   const handlePromptClick = (prompt: PublicPrompt) => {
     // 显示提示词详情对话框
@@ -168,8 +167,9 @@ export default function PublicFolderDetailPage() {
     }
 
     try {
-      // 导入公共提示词到用户的个人提示词库
-      const response = await api.publicPrompts.import(promptId)
+      // Import this folder's immutable snapshot row. Snapshot ids are a separate namespace
+      // from standalone public prompt ids.
+      const response = await api.publicFolders.importPrompt(folderId, promptId)
       if (response.success) {
         toast({
           title: copy.promptImportSuccessTitle,
@@ -209,7 +209,7 @@ export default function PublicFolderDetailPage() {
       if (response.success) {
         toast({
           title: copy.folderImportSuccessTitle,
-          description: (response as any).message || copy.folderImportSuccessDesc,
+          description: response.message || copy.folderImportSuccessDesc,
           variant: 'success',
         })
         
@@ -251,7 +251,6 @@ export default function PublicFolderDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -265,7 +264,6 @@ export default function PublicFolderDetailPage() {
   if (!folder) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
             <h1 className="text-2xl font-bold text-gray-900 mb-4">{copy.notFound}</h1>
@@ -281,7 +279,6 @@ export default function PublicFolderDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 返回按钮 */}
@@ -311,7 +308,7 @@ export default function PublicFolderDetailPage() {
                     </div>
                     <div className="flex items-center space-x-1">
                       <FileText className="h-4 w-4" />
-                      <span>{copy.promptCount(prompts.length)}</span>
+                      <span>{copy.promptCount(promptTotal)}</span>
                     </div>
                     <div className="flex items-center space-x-1">
                       <Calendar className="h-4 w-4" />
@@ -346,7 +343,7 @@ export default function PublicFolderDetailPage() {
         {/* 提示词列表 */}
         <div className="mb-8">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">
-            {copy.includedPrompts(prompts.length)}
+            {copy.includedPrompts(promptTotal)}
           </h2>
           
           {prompts.length === 0 ? (
@@ -364,12 +361,18 @@ export default function PublicFolderDetailPage() {
               {prompts.map((prompt) => (
                 <Card 
                   key={prompt.id} 
-                  className="hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => handlePromptClick(prompt)}
+                  className="hover:shadow-md transition-shadow"
                 >
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-lg font-semibold line-clamp-2">
-                      {prompt.title}
+                    <CardTitle className="text-lg font-semibold line-clamp-2" role="heading" aria-level={3}>
+                      <button
+                        type="button"
+                        className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                        onClick={() => handlePromptClick(prompt)}
+                        aria-label={`${copy.viewDetail}: ${prompt.title}`}
+                      >
+                        {prompt.title}
+                      </button>
                     </CardTitle>
                     <div className="flex items-center justify-between text-sm text-gray-500">
                       <div className="flex items-center space-x-4">
@@ -396,22 +399,18 @@ export default function PublicFolderDetailPage() {
                       {/* 操作按钮 */}
                       <div className="flex items-center justify-between pt-2">
                         <Button
+                          type="button"
                           size="sm"
                           variant="outline"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handlePromptClick(prompt)
-                          }}
+                          onClick={() => handlePromptClick(prompt)}
                         >
                           <Eye className="h-4 w-4 mr-1" />
                           {copy.viewDetail}
                         </Button>
                         <Button
+                          type="button"
                           size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleCopyPrompt(prompt)
-                          }}
+                          onClick={() => handleCopyPrompt(prompt)}
                           className="bg-blue-600 hover:bg-blue-700 text-white"
                         >
                           {copiedPromptId === prompt.id ? (
@@ -426,6 +425,27 @@ export default function PublicFolderDetailPage() {
                   </CardContent>
                 </Card>
               ))}
+            </div>
+          )}
+          {promptTotalPages > 1 && (
+            <div className="mt-6 flex items-center justify-center gap-3" aria-label="Prompt pagination">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={promptPage <= 1}
+                onClick={() => void fetchFolderPrompts(promptPage - 1)}
+              >
+                {locale === 'en' ? 'Previous' : '上一页'}
+              </Button>
+              <span className="text-sm text-gray-500">{promptPage} / {promptTotalPages}</span>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={promptPage >= promptTotalPages}
+                onClick={() => void fetchFolderPrompts(promptPage + 1)}
+              >
+                {locale === 'en' ? 'Next' : '下一页'}
+              </Button>
             </div>
           )}
         </div>
@@ -496,4 +516,4 @@ export default function PublicFolderDetailPage() {
       </Dialog>
     </div>
   )
-} 
+}

@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Mail, KeyRound, ArrowLeft, CheckCircle, Clock, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n';
+import { getPasswordPolicyError } from '@/lib/password-security';
 
 type Step = 'email' | 'code' | 'success';
 
@@ -21,7 +22,7 @@ const forgotPasswordCopy = {
     network: '网络错误，请检查连接',
     codeRequired: '请输入6位验证码',
     newPasswordRequired: '请输入新密码',
-    passwordMin: '密码长度不能少于6位',
+    passwordPolicy: '密码需为8-128位，并同时包含大写字母、小写字母和数字',
     mismatch: '两次输入的密码不一致',
     resetSuccessTitle: '密码重置成功',
     resetSuccessDesc: '请使用新密码登录',
@@ -39,7 +40,7 @@ const forgotPasswordCopy = {
     code: '验证码',
     codePlaceholder: '请输入6位验证码',
     newPassword: '新密码',
-    newPasswordPlaceholder: '请输入新密码（至少6位）',
+    newPasswordPlaceholder: '8-128位，包含大小写字母和数字',
     confirmPassword: '确认新密码',
     confirmPasswordPlaceholder: '请再次输入新密码',
     changeEmail: '更换邮箱',
@@ -57,7 +58,7 @@ const forgotPasswordCopy = {
     network: 'Network error. Please check your connection.',
     codeRequired: 'Enter the 6-digit verification code.',
     newPasswordRequired: 'Enter a new password.',
-    passwordMin: 'Password must be at least 6 characters.',
+    passwordPolicy: 'Use 8-128 characters with uppercase, lowercase, and a number.',
     mismatch: 'The two passwords do not match.',
     resetSuccessTitle: 'Password reset',
     resetSuccessDesc: 'Sign in with your new password.',
@@ -75,7 +76,7 @@ const forgotPasswordCopy = {
     code: 'Verification code',
     codePlaceholder: 'Enter the 6-digit code',
     newPassword: 'New password',
-    newPasswordPlaceholder: 'Enter a new password (min. 6 characters)',
+    newPasswordPlaceholder: '8-128 characters with uppercase, lowercase, and a number',
     confirmPassword: 'Confirm new password',
     confirmPasswordPlaceholder: 'Enter the new password again',
     changeEmail: 'Change email',
@@ -136,6 +137,7 @@ export default function ForgotPasswordPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
+        credentials: 'same-origin',
       });
 
       const data = await response.json();
@@ -176,9 +178,9 @@ export default function ForgotPasswordPage() {
       return;
     }
 
-    if (newPassword.length < 6) {
+    if (getPasswordPolicyError(newPassword)) {
       setMessageType('error');
-      setMessage(copy.passwordMin);
+      setMessage(copy.passwordPolicy);
       return;
     }
 
@@ -196,6 +198,7 @@ export default function ForgotPasswordPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code, newPassword }),
+        credentials: 'same-origin',
       });
 
       const data = await response.json();
@@ -290,7 +293,7 @@ export default function ForgotPasswordPage() {
               <>
                 {/* 邮箱输入 */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label htmlFor="reset-new-password" className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     {copy.email}
                   </label>
                   <Input
@@ -349,7 +352,10 @@ export default function ForgotPasswordPage() {
                   </label>
                   <div className="relative">
                     <Input
+                      id="reset-new-password"
                       type={showPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      maxLength={128}
                       placeholder={copy.newPasswordPlaceholder}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
@@ -367,12 +373,15 @@ export default function ForgotPasswordPage() {
 
                 {/* 确认密码 */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label htmlFor="reset-confirm-password" className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     {copy.confirmPassword}
                   </label>
                   <div className="relative">
                     <Input
+                      id="reset-confirm-password"
                       type={showConfirmPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      maxLength={128}
                       placeholder={copy.confirmPasswordPlaceholder}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}

@@ -1,35 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
 import db from '@/lib/mysql-database'
 import { emailService } from '@/lib/email-service'
-import type { User, RegisterRequest, AuthResponse } from '@/types'
-import { checkRateLimit, getClientIp, RateLimitRules, createRateLimitResponse } from '@/lib/rate-limit'
-
-// JWT密钥从统一配置获取
-const JWT_SECRET = process.env.JWT_SECRET
-if (!JWT_SECRET) {
-  throw new Error('FATAL: JWT_SECRET environment variable is required')
-}
+import type { AuthResponse } from '@/types'
+import { createSessionToken, setSessionCookie } from '@/lib/auth'
+import { toSafeUserDto } from '@/lib/auth-security'
+import { isBrowserCredentialMutationAllowed } from '@/lib/session-security'
+import { getPasswordPolicyError } from '@/lib/password-security'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+import {
+  MAX_AUTH_JSON_BODY_BYTES,
+  getVerificationCodeSecret,
+  hashVerificationCode,
+  parseVerificationEmail,
+} from '@/lib/verification-code-security'
+import {
+  checkAccountRateLimit,
+  checkIpRateLimit,
+  createRateLimitResponse,
+  RateLimitRules,
+  rateLimitHttpStatus,
+} from '@/lib/rate-limit'
 
 export async function POST(request: NextRequest) {
   try {
-    // 检查速率限制（基于IP）
-    const ip = getClientIp(request)
-    const rateCheck = await checkRateLimit(`register:${ip}`, RateLimitRules.register)
-
-    if (!rateCheck.allowed) {
-      return NextResponse.json(
-        createRateLimitResponse(rateCheck.resetAt!),
-        { status: 429 }
+    if (!isBrowserCredentialMutationAllowed(request.headers)) {
+      return NextResponse.json<AuthResponse>(
+        { success: false, error: '跨站注册请求已拒绝' },
+        { status: 403 },
       )
     }
 
-    const body: RegisterRequest = await request.json()
-    const { username, email, password } = body
+    const ipLimit = await checkIpRateLimit(request, 'register', RateLimitRules.register.ip)
+    if (!ipLimit.allowed) {
+      return NextResponse.json(createRateLimitResponse(ipLimit), { status: rateLimitHttpStatus(ipLimit) })
+    }
+
+    const body = await readLimitedJson<Record<string, unknown>>(request, MAX_AUTH_JSON_BODY_BYTES)
+    const username = typeof body.username === 'string' ? body.username.trim() : ''
+    const email = parseVerificationEmail(body.email)
+    const password = body.password
 
     // 验证输入
-    if (!username || !email || !password) {
+    if (!username || !email || typeof password !== 'string') {
       return NextResponse.json<AuthResponse>({
         success: false,
         error: '用户名、邮箱和密码都是必填项'
@@ -45,32 +58,16 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // 验证邮箱格式
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
-    if (!emailRegex.test(email)) {
-      return NextResponse.json<AuthResponse>({
-        success: false,
-        error: '邮箱格式不正确'
-      }, { status: 400 })
+    const accountLimit = await checkAccountRateLimit('register', email, RateLimitRules.register.account)
+    if (!accountLimit.allowed) {
+      return NextResponse.json(createRateLimitResponse(accountLimit), { status: rateLimitHttpStatus(accountLimit) })
     }
 
-    // 验证密码强度（至少8位，包含大小写字母和数字）
-    if (password.length < 8) {
+    const passwordError = getPasswordPolicyError(password)
+    if (passwordError) {
       return NextResponse.json<AuthResponse>({
         success: false,
-        error: '密码长度至少8位'
-      }, { status: 400 })
-    }
-
-    const passwordErrors = []
-    if (!/[a-z]/.test(password)) passwordErrors.push('小写字母')
-    if (!/[A-Z]/.test(password)) passwordErrors.push('大写字母')
-    if (!/\d/.test(password)) passwordErrors.push('数字')
-
-    if (passwordErrors.length > 0) {
-      return NextResponse.json<AuthResponse>({
-        success: false,
-        error: `密码必须包含：${passwordErrors.join('、')}`
+        error: passwordError
       }, { status: 400 })
     }
 
@@ -118,7 +115,7 @@ export async function POST(request: NextRequest) {
       await db.createUserStats(newUser.id as number)
     } catch (error) {
       // 不抛出错误，因为用户已经创建成功
-      console.error('用户统计记录创建失败:', error)
+      console.error('用户统计记录创建失败:', error instanceof Error ? error.message : 'unknown')
     }
 
     // 邮箱验证流程
@@ -127,11 +124,17 @@ export async function POST(request: NextRequest) {
       try {
         const verificationCode = emailService.generateVerificationCode()
         const verificationExpires = emailService.getVerificationExpiry(10)
+        const verificationCodeHash = hashVerificationCode(
+          email,
+          'email-verification',
+          verificationCode,
+          getVerificationCodeSecret(),
+        )
 
         // 更新数据库中的验证码
         await db.query(
           `UPDATE users SET verification_code = ?, verification_expires = ?, verification_attempts = 0, email_verify_sent_at = NOW() WHERE id = ?`,
-          [verificationCode, verificationExpires, newUser.id]
+          [verificationCodeHash, verificationExpires, newUser.id]
         )
 
         // 发送验证码邮件
@@ -141,7 +144,7 @@ export async function POST(request: NextRequest) {
           code: verificationCode,
         })
       } catch (emailError) {
-        console.error('验证码邮件发送失败:', emailError)
+        console.error('验证码邮件发送失败:', emailError instanceof Error ? emailError.message : 'unknown')
         // 邮件发送失败不影响注册，用户可以稍后在验证页面重新发送
       }
 
@@ -162,39 +165,45 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // 不需要邮箱验证时，直接激活并返回 token
+    // 不需要邮箱验证时，直接激活并通过 HttpOnly Cookie 建立会话
     await db.query(
       `UPDATE users SET email_verified = 1 WHERE id = ?`,
       [newUser.id]
     )
 
-    // 生成 JWT token
-    const token = jwt.sign(
-      {
-        userId: newUser.id,
-        username: newUser.username,
-        userType: newUser.user_type
-      },
-      process.env.JWT_SECRET!,
-      { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'] }
-    )
+    const activatedUser = await db.getUserById(Number(newUser.id))
+    if (!activatedUser) {
+      throw new Error('用户激活后无法读取')
+    }
+    const token = createSessionToken(activatedUser)
 
-    return NextResponse.json<AuthResponse>({
+    const response = NextResponse.json<AuthResponse>({
       success: true,
       message: '注册成功！',
       data: {
-        user: {
-          id: newUser.id as number,
-          username: newUser.username as string,
-          email: newUser.email as string,
-          email_verified: true
-        },
-        token
+        user: toSafeUserDto(activatedUser)
       }
     })
+    setSessionCookie(response, token)
+    return response
 
   } catch (error) {
-    console.error('Registration error:', error)
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json<AuthResponse>(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
+    if (
+      typeof error === 'object' && error !== null &&
+      'code' in error && error.code === 'ER_DUP_ENTRY'
+    ) {
+      return NextResponse.json<AuthResponse>({
+        success: false,
+        error: '用户名或邮箱已被注册',
+      }, { status: 400 })
+    }
+    console.error('Registration error:', error instanceof Error ? error.message : 'unknown')
     return NextResponse.json<AuthResponse>({
       success: false,
       error: '注册失败，请稍后重试'

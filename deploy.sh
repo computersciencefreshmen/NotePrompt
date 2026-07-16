@@ -1,95 +1,68 @@
-#!/bin/bash
-# =============================================================
-# Note Prompt 阿里云部署脚本
-# 服务器: 8.138.176.174 (Alibaba Cloud Linux 3)
-# 域名: noteprompt.cn
-# =============================================================
+#!/usr/bin/env bash
+# Secure host bootstrap only. Application release steps live in DEPLOY.md.
 
-set -e
+set -euo pipefail
 
-echo "=========================================="
-echo "  Note Prompt 部署脚本"
-echo "=========================================="
-
-# ============ 1. 系统基础环境 ============
-echo "[1/8] 更新系统包..."
-sudo yum update -y
-sudo yum install -y yum-utils git wget curl
-
-# ============ 2. 安装 Docker ============
-echo "[2/8] 安装 Docker..."
-if ! command -v docker &> /dev/null; then
-    sudo yum install -y docker
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    sudo usermod -aG docker $USER
-    echo "Docker 安装完成"
-else
-    echo "Docker 已安装，跳过"
-fi
-
-# ============ 3. 安装 Docker Compose ============
-echo "[3/8] 安装 Docker Compose..."
-if ! command -v docker-compose &> /dev/null; then
-    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    sudo chmod +x /usr/local/bin/docker-compose
-    echo "Docker Compose 安装完成"
-else
-    echo "Docker Compose 已安装，跳过"
-fi
-
-# ============ 4. 安装 MySQL ============
-echo "[4/8] 安装 MySQL..."
-if ! command -v mysql &> /dev/null; then
-    sudo yum install -y mysql-server
-    sudo systemctl start mysqld
-    sudo systemctl enable mysqld
-    echo "MySQL 安装完成，请手动设置root密码"
-else
-    echo "MySQL 已安装，跳过"
-fi
-
-# ============ 5. 创建项目目录 ============
-echo "[5/8] 创建项目目录..."
 PROJECT_DIR="/opt/note-prompt"
-sudo mkdir -p $PROJECT_DIR
-sudo chown -R $USER:$USER $PROJECT_DIR
+SECRET_DIR="/opt/note-prompt-secrets"
+TLS_DIR="${SECRET_DIR}/tls"
+CERTBOT_WEBROOT="/opt/note-prompt-certbot/www"
+DEPLOY_USER="${SUDO_USER:-${USER:-}}"
 
-# ============ 6. 初始化数据库 ============
-echo "[6/8] 初始化数据库..."
-echo "请确保 MySQL 已启动并配置好 root 密码"
-echo "然后运行: mysql -u root -p < database/mysql-schema-new.sql"
-
-# ============ 7. SSL证书申请（使用 Let's Encrypt） ============
-echo "[7/8] SSL 证书配置..."
-if ! command -v certbot &> /dev/null; then
-    sudo yum install -y certbot
-    echo "Certbot 安装完成"
+if [ -z "${DEPLOY_USER}" ]; then
+    echo "Cannot determine the non-root deployment user" >&2
+    exit 1
 fi
 
-# 创建 certbot 目录
-sudo mkdir -p /opt/note-prompt/certbot/www
-sudo mkdir -p /opt/note-prompt/nginx/ssl
+echo "[1/5] Installing host prerequisites..."
+sudo yum install -y yum-utils git wget curl certbot
 
-echo "SSL证书需要在 Nginx 启动后手动申请："
-echo "  sudo certbot certonly --webroot -w /opt/note-prompt/certbot/www -d noteprompt.cn -d www.noteprompt.cn"
-echo "  然后将证书复制到 nginx/ssl/ 目录"
+echo "[2/5] Installing and enabling Docker Engine..."
+if ! command -v docker >/dev/null 2>&1; then
+    sudo yum install -y docker
+fi
+sudo systemctl enable --now docker
+sudo usermod -aG docker "${DEPLOY_USER}"
 
-# ============ 8. 防火墙配置 ============
-echo "[8/8] 防火墙配置..."
-sudo firewall-cmd --permanent --add-service=http 2>/dev/null || true
-sudo firewall-cmd --permanent --add-service=https 2>/dev/null || true
-sudo firewall-cmd --permanent --add-port=3306/tcp 2>/dev/null || true
-sudo firewall-cmd --reload 2>/dev/null || true
+echo "[3/5] Ensuring Docker Compose v2 is available..."
+if ! docker compose version >/dev/null 2>&1; then
+    sudo yum install -y docker-compose-plugin
+fi
+docker compose version
 
-echo "=========================================="
-echo "  基础环境安装完成！"
-echo "=========================================="
-echo ""
-echo "下一步操作："
-echo "1. 设置 MySQL root 密码: sudo mysql_secure_installation"
-echo "2. 创建数据库: mysql -u root -p < database/mysql-schema-new.sql"
-echo "3. 配置 .env 文件: cp .env.example .env && vim .env"
-echo "4. 构建并启动: docker-compose up -d --build"
-echo "5. 申请SSL证书（见上方说明）"
-echo ""
+echo "[4/5] Creating restricted deployment directories..."
+DEPLOY_GROUP="$(id -gn "${DEPLOY_USER}")"
+sudo install -d -o "${DEPLOY_USER}" -g "${DEPLOY_GROUP}" -m 0750 "${PROJECT_DIR}"
+sudo install -d -o "${DEPLOY_USER}" -g "${DEPLOY_GROUP}" -m 0700 "${SECRET_DIR}" "${TLS_DIR}"
+sudo install -d -o root -g root -m 0755 "${CERTBOT_WEBROOT}"
+if [ ! -e "${SECRET_DIR}/runtime.env" ]; then
+    sudo install -o "${DEPLOY_USER}" -g "${DEPLOY_GROUP}" -m 0600 /dev/null "${SECRET_DIR}/runtime.env"
+fi
+sudo chown "${DEPLOY_USER}:${DEPLOY_GROUP}" "${SECRET_DIR}/runtime.env"
+sudo chmod 0600 "${SECRET_DIR}/runtime.env"
+
+echo "[5/5] Restricting the host firewall..."
+if ! command -v firewall-cmd >/dev/null 2>&1; then
+    echo "firewalld is not installed; refusing to report a secure bootstrap" >&2
+    exit 1
+fi
+if ! sudo firewall-cmd --state >/dev/null 2>&1; then
+    echo "firewalld is installed but not running; start it before continuing" >&2
+    exit 1
+fi
+
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+if sudo firewall-cmd --permanent --query-port=3306/tcp >/dev/null; then
+    sudo firewall-cmd --permanent --remove-port=3306/tcp
+fi
+if sudo firewall-cmd --permanent --query-port=6379/tcp >/dev/null; then
+    sudo firewall-cmd --permanent --remove-port=6379/tcp
+fi
+sudo firewall-cmd --reload
+
+echo
+echo "Host bootstrap complete. Log in again for Docker group membership."
+echo "Bootstrap is not an application release; no container has been started."
+echo "Next: follow DEPLOY.md to create separate DML/DDL database accounts,"
+echo "connect private Redis, inject secrets, validate TLS, and deploy by full commit SHA."

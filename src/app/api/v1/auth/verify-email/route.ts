@@ -1,6 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/mysql-database';
-import crypto from 'crypto';
+import { databaseBoolean } from '@/lib/auth-security';
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy';
+import {
+  MAX_AUTH_JSON_BODY_BYTES,
+  getVerificationCodeSecret,
+  hashVerificationCode,
+  isSixDigitVerificationCode,
+  parseVerificationEmail,
+  verifyVerificationCodeHash,
+} from '@/lib/verification-code-security';
+import {
+  checkAccountRateLimit,
+  checkIpRateLimit,
+  createRateLimitResponse,
+  RateLimitRules,
+  rateLimitHttpStatus,
+} from '@/lib/rate-limit';
+
+const INVALID_VERIFICATION_RESPONSE = {
+  success: false,
+  error: '邮箱或验证码无效、已过期，请重新获取验证码',
+};
 
 /**
  * POST /api/v1/auth/verify-email
@@ -8,100 +29,83 @@ import crypto from 'crypto';
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, code } = body;
+    const ipLimit = await checkIpRateLimit(request, 'verify-email', RateLimitRules.verifyEmail.ip);
+    if (!ipLimit.allowed) {
+      return NextResponse.json(createRateLimitResponse(ipLimit), { status: rateLimitHttpStatus(ipLimit) });
+    }
+
+    const body = await readLimitedJson<Record<string, unknown>>(request, MAX_AUTH_JSON_BODY_BYTES);
+    const email = parseVerificationEmail(body.email);
+    const code = body.code;
 
     // 参数验证
-    if (!email || !code) {
+    if (!email || !isSixDigitVerificationCode(code)) {
       return NextResponse.json(
-        { success: false, error: '邮箱和验证码不能为空' },
+        { success: false, error: '邮箱或验证码格式不正确' },
         { status: 400 }
       );
     }
 
-    // 验证邮箱格式
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { success: false, error: '邮箱格式不正确' },
-        { status: 400 }
-      );
+    const accountLimit = await checkAccountRateLimit('verify-email', email, RateLimitRules.verifyEmail.account);
+    if (!accountLimit.allowed) {
+      return NextResponse.json(createRateLimitResponse(accountLimit), { status: rateLimitHttpStatus(accountLimit) });
     }
 
-    // 验证码格式检查（6位数字）
-    if (!/^\d{6}$/.test(code)) {
-      return NextResponse.json(
-        { success: false, error: '验证码格式不正确' },
-        { status: 400 }
-      );
-    }
+    const verificationSecret = getVerificationCodeSecret();
+    const submittedCodeHash = hashVerificationCode(
+      email,
+      'email-verification',
+      code,
+      verificationSecret,
+    );
 
-    // 查询用户
+    // 查询用户；所有账户状态和验证码失败均使用相同公开响应。
     const user = await db.getUserByEmail(email);
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: '用户不存在' },
-        { status: 404 }
-      );
-    }
+    const verificationAttempts = Number(user?.verification_attempts || 0);
+    const expiresAt = user?.verification_expires
+      ? new Date(String(user.verification_expires)).getTime()
+      : Number.NaN;
+    const codeMatches = verifyVerificationCodeHash(
+      user?.verification_code,
+      email,
+      'email-verification',
+      code,
+      verificationSecret,
+    );
+    const canVerify = Boolean(user) &&
+      !databaseBoolean(user?.email_verified) &&
+      verificationAttempts < 5 &&
+      Number.isFinite(expiresAt) &&
+      expiresAt >= Date.now() &&
+      codeMatches;
 
-    // 检查验证尝试次数（防止暴力破解）
-    const maxAttempts = 5;
-    const verificationAttempts = Number(user.verification_attempts || 0);
-    if (verificationAttempts >= maxAttempts) {
-      return NextResponse.json(
-        { success: false, error: '验证尝试次数过多，请重新获取验证码' },
-        { status: 429 }
-      );
-    }
-
-    // 检查是否已验证
-    if (user.email_verified) {
-      return NextResponse.json(
-        { success: false, error: '邮箱已验证' },
-        { status: 400 }
-      );
-    }
-
-    // 检查验证码是否存在
-    if (!user.verification_code) {
-      return NextResponse.json(
-        { success: false, error: '请先获取验证码' },
-        { status: 400 }
-      );
-    }
-
-    // 检查验证码是否过期
-    if (user.verification_expires) {
-      const expiresTime = new Date(String(user.verification_expires));
-      const now = new Date();
-      if (now > expiresTime) {
-        return NextResponse.json(
-          { success: false, error: '验证码已过期，请重新获取' },
-          { status: 400 }
+    if (!canVerify) {
+      // 增加失败计数（防止暴力破解）
+      if (
+        user &&
+        !databaseBoolean(user.email_verified) &&
+        user.verification_code &&
+        verificationAttempts < 5 &&
+        Number.isFinite(expiresAt) &&
+        expiresAt >= Date.now() &&
+        !codeMatches
+      ) {
+        await db.query(
+          `UPDATE users
+           SET verification_attempts = COALESCE(verification_attempts, 0) + 1
+           WHERE id = ? AND verification_code = ?`,
+          [user.id, String(user.verification_code)]
         );
       }
-    }
-
-    // 验证码比对（使用constant-time比较防止时序攻击）
-    if (!user.verification_code || !crypto.timingSafeEqual(
-      Buffer.from(String(user.verification_code)),
-      Buffer.from(code)
-    )) {
-      // 增加失败计数（防止暴力破解）
-      await db.query(
-        'UPDATE users SET verification_attempts = COALESCE(verification_attempts, 0) + 1 WHERE id = ?',
-        [user.id]
-      );
 
       return NextResponse.json(
-        { success: false, error: '验证码不正确' },
+        INVALID_VERIFICATION_RESPONSE,
         { status: 400 }
       );
     }
 
     // 验证成功，更新用户状态并清除验证码
-    await db.query(
+    const updateResult = await db.query(
       `UPDATE users
        SET email_verified = 1,
            is_active = 1,
@@ -109,19 +113,32 @@ export async function POST(request: NextRequest) {
            verification_expires = NULL,
            verification_attempts = 0,
            updated_at = NOW()
-       WHERE id = ?`,
-      [user.id]
+       WHERE id = ?
+         AND verification_code = ?
+         AND verification_expires >= NOW()
+         AND email_verified = 0`,
+      [user!.id, submittedCodeHash]
     );
+
+    if (Number((updateResult.rows as { affectedRows?: number }).affectedRows) !== 1) {
+      return NextResponse.json(INVALID_VERIFICATION_RESPONSE, { status: 400 });
+    }
 
     return NextResponse.json({
       success: true,
       message: '邮箱验证成功！',
       data: {
-        email: user.email,
-        username: user.username,
+        email: user!.email,
+        username: user!.username,
       }
     });
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      );
+    }
     console.error('验证邮箱失败:', error);
     return NextResponse.json(
       { success: false, error: '服务器错误，请稍后重试' },

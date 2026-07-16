@@ -1,461 +1,499 @@
-# Note Prompt 阿里云部署指南
+# Note Prompt 安全部署指南
 
-## 服务器信息
-| 项目 | 值 |
-|------|-----|
-| 公网IP | 8.138.176.174 |
-| 操作系统 | Alibaba Cloud Linux 3.2104 LTS 64位 |
-| CPU | 2核 vCPU |
-| 内存 | 2 GiB |
-| 带宽 | 3 Mbps |
-| 域名 | noteprompt.cn |
+本文档描述当前仓库唯一受支持的生产部署方式。历史部署记录只能作为排障线索，不能证明当前容器运行的是当前 Git 代码。
 
----
+## 1. 部署约束
 
-## 一、域名解析配置
+- 应用镜像必须以 Git commit SHA 标记，禁止使用 `latest`。
+- Node 24 LTS 与 Nginx 1.30 stable 基础镜像均锁定到 manifest digest；升级基础镜像需要单独审查。
+- `.env*`、个人 provider 配置、证书、备份和 `_scripts` 不进入 Docker 构建上下文。
+- 秘密只在容器启动时从宿主机的受限文件或秘密管理器注入。
+- 应用不得使用 MySQL `root`；3306 和 6379 不得暴露到公网。
+- 长期运行的应用账号只有 DML 权限；DDL 只由一次性迁移账号执行，两个账号不得相同。
+- 生产环境必须使用私网 Redis，且明确禁用内存限流降级。
+- `/api/health` 是数据库 readiness；Compose healthcheck 在此基础上还核对 Redis 与 commit version。旧 `/api/v1/health-check` 与数据库检查完全相同，不再是固定成功的假健康检查。
+- Nginx 只有在应用 readiness 通过后才启动。
 
-登录阿里云域名控制台 (https://dc.console.aliyun.com)，添加以下DNS记录：
+`database/migrations/*.cjs` 是唯一 schema 事实来源。请求处理期间不得建表、改列或回填；生产应用账号不需要且不得持有 DDL 权限。
 
-| 记录类型 | 主机记录 | 记录值 |
-|---------|---------|--------|
-| A | @ | 8.138.176.174 |
-| A | www | 8.138.176.174 |
+## 2. 主机与网络准备
 
-> **重要**：域名需要完成ICP备案才能正常访问。如未备案，请先在阿里云备案系统申请。
+生产机需要 Docker Engine 和 Docker Compose v2。防火墙/安全组只开放：
 
----
+| 端口 | 来源 | 用途 |
+|---|---|---|
+| 80 | 公网 | HTTP 跳转与 ACME challenge |
+| 443 | 公网 | HTTPS |
+| 22 | 固定运维 IP | SSH |
 
-## 二、服务器环境配置
+### 80/443 均无监听时的只读排障
 
-### 2.1 SSH连接服务器
-```bash
-ssh root@8.138.176.174
-```
+如果域名可解析、主机可 Ping，但 **80 和 443 均无监听**，先不要反复重启或输出容器环境变量。仓库提供了不会读取运行时密钥、不会输出 Compose 展开配置、也不会抓取容器日志的只读诊断脚本：
 
-### 2.2 安装 Docker
-```bash
-# 更新系统
-yum update -y
-
-# 安装 Docker
-yum install -y docker
-systemctl start docker
-systemctl enable docker
-
-# 验证
-docker --version
-```
-
-### 2.3 安装 Docker Compose
-```bash
-curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
-
-# 验证
-docker-compose --version
-```
-
-### 2.4 安装 MySQL
-```bash
-yum install -y mysql-server
-systemctl start mysqld
-systemctl enable mysqld
-
-# 安全初始化（设置root密码）
-mysql_secure_installation
-```
-
-### 2.5 初始化数据库
-```bash
-# 登录MySQL
-mysql -u root -p
-
-# 创建数据库并导入表结构
-CREATE DATABASE IF NOT EXISTS agent_report DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE agent_report;
-SOURCE /opt/note-prompt/database/mysql-schema-new.sql;
-
-# 退出
-EXIT;
-```
-
----
-
-## 三、部署项目
-
-### 3.1 上传项目代码
-在本地电脑执行：
-```bash
-# 方法一：使用 scp
-scp -r ./note-prompt root@8.138.176.174:/opt/note-prompt
-
-# 方法二：使用 git（推荐）
-ssh root@8.138.176.174
-cd /opt
-git clone https://github.com/你的用户名/note-prompt.git
-```
-
-### 3.2 配置环境变量
 ```bash
 cd /opt/note-prompt
-
-# 复制生产配置
-cp .env.production .env
-
-# 编辑配置（重点修改以下项目）
-vim .env
+bash scripts/deployment-diagnose.sh
 ```
 
-**必须修改的配置项：**
-```env
-# MySQL密码（你在2.4步骤设置的）
-MYSQL_PASSWORD=你的MySQL密码
+按输出依次确认：宿主机监听端口、容器状态、`mysql8_default` 网络、firewalld 活动 zone、TLS 文件存在性与证书有效期。公网仍不可达时，在阿里云 ECS 控制台核对实例安全组入方向是否允许 TCP 80、443；Ping 成功只代表 ICMP 可达，不代表这两个 TCP 端口已放行。
 
-# JWT密钥（使用随机字符串）
-JWT_SECRET=随意输入一个至少32位的随机字符串
+不要使用 `docker exec ... env`、`docker inspect ...Config.Env`、不带 `--quiet` 的 `docker compose config`，也不要把 `/opt/note-prompt-secrets/runtime.env` 内容贴入工单或聊天。
 
-# QQ邮箱配置（用于邮箱验证功能）
-ENABLE_EMAIL_VERIFICATION=true
-EMAIL_USER=你的QQ邮箱@qq.com
-EMAIL_PASS=你的QQ邮箱授权码
-EMAIL_FROM=你的QQ邮箱@qq.com
-```
-
-### 3.3 获取QQ邮箱授权码
-1. 登录 https://mail.qq.com
-2. 设置 → 账户 → POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务
-3. 开启 **POP3/SMTP服务**
-4. 按提示发送短信验证，获取 **16位授权码**
-5. 将授权码填入 `EMAIL_PASS`
-
-### 3.4 构建并启动
-```bash
-cd /opt/note-prompt
-
-# 构建 Docker 镜像
-docker build -t note-prompt:latest .
-
-# 启动所有服务
-docker-compose up -d
-
-# 查看运行状态
-docker-compose ps
-
-# 查看日志
-docker-compose logs -f note-prompt-app
-```
-
----
-
-## 四、SSL证书配置
-
-### 4.1 先用HTTP模式启动Nginx
-暂时修改 nginx.conf，注释掉 443 server block，只保留 80 端口：
+确认 MySQL/Redis 端口未公开：
 
 ```bash
-# 临时使用HTTP测试
-curl http://noteprompt.cn
+sudo firewall-cmd --permanent --remove-port=3306/tcp || true
+sudo firewall-cmd --permanent --remove-port=6379/tcp || true
+sudo firewall-cmd --reload
 ```
 
-### 4.2 申请 Let's Encrypt 免费SSL证书
+Compose 连接既有 MySQL Docker 网络，默认名称为 `mysql8_default`：
+
 ```bash
-# 安装 certbot
-yum install -y certbot
-
-# 申请证书（需要先确保80端口的nginx正常运行）
-certbot certonly --webroot -w /opt/note-prompt/certbot/www -d noteprompt.cn -d www.noteprompt.cn
-
-# 证书文件位置（自动生成）
-# /etc/letsencrypt/live/noteprompt.cn/fullchain.pem
-# /etc/letsencrypt/live/noteprompt.cn/privkey.pem
+docker network inspect mysql8_default >/dev/null
 ```
 
-### 4.3 配置SSL证书
+如网络名称不同，在运行时配置中设置 `MYSQL_NETWORK`。Compose 本身不会启动或暴露 MySQL/Redis。`REDIS_URL` 必须指向同一 Docker 私网或 VPC 私网内可达的 Redis；禁止使用公网地址，也不要为 Redis 添加宿主机公网端口映射。
+
+## 3. 分离应用与迁移数据库账号
+
+使用本机管理通道登录 MySQL；管理凭据不得写入项目、Compose 或 shell history。下面只展示权限边界，密码应由秘密管理器生成并注入：
+
+```sql
+CREATE USER IF NOT EXISTS 'note_prompt_app'@'%' IDENTIFIED BY '<由秘密管理器生成>';
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON agent_report.* TO 'note_prompt_app'@'%';
+
+CREATE USER IF NOT EXISTS 'note_prompt_migrator'@'%' IDENTIFIED BY '<另一份独立秘密>';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, CREATE TEMPORARY TABLES, ALTER, INDEX, REFERENCES
+  ON agent_report.* TO 'note_prompt_migrator'@'%';
+
+SHOW GRANTS FOR 'note_prompt_app'@'%';
+SHOW GRANTS FOR 'note_prompt_migrator'@'%';
+FLUSH PRIVILEGES;
+```
+
+`'%'` 只适用于 MySQL 已被 Docker/VPC 防火墙严格隔离的场景；能够固定容器网段或来源主机时，应把它收紧为实际来源。迁移 `007` 使用会话级临时表，因此需要 schema 级 `CREATE TEMPORARY TABLES`；它不要求普通表 `DROP` 权限。不要给迁移账号 `GRANT OPTION`、`FILE`、`PROCESS`、`SUPER` 或全局权限。若未来单个已审查迁移确实需要更高权限，应临时授予并在迁移成功后撤销。
+
+MySQL 只应监听宿主机/Docker 私网，安全组不得放行 3306。Compose 会拒绝 `MYSQL_USER=root`、`MYSQL_MIGRATION_USER=root`，也会拒绝两个用户名相同。
+
+## 4. 运行时配置与证书
+
+运行时配置放在项目目录之外，并由执行 Compose 的非 root 运维账号独占读取。例如，以该账号登录后执行：
+
 ```bash
-# 复制证书到项目目录
-cp /etc/letsencrypt/live/noteprompt.cn/fullchain.pem /opt/note-prompt/nginx/ssl/
-cp /etc/letsencrypt/live/noteprompt.cn/privkey.pem /opt/note-prompt/nginx/ssl/
+DEPLOY_USER="$(id -un)"
+DEPLOY_GROUP="$(id -gn)"
+test "$(id -u)" -ne 0
 
-# 重启 Nginx
-docker-compose restart nginx
+sudo install -d -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 0700 /opt/note-prompt-secrets
+sudo install -d -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 0700 /opt/note-prompt-secrets/tls
+sudo install -d -m 0755 /opt/note-prompt-certbot/www
+if [ ! -e /opt/note-prompt-secrets/runtime.env ]; then
+  sudo install -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 0600 /dev/null /opt/note-prompt-secrets/runtime.env
+fi
+sudo chown "$DEPLOY_USER:$DEPLOY_GROUP" /opt/note-prompt-secrets/runtime.env
+sudo chmod 0600 /opt/note-prompt-secrets/runtime.env
+sudoedit /opt/note-prompt-secrets/runtime.env
 ```
 
-### 4.4 自动续期
-```bash
-# 添加 crontab 自动续期
-echo "0 3 * * 1 certbot renew --quiet && cp /etc/letsencrypt/live/noteprompt.cn/fullchain.pem /opt/note-prompt/nginx/ssl/ && cp /etc/letsencrypt/live/noteprompt.cn/privkey.pem /opt/note-prompt/nginx/ssl/ && docker-compose -f /opt/note-prompt/docker-compose.yml restart nginx" | crontab -
+模板只列变量名，不要把真实值提交到 Git：
+
+```dotenv
+IMAGE_REPOSITORY=note-prompt
+COMPOSE_PROJECT_NAME=note-prompt
+MYSQL_NETWORK=mysql8_default
+MYSQL_HOST=docker_mysql8
+MYSQL_PORT=3306
+MYSQL_DATABASE=agent_report
+MYSQL_USER=note_prompt_app
+MYSQL_PASSWORD=<运行时秘密>
+MYSQL_MIGRATION_USER=note_prompt_migrator
+MYSQL_MIGRATION_PASSWORD=<独立迁移秘密>
+
+# 必须是私网 Redis；生产不得设置 RATE_LIMIT_ALLOW_MEMORY_FALLBACK=true
+REDIS_URL=redis://:<Redis密码>@redis.internal:6379/0
+RATE_LIMIT_KEY_PREFIX=note-prompt-prod
+AI_GLOBAL_DAILY_LIMIT=1000
+
+JWT_SECRET=<至少32字节的运行时秘密>
+PROVIDER_KEY_ENCRYPTION_SECRET=<独立的运行时秘密>
+VERIFICATION_CODE_SECRET=<独立的验证码HMAC秘密>
+JWT_EXPIRES_IN=2h
+NEXTAUTH_URL=https://noteprompt.cn
+
+# 默认关闭自助贡献升级；开启前需完成反滥用与运营审查。
+ENABLE_CONTRIBUTION_UPGRADES=false
+# 仅接受 1..10000；无效值回退为 100。只有管理员无限额。
+PRO_AI_MONTHLY_LIMIT=100
+
+TLS_CERT_DIR=/opt/note-prompt-secrets/tls
+CERTBOT_WEBROOT=/opt/note-prompt-certbot/www
+
+# 可选 AI / 邮件配置
+DEEPSEEK_API_KEY=
+KIMI_API_KEY=
+DASHSCOPE_API_KEY=
+QWEN_API_KEY=
+ZHIPU_API_KEY=
+GEMINI_API_KEY=
+MINIMAX_API_KEY=
+XIAOMI_API_KEY=
+XIAOMI_BASE_URL=
+ENABLE_EMAIL_VERIFICATION=false
+EMAIL_HOST=smtp.qq.com
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=
+EMAIL_PASS=
+EMAIL_FROM=
+EMAIL_FROM_NAME=Note Prompt
 ```
 
----
+运行时文件中不要写 `IMAGE_TAG` 或 `MIGRATION_IMAGE_TAG`：每次发布都必须从已签出的 Git commit 重新导出，避免陈旧标签把旧镜像伪装成当前版本。Redis URI 如果含密码，同样属于秘密；只允许部署账号读取。生产 Compose 固定写入 `RATE_LIMIT_ALLOW_MEMORY_FALLBACK=false` 和 `TRUST_PROXY=true`，无需在文件中覆盖。
 
-## 五、阿里云安全组配置
-
-在阿里云ECS控制台 → 安全组 → 配置规则，添加：
-
-| 协议 | 端口范围 | 授权对象 | 说明 |
-|------|---------|---------|------|
-| TCP | 80 | 0.0.0.0/0 | HTTP |
-| TCP | 443 | 0.0.0.0/0 | HTTPS |
-| TCP | 22 | 你的IP/32 | SSH（建议限制IP） |
-
-> **注意**：不要开放 3306/6379 端口到公网！
-
-### 5.1 临时放通 SSH 部署入口
-
-如果本地执行 `node deploy-latest.js` 报错：
+`TLS_CERT_DIR` 必须是项目外的受限目录，并真实包含：
 
 ```text
-connect ECONNREFUSED 8.138.176.174:22
+fullchain.pem
+privkey.pem
 ```
 
-优先检查阿里云安全组，而不是改代码或重置服务器。当前实例的 SSH 配置是：
+本仓库不包含证书，也不声称证书已续签。首次启动 Nginx 前必须完成真实签发和文件安装。每次 Certbot 实际续签成功后，再原子更新上述两个文件并执行：
 
-| 项目 | 值 |
-|------|-----|
-| 实例 | i-7xvi62v5d8qzevu0cs84 |
-| 公网 IP | 8.138.176.174 |
-| 地域 | 华南3（广州） |
-| SSH 用户 | root |
-| SSH 端口 | 22 |
-| 项目目录 | /opt/note-prompt |
-
-手机端阿里云 App 操作步骤：
-
-1. 进入 ECS 实例详情页。
-2. 切到 **安全组** 标签页。
-3. 进入当前实例已经绑定的安全组，选择 **配置规则**。
-4. 添加入方向规则：
-	- 授权策略：允许
-	- 协议类型：自定义 TCP
-	- 端口范围：22/22
-	- 授权对象：当前本机公网 IP `/32`，例如 `210.79.151.21/32`
-	- 优先级：1 或默认高优先级
-	- 描述：Temporary SSH deploy access
-5. 保存后在本地验证：
-
-```powershell
-Test-NetConnection 8.138.176.174 -Port 22
-```
-
-看到 `TcpTestSucceeded : True` 后再运行部署脚本。
-
-> 不要在“创建安全组”页面新建安全组。新建安全组需要选择当前实例所在 VPC，容易出现 `NotFoundSelectVpc`，而且新建后还要再绑定到实例。部署时最快、风险最低的做法是修改当前实例已绑定的安全组入方向规则。
-
-部署结束后建议把 22 端口规则删除，或继续限制为个人固定公网 IP，不要设置为 `0.0.0.0/0`。
-
----
-
-## 六、常用运维命令
+首次签发时 Nginx 尚未运行，可在确认 80 端口空闲后使用 Certbot standalone（或改用受控的 DNS-01）：
 
 ```bash
-# 查看所有容器状态
-docker-compose ps
-
-# 查看应用日志
-docker-compose logs -f note-prompt-app
-
-# 重启应用
-docker-compose restart note-prompt-app
-
-# 重新构建并部署
-docker-compose down
-docker build -t note-prompt:latest .
-docker-compose up -d
-
-# 进入应用容器
-docker exec -it note-prompt-app sh
-
-# 查看MySQL状态
-systemctl status mysqld
-
-# 数据库备份
-mysqldump -u root -p agent_report > backup_$(date +%Y%m%d).sql
+sudo certbot certonly --standalone -d noteprompt.cn -d www.noteprompt.cn
+sudo install -m 0644 /etc/letsencrypt/live/noteprompt.cn/fullchain.pem \
+  /opt/note-prompt-secrets/tls/fullchain.pem
+sudo install -m 0600 /etc/letsencrypt/live/noteprompt.cn/privkey.pem \
+  /opt/note-prompt-secrets/tls/privkey.pem
 ```
 
-### 6.1 V2 标准部署命令
+上述命令只有 Certbot 实际成功后才能执行。后续续签可使用已运行 Nginx 暴露的 webroot challenge；deploy hook 也必须只在续签成功后安装新文件。
 
-当 SSH 已放通后，本地推荐直接运行：
-
-```powershell
-cd C:\Users\Henry\Desktop\毕业设计\note-prompt
-node deploy-latest.js
+```bash
+docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx -t
+docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx -s reload
 ```
 
-如果使用阿里云 Workbench 登录服务器，也可以在服务器执行：
+应先运行 `certbot renew --dry-run` 验证续签链路；只有真实成功后才能配置自动 deploy hook。
+
+证书安装或续签后必须核对私钥与证书公钥匹配、证书尚未过期且覆盖两个域名，再执行 `nginx -t` 与 reload。最后从公网验证实际提供的证书，而不是只检查宿主机文件：
+
+```bash
+openssl x509 -in /opt/note-prompt-secrets/tls/fullchain.pem -noout -checkend 604800
+openssl x509 -in /opt/note-prompt-secrets/tls/fullchain.pem -pubkey -noout | sha256sum
+openssl pkey -in /opt/note-prompt-secrets/tls/privkey.pem -pubout | sha256sum
+
+openssl s_client -connect noteprompt.cn:443 -servername noteprompt.cn </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+curl --fail --show-error --silent --tlsv1.2 https://noteprompt.cn/api/health
+```
+
+前两条公钥摘要必须相同，`-checkend 604800` 必须成功。当前仓库无法证明线上证书有效；这些检查必须在真实部署主机和公网链路执行并保存变更记录。
+
+## 5. 以 commit SHA 构建不可变镜像
+
+部署目录示例为 `/opt/note-prompt`。先进入变更窗口，记录当前运行镜像与完整 SHA，并停止写流量。数据库备份必须在项目目录外、权限为 `0600`，且通过完整性检查；仅有“命令成功”而没有备份文件和校验和不算完成。
+
+下面示例假设已用 `mysql_config_editor` 交互式创建受限的 `note_prompt_backup` login-path，因而密码不会出现在命令行或 shell history：
+
+```bash
+umask 077
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0700 /opt/note-prompt-backups
+BACKUP_FILE="/opt/note-prompt-backups/agent_report-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+
+set -o pipefail
+mysqldump --login-path=note_prompt_backup \
+  --single-transaction --quick --hex-blob --no-tablespaces --set-gtid-purged=OFF \
+  agent_report | gzip -9 >"$BACKUP_FILE"
+test -s "$BACKUP_FILE"
+gzip -t "$BACKUP_FILE"
+sha256sum "$BACKUP_FILE" | tee "${BACKUP_FILE}.sha256"
+```
+
+备份账号只需读取/备份所需权限，不得复用应用或迁移账号。发布前应已在隔离实例演练恢复并记录 RPO/RTO；不要把第一次恢复测试留到事故发生后。
+
+然后更新部署 checkout，并要求工作树干净：
 
 ```bash
 cd /opt/note-prompt
-git fetch origin
-git checkout main
-git reset --hard origin/main
-docker compose build note-prompt-app
-docker compose up -d
-sleep 30
-curl -sk https://noteprompt.cn/api/v1/health-check
-curl -sk "https://noteprompt.cn/api/v1/public-prompts?lang=en&page=1&limit=3"
-curl -sk "https://noteprompt.cn/api/v1/public-folders?lang=en&page=1&limit=3"
+git fetch --all --tags --prune
+git pull --ff-only
+test -z "$(git status --porcelain)"
+
+export IMAGE_TAG="$(git rev-parse HEAD)"
+export MIGRATION_IMAGE_TAG="$IMAGE_TAG"
+export IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-note-prompt}"
+export COMPOSE_PROJECT_NAME="note-prompt"
+test "${#IMAGE_TAG}" -eq 40
+test "$MIGRATION_IMAGE_TAG" = "$IMAGE_TAG"
+test "$(git rev-parse HEAD)" = "$IMAGE_TAG"
 ```
 
-### 6.2 V2 回滚命令
+先做静默配置校验；不要运行会把插值后秘密打印到日志的 `docker compose config`：
 
-V2 上线前已在 GitHub 保留回滚点：
+```bash
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  config --quiet
+```
 
-| 用途 | Git ref | Commit |
-|------|---------|--------|
-| 当前部署分支 | main | 以 GitHub 最新 `origin/main` 为准 |
-| V2 功能发布标签 | noteprompt-v2-local-2026-05-25 | d144739 |
-| V2 前线上版本分支 | rollback/noteprompt-prod-before-v2-2026-05-25 | 07a24b9 |
-| V2 前线上版本标签 | noteprompt-prod-before-v2-2026-05-25 | 07a24b9 |
+显式构建并标记当前 commit。构建上下文不含运行时秘密：
 
-如需回滚：
+```bash
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  build --pull note-prompt-app
+```
+
+核对镜像标签与 OCI revision：
+
+```bash
+docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+```
+
+输出必须与完整 `$IMAGE_TAG` 完全一致。不要使用 `docker build -t note-prompt:latest`，也不要仅执行 `git pull && docker compose up`。
+
+镜像内必须具备本地 PDF/OCR 能力，生产解析不得在首个请求时从外网下载语言包：
+
+```bash
+docker run --rm --entrypoint sh "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" -ec '
+  command -v pdftotext >/dev/null
+  command -v tesseract >/dev/null
+  tesseract --list-langs | grep -Fx eng >/dev/null
+  tesseract --list-langs | grep -Fx chi_sim >/dev/null
+'
+```
+
+任一检查失败都应阻止发布；不要用运行时联网下载替代镜像内固定能力。
+
+## 6. 启动与验证
+
+迁移必须是显式发布门禁。先查看镜像内的离线计划与当前数据库状态；然后停止旧应用写流量，强制重建并运行一次迁移容器。只有迁移进程返回 0 且随后 `status` 全部为 `applied` 才能启动新版本：
+
+```bash
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs plan
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+
+docker compose --env-file /opt/note-prompt-secrets/runtime.env stop nginx note-prompt-app
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  up --no-build --no-deps --force-recreate \
+  --abort-on-container-exit --exit-code-from note-prompt-migrate \
+  note-prompt-migrate
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+```
+
+如果迁移失败，保持 `nginx` 和应用停止，不要通过改用 `root`、手工删除 `schema_migrations` 记录或启动旧镜像来绕过。MySQL DDL 可能已经隐式提交；保存迁移日志与数据库状态，确认失败迁移是否可安全续跑。现有迁移均按可重入设计，修正明确原因后可再次运行同一命令；无法证明可续跑时，按已演练流程恢复已校验备份。
+
+迁移成功后，启动阶段仍禁止隐式重建：
+
+```bash
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  up -d --no-build --wait --wait-timeout 180 note-prompt-app nginx
+```
+
+验证容器、版本、readiness 与安全头：
+
+```bash
+docker compose --env-file /opt/note-prompt-secrets/runtime.env ps
+
+curl -fsS --max-time 15 http://127.0.0.1/health
+curl -fsS --max-time 15 https://noteprompt.cn/api/health
+curl -fsS --max-time 15 https://noteprompt.cn/api/v1/health-check
+curl -fsSI --max-time 15 https://noteprompt.cn/
+
+docker compose --env-file /opt/note-prompt-secrets/runtime.env exec -T note-prompt-app \
+  node -e "const Redis=require('ioredis');(async()=>{const r=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1});try{await r.connect();if(await r.ping()!=='PONG')throw new Error()}finally{r.disconnect()}})().catch(()=>{console.error('Redis readiness failed');process.exit(1)})"
+
+APP_CONTAINER_ID="$(docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q note-prompt-app)"
+test -n "$APP_CONTAINER_ID"
+docker inspect "$APP_CONTAINER_ID" \
+  --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+```
+
+两个 API 健康地址应返回相同的 `status: ready`、`checks.database: up` 和完整当前 commit `version`。应用容器 healthcheck 同时核对这些字段、`APP_VERSION` 和 Redis `PING`，而非只接受任意 HTTP 200。数据库不可用时 API 必须返回 HTTP 503；数据库或 Redis 不可用、版本不符时 Compose 都会把应用标记为 unhealthy，Nginx 初始启动不会把它当成可用版本。生产限流不允许退回进程内存。
+
+禁止用 `docker exec ... env` 排障，因为它会把全部运行时秘密写入终端或日志。只检查非敏感单项配置，或直接使用 readiness。
+
+## 7. Nginx 与代理信任
+
+当前 Nginx 是公网边缘代理，会用 `$remote_addr` 覆盖客户端提交的 `X-Forwarded-For`，应用不会信任伪造的首段 IP。不要改回 `$proxy_add_x_forwarded_for`。
+
+如果未来在 Nginx 前新增阿里云 SLB/CDN，只能为供应商公布且已核对的精确 CIDR 配置 `set_real_ip_from`，再启用 `real_ip_header`。不得使用 `0.0.0.0/0` 作为可信代理。
+
+AI 路由关闭 Nginx 响应缓冲，连接读写超时为 190 秒，略长于浏览器 180 秒超时。普通 API 仍使用更短的 90 秒限制。
+
+部署后在真实 TLS 文件存在的容器中检查 Nginx：
+
+```bash
+docker compose --env-file /opt/note-prompt-secrets/runtime.env exec nginx nginx -t
+```
+
+## 8. 回滚
+
+代码回滚不等于数据库回滚。迁移器只前进且没有 `down` 命令；不得删除 `schema_migrations` 记录来伪造回滚。只有在隔离数据库上证明旧应用与当前 schema 向后兼容，才允许只回滚应用镜像。否则必须进入恢复流程，评估恢复备份导致的数据回退，而不是让 Compose 猜测。
+
+发布记录必须保留“当前 schema 对应的迁移镜像完整 SHA”和至少一个已验证的应用回滚镜像。回滚时继续使用当前迁移镜像核对 schema，只切换应用镜像标签，不修改工作树：
 
 ```bash
 cd /opt/note-prompt
-git fetch origin --tags
-git checkout main
-git reset --hard noteprompt-prod-before-v2-2026-05-25
-docker compose build note-prompt-app
-docker compose up -d
-curl -sk https://noteprompt.cn/api/v1/health-check
+export MIGRATION_IMAGE_TAG=<当前schema对应的迁移镜像完整SHA>
+export IMAGE_TAG=<已验证且兼容当前schema的旧应用完整SHA>
+
+test "${#MIGRATION_IMAGE_TAG}" -eq 40
+test "${#IMAGE_TAG}" -eq 40
+docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${MIGRATION_IMAGE_TAG}" >/dev/null
+docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" >/dev/null
+docker image inspect "${IMAGE_REPOSITORY:-note-prompt}:${IMAGE_TAG}" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  | grep -Fx "$IMAGE_TAG"
+
+docker compose --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
+
+docker compose \
+  --env-file /opt/note-prompt-secrets/runtime.env \
+  up -d --no-build --wait --wait-timeout 180 note-prompt-app nginx
+
+curl -fsS --max-time 15 http://127.0.0.1/health
 ```
 
-如果确认要让 GitHub `main` 也回退：
-
-```powershell
-cd C:\Users\Henry\Desktop\毕业设计\note-prompt
-git push origin noteprompt-prod-before-v2-2026-05-25:main --force-with-lease
-```
-
-### 6.3 V2 上线后验证清单
+如果本机没有该镜像，只能从受信任镜像仓库按完整 SHA 拉取并再次核对 OCI revision：
 
 ```bash
-curl -sk https://noteprompt.cn/api/v1/health-check
-curl -sk "https://noteprompt.cn/api/v1/public-prompts?lang=en&page=1&limit=3"
-curl -sk "https://noteprompt.cn/api/v1/public-prompts/900001?lang=en"
-curl -sk "https://noteprompt.cn/api/v1/public-folders?lang=en&page=1&limit=3"
-curl -sk "https://noteprompt.cn/api/v1/public-folders/910001?lang=en"
-curl -sk "https://noteprompt.cn/api/v1/public-folders/910001/prompts?lang=en"
+docker pull "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+docker image inspect "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  | grep -Fx "$IMAGE_TAG"
 ```
 
-浏览器验证：
+仓库中缺少目标镜像不是在生产机临时重建的授权；应由受控 CI 从精确 commit 重建并发布，或判定应用回滚受阻。回滚完成后再次核对镜像 revision、Redis 探测与两个 readiness URL。数据库恢复必须走独立、已演练的恢复流程，不能由 Compose 自动执行。
 
-- `https://noteprompt.cn/?lang=en`
-- `https://noteprompt.cn/login?lang=en`
-- `https://noteprompt.cn/register?lang=en`
-- `https://noteprompt.cn/public-prompts?lang=en`
-- `https://noteprompt.cn/public-prompts/900001?lang=en`
-- `https://noteprompt.cn/public-folders?lang=en`
-- `https://noteprompt.cn/public-folders/910001?lang=en`
-- `https://noteprompt.cn/optimizer?lang=en`
+## 9. 常见故障
 
-英文页面重点检查：公共提示词、公共文件夹、文件夹详情、提示词详情不应再显示中文模板内容。
-
-### 6.4 部署记录模板
-
-每次公网部署成功后，在这里追加一条记录，方便回滚和复盘：
-
-```text
-日期：YYYY-MM-DD HH:mm
-部署人：
-部署方式：deploy-latest.js / Workbench 手动命令 / 其他
-Git commit：
-Git tag：
-服务器目录：/opt/note-prompt
-部署命令：
-验证结果：
-- health-check：通过/失败
-- public-prompts English API：通过/失败
-- public-folders English API：通过/失败
-- 关键页面：通过/失败
-异常与处理：
-是否清理 SSH 22 临时放通规则：是/否
-回滚点：
-```
-
-#### 2026-05-25 V2 待部署记录
-
-```text
-状态：代码已推送 GitHub，公网部署待 SSH 放通后执行
-部署分支：origin/main
-V2 功能 tag：noteprompt-v2-local-2026-05-25
-回滚 tag：noteprompt-prod-before-v2-2026-05-25
-阻塞原因：8.138.176.174:22 当前不可达，80/443 正常
-下一步：在当前 ECS 已绑定安全组中临时允许当前公网 IP 访问 TCP 22，然后运行 deploy-latest.js
-```
-
----
-
-## 七、问题排查
-
-### 应用无法访问
-```bash
-# 检查容器是否运行
-docker-compose ps
-
-# 查看应用日志
-docker-compose logs note-prompt-app
-
-# 检查端口占用
-netstat -tlnp | grep -E '80|443|3000'
-
-# 检查安全组
-# 登录阿里云控制台检查安全组规则
-```
-
-### SSH 无法连接
-
-本地检查：
-
-```powershell
-Test-NetConnection 8.138.176.174 -Port 22
-```
-
-如果返回 `False`，通常是安全组没有放通当前公网 IP，或服务器 `sshd` 未运行。优先处理安全组：
-
-1. 阿里云 ECS → 实例 → 安全组 → 配置规则。
-2. 入方向临时添加 `TCP 22`，授权对象填写当前公网 IP `/32`。
-3. 再次测试 `Test-NetConnection`。
-
-如果 22 端口已放通但仍不可达，使用阿里云控制台 **Workbench远程连接** 登录服务器检查：
+### 应用 unhealthy
 
 ```bash
-systemctl status sshd
-systemctl restart sshd
-ss -tlnp | grep ':22'
+docker compose --env-file /opt/note-prompt-secrets/runtime.env ps
+docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --tail 200 note-prompt-app
+curl -i --max-time 15 http://127.0.0.1/health
 ```
 
-### 阿里云提示 SuspiciousProcess
+HTTP 503 表示应用进程存活但数据库 readiness 失败。检查 MySQL 容器、外部网络连接和专用用户权限，不要切换为 root 规避错误。
 
-安全中心出现 `Suspicious:SuspiciousProcess:serious` 时，不要直接忽略。先登录服务器检查最近进程和容器：
+### 迁移失败
 
 ```bash
-ps aux --sort=-%cpu | head -30
-docker ps
-docker logs --tail 100 note-prompt-app
-docker logs --tail 100 note-prompt-nginx
-last -a | head -20
+docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -a note-prompt-migrate
+docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --no-log-prefix note-prompt-migrate
+docker compose --env-file /opt/note-prompt-secrets/runtime.env \
+  run --rm --no-deps note-prompt-migrate node scripts/mysql-migrate.cjs status
 ```
 
-如果告警时间正好对应部署构建，且进程为 `node`、`npm`、`next build`、`docker build` 等构建行为，可以在阿里云安全中心标记为误报；如果出现陌生下载命令、矿池地址、异常二进制文件，应先停机隔离并备份日志。
+校验和变化、未知 migration、版本断层和 advisory lock 获取失败都会 fail closed。不要编辑已经应用的 migration，也不要手工修记录。先判断是并发发布、权限不足、代码/数据库历史不匹配还是可重入迁移的中断，再按第 6 节处理。
 
-### 邮件发送失败
+### Redis 不可用
+
+生产环境没有内存降级。检查 Redis 私网 DNS/路由、TLS/密码和服务状态；不要临时把 6379 开到公网，也不要设置 `RATE_LIMIT_ALLOW_MEMORY_FALLBACK=true` 绕过。修复后重新执行第 6 节的无秘密 Redis `PING` 探测。
+
+### Nginx 未启动
+
 ```bash
-# 进入容器测试
-docker exec -it note-prompt-app sh
-# 检查环境变量是否正确
-echo $EMAIL_USER
-echo $EMAIL_HOST
+test -s /opt/note-prompt-secrets/tls/fullchain.pem
+test -s /opt/note-prompt-secrets/tls/privkey.pem
+docker compose --env-file /opt/note-prompt-secrets/runtime.env logs --tail 200 nginx
 ```
 
-### 数据库连接失败
+不要生成伪证书绕过启动；完成真实签发或恢复最近一份仍有效且受控的证书。
+
+### 当前网站不是当前代码
+
+比较 Git SHA、镜像标签、OCI revision 与健康响应中的 `version`：
+
 ```bash
-# 检查MySQL是否运行
-systemctl status mysqld
-
-# Docker容器访问宿主机MySQL需要使用172.17.0.1
-# 确保MySQL允许docker网络访问
-mysql -u root -p -e "SELECT user, host FROM mysql.user;"
-# 如果需要授权：
-# GRANT ALL ON agent_report.* TO 'root'@'172.17.0.%' IDENTIFIED BY '你的密码';
-# FLUSH PRIVILEGES;
+git rev-parse HEAD
+APP_CONTAINER_ID="$(docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q note-prompt-app)"
+test -n "$APP_CONTAINER_ID"
+docker inspect "$APP_CONTAINER_ID" \
+  --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+curl -fsS https://noteprompt.cn/api/health
 ```
+
+四处版本必须一致；否则停止发布并重新按第 5、6 节构建部署。
+
+## 10. 凭据轮换与 Git 历史清理
+
+本仓库曾跟踪过真实凭据。删除当前文件或新增一次“清理”提交不会使旧值失效；必须先轮换/撤销，再重写历史。处置过程应建立事件记录，但只记录系统、账号、密钥指纹、发现 commit 和轮换时间，不复制秘密值。
+
+### 10.1 先轮换，不等待历史清理
+
+1. 进入维护窗口，限制公网访问并冻结发布；保存数据库备份、当前镜像 ID、Git SHA 和必要审计日志。
+2. 立即撤销或轮换所有可能出现过的 SSH root/运维密钥与密码、MySQL 账号、站点管理员密码、SMTP 密码、AI/provider API key 和第三方 token。证书私钥若可能泄露，重新签发并撤销旧证书。
+3. 数据库账号优先创建新用户名、复制最小权限、切换部署并验证，再 `DROP USER` 旧账号，避免在运行容器仍使用旧密码时原地失效。应用与迁移账号继续保持分离。
+4. 更换 `JWT_SECRET` 会强制全部用户重新登录；应作为计划内安全动作执行。`VERIFICATION_CODE_SECRET` 必须独立轮换并让未使用验证码失效。
+5. `PROVIDER_KEY_ENCRYPTION_SECRET` 当前没有双密钥在线轮换工具。如果该密钥或数据库副本可能泄露，应先撤销底层 provider key，再在维护窗口清除/重新录入受影响配置并切换新加密秘密；不要只换加密秘密导致现有密文永久不可读。
+6. 用项目目录外的 `runtime.env` 部署新值，完成数据库、Redis、登录、邮件/AI（若启用）和 readiness 验证后，确认旧凭据在各外部系统均已不可用。
+
+### 10.2 受控重写历史
+
+历史重写会改变所有受影响 commit，破坏开放 PR/本地分支，并且不能清理他人的 clone、fork 或 GitHub 缓存。必须由仓库所有者协调停写窗口并明确批准 force push。按照 [GitHub 官方敏感数据清理指南](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) 执行：
+
+1. 记录所有受影响路径（包含改名/移动前的旧路径）和需替换的秘密模式；秘密替换清单保存在仓库外受限临时文件中。
+2. 创建受控的远端镜像备份并限制访问。该备份仍含已泄露值，只用于灾难恢复，不能成为新的共享仓库。
+3. 在全新 clone 中使用 `git-filter-repo >= 2.47`。删除整条历史中的秘密文件时，为每个历史路径重复 `--path`：
+
+   ```bash
+   git filter-repo --sensitive-data-removal --invert-paths \
+     --path deploy-latest.js \
+     --path _scripts/reset-admin-pw.js \
+     --path _scripts/test-login.js
+   ```
+
+   若秘密也出现在仍需保留的文件中，使用仓库外的替换清单：
+
+   ```bash
+   git filter-repo --sensitive-data-removal --replace-text /secure/path/secret-replacements.txt
+   ```
+
+   上述路径只是已知代表项，不是完整清单；必须以全历史扫描结果为准。
+4. 检查 `.git/filter-repo/changed-refs`、所有 branch/tag、已知 commit 与秘密扫描结果；在重写 clone 上完成构建、测试和部署配置验证。任何命中都必须重新开始，不能 force push 半清理历史。
+5. `git-filter-repo` 可能移除 `origin` 作为安全保护。仓库所有者临时协调 branch protection 后，先用 `git remote -v` 核对；若缺失，只把已人工核对的精确仓库 URL 重新添加为 `origin`。随后从唯一受控 clone 执行 `git push --force --mirror origin`。这一步不可逆，执行前再次确认停写、远端地址、changed refs 和备份。
+6. 所有协作者删除旧 clone 后重新 clone；禁止把旧 branch merge/rebase 回新历史。协调 fork 所有者清理或删除 fork，并联系 GitHub Support 清除仍可访问的 PR 引用和缓存视图。
+7. 恢复 branch protection/ruleset，启用 push protection/secret scanning，并在 CI 中阻止秘密模式和 `.env`/运维脚本再次进入历史。
+
+## 11. 泄露镜像、构建缓存与发布包清理
+
+若旧构建上下文可能含 `.env`、provider 配置或硬编码凭据，则旧镜像、registry layer、BuildKit cache 和离线发布包都按泄露源处理。凭据必须先轮换；清缓存不能替代轮换。
+
+先记录当前容器、回滚镜像和所有待删除对象的精确 ID/digest，完成干净历史上的无缓存重建与替换部署，再删除明确命中的旧对象：
+
+```bash
+docker compose --env-file /opt/note-prompt-secrets/runtime.env ps -q \
+  | xargs -r docker inspect --format '{{.Id}} {{.Config.Image}} {{.Image}}'
+docker image ls --no-trunc --filter 'reference=note-prompt:*'
+docker system df -v
+
+# 仅填写已核对的受影响 image ID；不要用模糊标签批量删除。
+docker image rm <compromised-image-id> [<compromised-image-id> ...]
+
+# 构建缓存可能保留被 .dockerignore 漏掉的秘密层。
+docker builder prune --all --force
+# 若实际使用了独立 buildx builder，再执行：docker buildx prune --all --force
+```
+
+在镜像仓库中还要按 digest 删除受影响 manifest/layer，检查 registry retention 与复制节点，并重新发布从已清理 commit 构建的 commit-SHA 镜像。检查备份目录、CI artifact、对象存储和其他部署主机上的同名包。严禁使用 `docker system prune --volumes`：它可能删除数据库或其他持久卷。常规发布只清理已确认无引用的旧应用镜像，并始终保留当前版本和至少一个已验证回滚版本。

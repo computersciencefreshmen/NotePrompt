@@ -1,97 +1,130 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
+import {
+  createPaginationMetadata,
+  parseBoundedPagination,
+  readBoundedSearchParam,
+} from '@/lib/pagination-policy'
+import {
+  contentWasTruncated,
+  PROMPT_LIST_DESCRIPTION_CHARS,
+  PROMPT_LIST_PREVIEW_CHARS,
+} from '@/lib/prompt-list-policy'
 
-// GET - 获取用户发布的公共提示词列表
+type PublishedPromptRow = Record<string, unknown> & { tags_json?: unknown; content_length?: unknown }
+
+function parseTags(value: unknown): string[] {
+  const parsed = typeof value === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(value) as unknown
+        } catch {
+          return []
+        }
+      })()
+    : value
+  return Array.isArray(parsed)
+    ? parsed.filter((tag): tag is string => typeof tag === 'string')
+    : []
+}
+
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth(request)
+  if ('error' in auth) {
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+  }
+
   try {
-    console.log('开始获取用户发布的提示词...')
-    
-    const auth = await requireAuth(request)
-    if ('error' in auth) {
-      console.log('认证失败:', auth.error)
-      return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
-    }
-    const userId = auth.user.id
-    console.log('用户ID:', userId)
-
-    // 获取查询参数
     const { searchParams } = new URL(request.url)
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '10')
-    const search = searchParams.get('search') || ''
-    const offset = (page - 1) * limit
-
-    console.log('查询参数:', { page, limit, search, offset })
-
-    // 简化的查询 - 先获取基本数据
-    const whereConditions = ['pp.author_id = ' + userId]
-    let searchConditions = ''
-
-    if (search) {
-      searchConditions = ` AND (pp.title LIKE '%${search}%' OR pp.content LIKE '%${search}%')`
+    const paginationResult = parseBoundedPagination(searchParams, {
+      defaultLimit: 10,
+      maxLimit: 50,
+    })
+    const searchResult = readBoundedSearchParam(searchParams)
+    if (!paginationResult.ok) {
+      return NextResponse.json(
+        { success: false, error: paginationResult.error },
+        { status: 400 },
+      )
     }
+    if (!searchResult.ok) {
+      return NextResponse.json(
+        { success: false, error: searchResult.error },
+        { status: 400 },
+      )
+    }
+    const { page, limit, offset } = paginationResult.value
+    const search = searchResult.value
 
-    // 获取总数
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM public_prompts pp
-      WHERE ${whereConditions.join(' AND ')}${searchConditions}
-    `
-    console.log('计数查询:', countQuery)
-    
-    const countResult = await db.queryRaw(countQuery)
-    const total = (countResult.rows as Record<string, unknown>[])[0]?.total as number || 0
-    console.log('总数:', total)
+    const conditions = ['pp.author_id = ?']
+    const queryParams: Array<string | number> = [auth.user.id]
+    if (search) {
+      conditions.push('(pp.title LIKE ? OR pp.content LIKE ? OR pp.description LIKE ?)')
+      const pattern = `%${search}%`
+      queryParams.push(pattern, pattern, pattern)
+    }
+    const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    // 获取基本数据
-    const dataQuery = `
-      SELECT pp.id, pp.title, pp.content, pp.description, pp.created_at, pp.updated_at,
-             u.username as author
-      FROM public_prompts pp
-      JOIN users u ON pp.author_id = u.id
-      WHERE ${whereConditions.join(' AND ')}${searchConditions}
-      ORDER BY pp.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `
-    console.log('数据查询:', dataQuery)
-    
-    const result = await db.queryRaw(dataQuery)
-    const prompts = result.rows || []
-    console.log('原始数据:', prompts)
+    const countResult = await db.query(
+      `SELECT COUNT(*) AS total FROM public_prompts pp ${whereClause}`,
+      queryParams,
+    )
+    const total = Number((countResult.rows as Record<string, unknown>[])[0]?.total) || 0
 
-    // 处理数据格式
-    const processedPrompts = (prompts as Record<string, unknown>[]).map(prompt => ({
-      id: prompt.id as number,
-      title: prompt.title as string,
-      content: prompt.content as string,
-      description: prompt.description as string,
-      author: prompt.author as string,
-      favorites_count: 0, // 暂时设为0
-      is_featured: false, // 暂时设为false
-      created_at: prompt.created_at as string,
-      updated_at: prompt.updated_at as string,
-      tags: [] // 暂时设为空数组
+    const result = await db.query(
+      `SELECT
+         pp.id,
+         pp.title,
+         LEFT(pp.content, ${PROMPT_LIST_PREVIEW_CHARS}) AS content,
+         CHAR_LENGTH(pp.content) AS content_length,
+         LEFT(pp.description, ${PROMPT_LIST_DESCRIPTION_CHARS}) AS description,
+         pp.author_id,
+         pp.category_id,
+         pp.views_count,
+         pp.is_featured,
+         pp.created_at,
+         pp.updated_at,
+         u.username AS author,
+         (SELECT COUNT(*) FROM user_favorites uf WHERE uf.public_prompt_id = pp.id) AS favorites_count,
+         (SELECT JSON_ARRAYAGG(t.name)
+            FROM public_prompt_tags ppt
+            JOIN tags t ON t.id = ppt.tag_id
+           WHERE ppt.public_prompt_id = pp.id) AS tags_json
+       FROM public_prompts pp
+       JOIN users u ON u.id = pp.author_id
+       ${whereClause}
+       ORDER BY pp.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset],
+    )
+
+    const items = (result.rows as PublishedPromptRow[]).map(({ tags_json, content_length, ...prompt }) => ({
+      ...prompt,
+      content_is_truncated: contentWasTruncated(content_length),
+      source: 'published' as const,
+      tags: parseTags(tags_json),
+      views_count: Number(prompt.views_count) || 0,
+      favorites_count: Number(prompt.favorites_count) || 0,
+      is_featured: Boolean(prompt.is_featured),
     }))
-
-    const totalPages = Math.ceil(total / limit)
-    console.log('处理后的数据:', processedPrompts)
+    const pagination = createPaginationMetadata(total, paginationResult.value)
 
     return NextResponse.json({
       success: true,
       data: {
-        items: processedPrompts,
-        total,
+        items,
+        total: pagination.total,
         page,
         limit,
-        totalPages
-      }
+        totalPages: pagination.totalPages,
+      },
     })
   } catch (error) {
     console.error('Get user published prompts error:', error)
     return NextResponse.json(
-      { success: false, error: '获取发布的提示词失败', details: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
+      { success: false, error: '获取发布的提示词失败' },
+      { status: 500 },
     )
   }
-} 
+}

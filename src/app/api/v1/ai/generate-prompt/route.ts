@@ -1,31 +1,30 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getAIRequestConfig, AI_MODELS } from "@/config/ai"
+import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER } from "@/config/ai-models"
 import { validateAIModel, formatAIError } from "@/lib/ai-utils"
+import { getUserProviderRuntimeConfig } from "@/lib/user-provider-config"
+import { requireAIUser, reserveAIUsage, requestPolicyResponse } from "@/lib/ai-runtime-security"
+import { MAX_AI_INPUT_CHARS, readLimitedJson } from "@/lib/ai-runtime-policy"
 
 /**
  * 提示词生成API
- * 请求体大小限制: 10MB (通过Next.js默认配置)
+ * 请求体大小限制: 256KiB（服务端按实际读取字节强制执行）
  * 输入验证: 各输入字段长度不能超过10000字符
  */
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAIUser(request)
+  if (!auth.ok) return auth.response
+
   try {
-    const { 
-      userInfo,
-      targetDescription,
-      writingStyle,
-      tone,
-      outputFormat,
-      examples,
-      tags,
-      provider = "deepseek",
-      model = "deepseek-v4-flash"
-    } = await request.json()
+    const body = await readLimitedJson<Record<string, unknown>>(request)
+    const userInfo = typeof body.userInfo === 'string' ? body.userInfo : ''
+    const targetDescription = typeof body.targetDescription === 'string' ? body.targetDescription : ''
+    const provider = typeof body.provider === 'string' ? body.provider : DEFAULT_PUBLIC_AI_PROVIDER
+    const model = typeof body.model === 'string' ? body.model : DEFAULT_PUBLIC_AI_MODEL
 
     // 输入长度限制
-    const MAX_INPUT_LENGTH = 10000;
-    if ((userInfo && userInfo.length > MAX_INPUT_LENGTH) || (targetDescription && targetDescription.length > MAX_INPUT_LENGTH)) {
-      return NextResponse.json({ error: "输入长度不能超过" + MAX_INPUT_LENGTH + "字符" }, { status: 400 });
+    if (userInfo.length > MAX_AI_INPUT_CHARS || targetDescription.length > MAX_AI_INPUT_CHARS) {
+      return NextResponse.json({ error: "输入长度不能超过" + MAX_AI_INPUT_CHARS + "字符" }, { status: 400 });
     }
 
     if (!userInfo || !targetDescription) {
@@ -37,9 +36,10 @@ export async function POST(request: NextRequest) {
 
     // 如果是local则重定向到qwen
     const effectiveProvider = provider === "local" ? "qwen" : provider
+    const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, effectiveProvider)
 
     // 验证AI模型配置
-    const validation = validateAIModel(effectiveProvider, model);
+    const validation = validateAIModel(effectiveProvider, model, userRuntimeConfig || undefined);
     if (!validation.isValid) {
       return NextResponse.json(
         { success: false, error: validation.error },
@@ -49,6 +49,9 @@ export async function POST(request: NextRequest) {
 
     // 获取AI配置
     const aiConfig = validation.config!
+    const quota = await reserveAIUsage(auth.user, 'ai_generate')
+    if (!quota.ok) return quota.response
+    const reservation = quota.reservation
     
     // 系统提示：精简但有效
     const systemPrompt = `你是提示词生成专家。根据用户信息和目标描述，生成一个结构化、专业的提示词。
@@ -86,6 +89,7 @@ export async function POST(request: NextRequest) {
 
         const response = await fetch(aiConfig.baseURL + "/chat/completions", {
           method: "POST",
+          redirect: "error",
           headers,
           body: JSON.stringify({
             model: aiConfig.model,
@@ -102,8 +106,8 @@ export async function POST(request: NextRequest) {
         clearTimeout(timeoutId)
 
         if (!response.ok) {
-          const errorText = await response.text()
-          console.error("Qwen API错误 (" + response.status + "):", errorText)
+          await response.text()
+          console.error("Qwen API请求失败 (" + response.status + ")")
           throw new Error("Qwen API请求失败: " + response.status)
         }
 
@@ -119,6 +123,7 @@ export async function POST(request: NextRequest) {
 
         const response = await fetch(aiConfig.baseURL + "/chat/completions", {
           method: "POST",
+          redirect: "error",
           headers,
           body: JSON.stringify({
             model: deepseekModel,
@@ -135,8 +140,8 @@ export async function POST(request: NextRequest) {
         clearTimeout(timeoutId)
 
         if (!response.ok) {
-          const errorText = await response.text()
-          console.error("DeepSeek API错误 (" + response.status + "):", errorText)
+          await response.text()
+          console.error("DeepSeek API请求失败 (" + response.status + ")")
           throw new Error("DeepSeek API请求失败: " + response.status)
         }
 
@@ -148,25 +153,31 @@ export async function POST(request: NextRequest) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000);
 
+        const requestBody: Record<string, unknown> = {
+          model: aiConfig.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage }
+          ],
+          temperature: aiConfig.temperature,
+        }
+        requestBody[effectiveProvider === 'minimax' || effectiveProvider === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens'] = aiConfig.max_tokens
+        if (effectiveProvider === 'xiaomi') {
+          requestBody.thinking = { type: 'disabled' }
+        }
+
         const response = await fetch(aiConfig.baseURL + "/chat/completions", {
           method: "POST",
+          redirect: "error",
           headers,
-          body: JSON.stringify({
-            model: aiConfig.model,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage }
-            ],
-            temperature: aiConfig.temperature,
-            max_tokens: aiConfig.max_tokens
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal
         })
         clearTimeout(timeoutId)
 
         if (!response.ok) {
-          const errorText = await response.text()
-          console.error(effectiveProvider + " API错误 (" + response.status + "):", errorText)
+          await response.text()
+          console.error(effectiveProvider + " API请求失败 (" + response.status + ")")
           throw new Error(effectiveProvider + " API请求失败: " + response.status)
         }
 
@@ -180,6 +191,7 @@ export async function POST(request: NextRequest) {
         throw new Error("AI模型未返回有效响应")
       }
 
+      reservation.commit()
       return NextResponse.json({
         success: true,
         generated: generatedPrompt.trim(),
@@ -189,26 +201,19 @@ export async function POST(request: NextRequest) {
       })
 
     } catch (error) {
-      console.error("AI生成失败:", error)
+      await reservation.rollback()
+      console.error("AI生成失败")
       const formattedError = formatAIError(error, effectiveProvider)
       return NextResponse.json(
         {
           success: false,
-          error: formattedError,
-          details: process.env.NODE_ENV === "development" ? (error instanceof Error ? error.message : "Unknown error") : "Internal server error"
+          error: formattedError
         },
         { status: 500 }
       )
     }
 
   } catch (error) {
-    console.error("API错误:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "请求处理失败"
-      },
-      { status: 500 }
-    )
+    return requestPolicyResponse(error)
   }
 }

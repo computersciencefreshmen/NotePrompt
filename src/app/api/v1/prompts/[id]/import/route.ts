@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import db from '@/lib/mysql-database'
+import {
+  getCuratedPublicPromptById,
+  resolvePublicPromptSource,
+} from '@/lib/curated-public-prompts'
+import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+import { entitlementLimitResponse } from '@/lib/entitlement-http'
+
+const MAX_PROMPT_IMPORT_BODY_BYTES = 8 * 1024
 
 // POST - 导入单个提示词到用户库
 export async function POST(
@@ -15,21 +24,42 @@ export async function POST(
 
     const user_id = auth.user.id
     const { id } = await params
-    const promptId = parseInt(id)
+    const promptId = parsePositiveResourceId(id)
 
-    if (isNaN(promptId)) {
+    if (promptId == null) {
       return NextResponse.json({
         success: false,
-        error: '无效的提示词ID'
-      }, { status: 400 })
+        error: '提示词不存在或无法导入'
+      }, { status: 404 })
     }
 
-    const body = await request.json()
-    const { folder_id } = body
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_PROMPT_IMPORT_BODY_BYTES,
+    )
+    if (Object.keys(body).some(key => !['folder_id', 'source'].includes(key))) {
+      return NextResponse.json(
+        { success: false, error: '请求包含不支持的字段' },
+        { status: 400 },
+      )
+    }
+    const folder_id = body.folder_id
+    const requestedSource = body.source == null
+      ? null
+      : typeof body.source === 'string'
+        ? body.source
+        : 'invalid'
+    const source = resolvePublicPromptSource(promptId, requestedSource)
+    if (!source) {
+      return NextResponse.json(
+        { success: false, error: '无效的提示词来源' },
+        { status: 400 },
+      )
+    }
 
     // 获取用户的默认文件夹
-    let targetFolderId = folder_id
-    if (!targetFolderId) {
+    let targetFolderId: number
+    if (folder_id == null || folder_id === '') {
       const folders = await db.getFoldersByUserId(user_id)
       const defaultFolder = folders[0] as Record<string, unknown> | undefined
 
@@ -39,76 +69,93 @@ export async function POST(
           error: '用户没有文件夹，请先创建文件夹'
         }, { status: 400 })
       }
-      targetFolderId = Number(defaultFolder.id)
-    }
-
-    // 检查是否是公共提示词
-    const publicPrompt = await db.getPublicPromptById(promptId)
-    if (publicPrompt) {
-      // 导入公共提示词
-      const newPrompt = await db.createUserPrompt({
-        title: `[导入] ${String(publicPrompt.title || '')}`,
-        content: String(publicPrompt.content || ''),
-        description: publicPrompt.description ? String(publicPrompt.description) : null,
-        user_id: user_id,
-        folder_id: targetFolderId,
-        category_id: publicPrompt.category_id == null ? null : Number(publicPrompt.category_id)
-      })
-
-      // 复制标签
-      try {
-        const tags = await db.getPublicPromptTags(promptId)
-        if (tags && tags.length > 0) {
-          const tagNames = tags.map((tag: Record<string, unknown>) => tag.name as string)
-          await db.addUserPromptTags(Number(newPrompt.id), tagNames)
-        }
-      } catch (tagError) {
-        console.error('复制标签失败:', tagError)
+      const parsedDefaultFolderId = parsePositiveResourceId(defaultFolder.id)
+      if (parsedDefaultFolderId == null) {
+        return NextResponse.json({
+          success: false,
+          error: '默认文件夹数据无效'
+        }, { status: 500 })
+      }
+      targetFolderId = parsedDefaultFolderId
+    } else {
+      const parsedFolderId = parsePositiveResourceId(folder_id)
+      if (parsedFolderId == null) {
+        return NextResponse.json({
+          success: false,
+          error: '无效的文件夹ID'
+        }, { status: 400 })
       }
 
-      return NextResponse.json({
-        success: true,
-        data: newPrompt,
-        message: '导入成功'
-      })
+      const targetFolder = await db.getOwnedFolderById(parsedFolderId, user_id)
+      if (!targetFolder) {
+        return NextResponse.json({
+          success: false,
+          error: '文件夹不存在'
+        }, { status: 404 })
+      }
+      targetFolderId = parsedFolderId
     }
 
-    // 检查是否是其他用户的提示词
-    const otherPrompt = await db.getUserPromptById(promptId)
-    if (otherPrompt && otherPrompt.user_id !== user_id) {
-      // 导入其他用户的提示词
-      const newPrompt = await db.createUserPrompt({
-        title: `[导入] ${String(otherPrompt.title || '')}`,
-        content: String(otherPrompt.content || ''),
-        description: otherPrompt.description ? String(otherPrompt.description) : null,
-        user_id: user_id,
-        folder_id: targetFolderId,
-        category_id: otherPrompt.category_id == null ? null : Number(otherPrompt.category_id)
-      })
+    // Curated content is imported directly from the immutable catalog. It never receives a
+    // surrogate row in public_prompts, so its stable catalog ID cannot advance AUTO_INCREMENT.
+    const curatedPrompt = source === 'curated'
+      ? getCuratedPublicPromptById(promptId)
+      : null
+    const publicPrompt = source === 'published'
+      ? await db.getPublicPromptById(promptId)
+      : null
+    const privatePrompt = !curatedPrompt && !publicPrompt && requestedSource == null
+      ? await db.getOwnedUserPromptById(promptId, user_id)
+      : null
+    const sourcePrompt = curatedPrompt || publicPrompt || privatePrompt
 
-      // 复制标签
-      try {
-        const tags = await db.getUserPromptTags(promptId)
-        if (tags && tags.length > 0) {
-          const tagNames = tags.map((tag: Record<string, unknown>) => tag.name as string)
-          await db.addUserPromptTags(Number(newPrompt.id), tagNames)
-        }
-      } catch (tagError) {
-        console.error('复制标签失败:', tagError)
-      }
-
+    if (!sourcePrompt) {
       return NextResponse.json({
-        success: true,
-        data: newPrompt,
-        message: '导入成功'
-      })
+        success: false,
+        error: '提示词不存在或无法导入'
+      }, { status: 404 })
+    }
+
+    const newPrompt = await db.createUserPrompt({
+      title: `[导入] ${String(sourcePrompt.title || '')}`.slice(0, 200),
+      content: String(sourcePrompt.content || ''),
+      description: sourcePrompt.description ? String(sourcePrompt.description) : null,
+      user_id,
+      folder_id: targetFolderId,
+      category_id: 'category_id' in sourcePrompt && sourcePrompt.category_id != null
+        ? Number(sourcePrompt.category_id)
+        : null,
+    })
+
+    try {
+      const tagNames = curatedPrompt
+        ? curatedPrompt.tags
+        : (publicPrompt
+            ? await db.getPublicPromptTags(promptId)
+            : await db.getUserPromptTags(promptId))
+          .map((tag: Record<string, unknown>) => String(tag.name || ''))
+          .filter(Boolean)
+      if (tagNames.length > 0) {
+        await db.addUserPromptTags(Number(newPrompt.id), tagNames)
+      }
+    } catch (tagError) {
+      console.error('复制标签失败:', tagError)
     }
 
     return NextResponse.json({
-      success: false,
-      error: '提示词不存在或无法导入'
-    }, { status: 404 })
+      success: true,
+      data: newPrompt,
+      message: '导入成功'
+    })
   } catch (error) {
+    const limitResponse = entitlementLimitResponse(error)
+    if (limitResponse) return limitResponse
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('导入提示词失败:', error)
     return NextResponse.json(
       { success: false, error: '导入失败' },

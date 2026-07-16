@@ -70,7 +70,7 @@ const registerCopy = {
 }
 
 export default function RegisterPage() {
-  const [locale, setLocale] = useState<Locale>('zh')
+  const [locale, setLocale] = useState<Locale>(() => detectLocaleFromSearch())
   const copy = registerCopy[locale]
   const href = (path: string) => withLocaleHref(path, locale)
   const [formData, setFormData] = useState<RegisterRequest>({

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAdminAuth } from '@/lib/auth'
+import {
+  createPaginationMetadata,
+  parseBoundedPagination,
+  readBoundedSearchParam,
+} from '@/lib/pagination-policy'
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear()
@@ -17,7 +22,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: auth.error }, { status: 403 })
     }
 
-    await db.ensureAIUsageDailyTable()
+    const { searchParams } = new URL(request.url)
+    const paginationResult = parseBoundedPagination(searchParams, {
+      defaultLimit: 50,
+      maxLimit: 100,
+    })
+    const searchResult = readBoundedSearchParam(searchParams)
+    if (!paginationResult.ok) {
+      return NextResponse.json(
+        { success: false, error: paginationResult.error },
+        { status: 400 },
+      )
+    }
+    if (!searchResult.ok) {
+      return NextResponse.json(
+        { success: false, error: searchResult.error },
+        { status: 400 },
+      )
+    }
+    const { limit, offset } = paginationResult.value
+    const filterParams: string[] = []
+    let whereClause = ''
+    if (searchResult.value) {
+      whereClause = 'WHERE u.username LIKE ? OR u.email LIKE ?'
+      const pattern = `%${searchResult.value}%`
+      filterParams.push(pattern, pattern)
+    }
 
     const now = new Date()
     const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
@@ -43,13 +73,22 @@ export async function GET(request: NextRequest) {
         WHERE usage_date >= ? AND usage_date < ?
         GROUP BY user_id
       ) m ON u.id = m.user_id
-      ORDER BY COALESCE(m.monthly_usage, 0) DESC, COALESCE(s.total_ai_usage, 0) DESC`,
-      [monthStart, nextMonthStart]
+      ${whereClause}
+      ORDER BY COALESCE(m.monthly_usage, 0) DESC, COALESCE(s.total_ai_usage, 0) DESC
+      LIMIT ? OFFSET ?`,
+      [monthStart, nextMonthStart, ...filterParams, limit, offset]
     )
+    const countResult = await db.query(
+      `SELECT COUNT(*) AS total FROM users u ${whereClause}`,
+      filterParams,
+    )
+    const total = Number((countResult.rows as Array<{ total?: number | string }>)[0]?.total) || 0
+    const pagination = createPaginationMetadata(total, paginationResult.value)
 
     return NextResponse.json({
       success: true,
-      data: result.rows
+      data: result.rows,
+      pagination,
     })
   } catch (error) {
     console.error('获取AI用量统计失败:', error)

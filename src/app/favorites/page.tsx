@@ -1,39 +1,112 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import PromptCard from '@/components/PromptCard'
-import Header from '@/components/Header'
 import { PublicPrompt } from '@/types'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
 import { Star, Heart, Loader2, BookOpen, Search, Sparkles, TrendingUp, Users, Zap, ArrowRight, Plus, User } from 'lucide-react'
+import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
+
+const favoritesCopy = {
+  zh: {
+    fetchFailedTitle: '获取失败',
+    fetchFailedDesc: '获取收藏列表失败，请稍后重试',
+    deleteSuccessTitle: '删除成功',
+    deleteSuccessDesc: '已从收藏列表中删除',
+    deleteFailedTitle: '删除失败',
+    deleteFailedDesc: '删除收藏失败',
+    addSuccessTitle: '添加成功',
+    addSuccessDesc: '已添加到收藏列表',
+    addFailedTitle: '添加失败',
+    addFailedDesc: '添加收藏失败',
+    title: '我的收藏',
+    subtitle: '您收藏的优质提示词，随时可用',
+    discover: '发现更多',
+    browseAll: '浏览全部',
+    favoriteCount: '收藏数量',
+    popular: '热门',
+    recommended: '推荐内容',
+    community: '社区',
+    sharedResources: '共享资源',
+    loadingFavorites: '正在加载收藏...',
+    emptyTitle: '暂无收藏',
+    emptyText: '开始收藏您喜欢的提示词吧',
+    discoverQuality: '发现优质提示词',
+    dialogTitle: '发现更多优质提示词',
+    whyTitle: '为什么推荐这些提示词？',
+    highSaveRate: '高收藏率',
+    hotContent: '热门内容',
+    communityPicked: '社区精选',
+    loadingRecommendations: '正在加载推荐内容...',
+    save: '收藏',
+    dateLocale: 'zh-CN',
+  },
+  en: {
+    fetchFailedTitle: 'Could not load favorites',
+    fetchFailedDesc: 'Your favorites could not be loaded. Please try again later.',
+    deleteSuccessTitle: 'Removed',
+    deleteSuccessDesc: 'The prompt was removed from your favorites.',
+    deleteFailedTitle: 'Remove failed',
+    deleteFailedDesc: 'Could not remove this favorite.',
+    addSuccessTitle: 'Saved',
+    addSuccessDesc: 'The prompt was added to your favorites.',
+    addFailedTitle: 'Save failed',
+    addFailedDesc: 'Could not save this prompt.',
+    title: 'Favorites',
+    subtitle: 'Your saved prompt assets, ready to reuse anytime.',
+    discover: 'Discover more',
+    browseAll: 'Browse all',
+    favoriteCount: 'Saved prompts',
+    popular: 'Popular',
+    recommended: 'Recommended',
+    community: 'Community',
+    sharedResources: 'Shared resources',
+    loadingFavorites: 'Loading favorites...',
+    emptyTitle: 'No favorites yet',
+    emptyText: 'Save prompts you want to reuse later.',
+    discoverQuality: 'Discover prompts',
+    dialogTitle: 'Discover more prompts',
+    whyTitle: 'Why these recommendations?',
+    highSaveRate: 'High save rate',
+    hotContent: 'Popular content',
+    communityPicked: 'Curated picks',
+    loadingRecommendations: 'Loading recommendations...',
+    save: 'Save',
+    dateLocale: 'en-US',
+  },
+}
 
 export default function FavoritesPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
+  const [locale] = useState<Locale>(() => detectLocaleFromSearch())
+  const copy = favoritesCopy[locale]
+  const href = (path: string) => withLocaleHref(path, locale)
   const [favorites, setFavorites] = useState<PublicPrompt[]>([])
   const [loading, setLoading] = useState(false)
   const [showDiscoverDialog, setShowDiscoverDialog] = useState(false)
   const [discoverPrompts, setDiscoverPrompts] = useState<PublicPrompt[]>([])
   const [discoverLoading, setDiscoverLoading] = useState(false)
+  const userId = user?.id
 
   // 检查登录状态
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push('/login')
+      router.push(withLocaleHref('/login', locale))
       return
     }
-  }, [user, authLoading, router])
+  }, [user, authLoading, router, locale])
 
   // 获取收藏列表
-  const fetchFavorites = async () => {
-    if (!user) return
+  const fetchFavorites = useCallback(async () => {
+    if (!userId) return
 
     setLoading(true)
 
@@ -43,22 +116,22 @@ export default function FavoritesPage() {
         setFavorites(response.data.items)
       } else {
         toast({
-          title: '获取失败',
-          description: response.error || '获取收藏列表失败',
+          title: copy.fetchFailedTitle,
+          description: response.error || copy.fetchFailedDesc,
           variant: 'destructive',
         })
       }
     } catch (err) {
       console.error('Failed to fetch favorites:', err)
       toast({
-        title: '获取失败',
-        description: '获取收藏列表失败，请稍后重试',
+        title: copy.fetchFailedTitle,
+        description: copy.fetchFailedDesc,
         variant: 'destructive',
       })
     } finally {
       setLoading(false)
     }
-  }
+  }, [copy.fetchFailedDesc, copy.fetchFailedTitle, toast, userId])
 
   // 获取推荐提示词
   const fetchDiscoverPrompts = async () => {
@@ -66,14 +139,17 @@ export default function FavoritesPage() {
     try {
       const response = await api.publicPrompts.list({
         sort: 'favorites',
+        lang: locale,
         page: 1,
         limit: 6
       })
       
       if (response.success && response.data) {
         // 过滤掉已经收藏的提示词
-        const favoriteIds = new Set(favorites.map(f => f.id))
-        const filteredPrompts = response.data.items.filter(p => !favoriteIds.has(p.id))
+        const favoriteKeys = new Set(favorites.map(f => `${f.source || 'published'}:${f.id}`))
+        const filteredPrompts = response.data.items.filter(
+          p => !favoriteKeys.has(`${p.source || 'published'}:${p.id}`),
+        )
         setDiscoverPrompts(filteredPrompts.slice(0, 6))
       }
     } catch (error) {
@@ -85,10 +161,10 @@ export default function FavoritesPage() {
 
   // 初始加载
   useEffect(() => {
-    if (user) {
-      fetchFavorites()
+    if (userId) {
+      void fetchFavorites()
     }
-  }, [user])
+  }, [fetchFavorites, userId])
 
   // 处理收藏变化
   const handleFavoriteChange = () => {
@@ -97,22 +173,27 @@ export default function FavoritesPage() {
   }
 
   // 新增 handleDeleteFavorite 方法
-  const handleDeleteFavorite = async (promptId: number) => {
+  const handleDeleteFavorite = async (
+    promptId: number,
+    source?: PublicPrompt['source'],
+  ) => {
     try {
-      await api.favorites.remove(promptId)
+      await api.favorites.remove(promptId, source)
       
       // API调用成功后再从UI中移除
-      setFavorites(prev => prev.filter(p => p.id !== promptId))
+      setFavorites(prev => prev.filter(p => (
+        p.id !== promptId || (p.source || 'published') !== (source || 'published')
+      )))
       
       toast({
-        title: '删除成功',
-        description: '已从收藏列表中删除',
+        title: copy.deleteSuccessTitle,
+        description: copy.deleteSuccessDesc,
         variant: 'success',
       })
     } catch (error) {
       toast({
-        title: '删除失败',
-        description: '删除收藏失败',
+        title: copy.deleteFailedTitle,
+        description: copy.deleteFailedDesc,
         variant: 'destructive',
       })
     }
@@ -125,20 +206,20 @@ export default function FavoritesPage() {
   }
 
   // 导入提示词到收藏
-  const handleImportToFavorites = async (promptId: number) => {
+  const handleImportToFavorites = async (prompt: PublicPrompt) => {
     try {
-      await api.favorites.add(promptId)
+      await api.favorites.add(prompt.id, prompt.source)
       toast({
-        title: '添加成功',
-        description: '已添加到收藏列表',
+        title: copy.addSuccessTitle,
+        description: copy.addSuccessDesc,
         variant: 'success',
       })
       // 重新加载收藏列表
       fetchFavorites()
     } catch (error) {
       toast({
-        title: '添加失败',
-        description: '添加收藏失败',
+        title: copy.addFailedTitle,
+        description: copy.addFailedDesc,
         variant: 'destructive',
       })
     }
@@ -147,7 +228,6 @@ export default function FavoritesPage() {
   if (authLoading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <Header />
         <div className="flex items-center justify-center min-h-[60vh]">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
@@ -157,17 +237,16 @@ export default function FavoritesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 页面标题和操作区 */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center mb-4">
             <Star className="h-8 w-8 text-yellow-500 mr-3" />
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">我的收藏</h1>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">{copy.title}</h1>
           </div>
           <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-6">
-            您收藏的优质提示词，随时可用
+            {copy.subtitle}
           </p>
           
           {/* 操作按钮 */}
@@ -178,16 +257,16 @@ export default function FavoritesPage() {
               size="lg"
             >
               <Sparkles className="h-5 w-5 mr-2" />
-              发现更多
+              {copy.discover}
             </Button>
             <Button
-              onClick={() => router.push('/public-prompts')}
+              onClick={() => router.push(href('/public-prompts'))}
               variant="outline"
               className="border-blue-600 text-blue-600 hover:bg-blue-50 px-6 py-3"
               size="lg"
             >
               <BookOpen className="h-5 w-5 mr-2" />
-              浏览全部
+              {copy.browseAll}
             </Button>
           </div>
         </div>
@@ -200,7 +279,7 @@ export default function FavoritesPage() {
                 <Star className="h-8 w-8 text-blue-600 mr-4" />
                 <div>
                   <p className="text-2xl font-bold text-blue-900">{favorites.length}</p>
-                  <p className="text-sm text-blue-700">收藏数量</p>
+                  <p className="text-sm text-blue-700">{copy.favoriteCount}</p>
                 </div>
               </div>
             </CardContent>
@@ -211,8 +290,8 @@ export default function FavoritesPage() {
               <div className="flex items-center">
                 <TrendingUp className="h-8 w-8 text-green-600 mr-4" />
                 <div>
-                  <p className="text-2xl font-bold text-green-900">热门</p>
-                  <p className="text-sm text-green-700">推荐内容</p>
+                  <p className="text-2xl font-bold text-green-900">{copy.popular}</p>
+                  <p className="text-sm text-green-700">{copy.recommended}</p>
                 </div>
               </div>
             </CardContent>
@@ -223,8 +302,8 @@ export default function FavoritesPage() {
               <div className="flex items-center">
                 <Users className="h-8 w-8 text-purple-600 mr-4" />
                 <div>
-                  <p className="text-2xl font-bold text-purple-900">社区</p>
-                  <p className="text-sm text-purple-700">共享资源</p>
+                  <p className="text-2xl font-bold text-purple-900">{copy.community}</p>
+                  <p className="text-sm text-purple-700">{copy.sharedResources}</p>
                 </div>
               </div>
             </CardContent>
@@ -237,7 +316,7 @@ export default function FavoritesPage() {
         {loading && favorites.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600 dark:text-gray-400">正在加载收藏...</span>
+            <span className="ml-2 text-gray-600 dark:text-gray-400">{copy.loadingFavorites}</span>
           </div>
         ) : (
           <>
@@ -245,11 +324,12 @@ export default function FavoritesPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                 {favorites.map((prompt) => (
                   <PromptCard
-                    key={prompt.id}
+                    key={`${prompt.source || 'published'}:${prompt.id}`}
                     prompt={prompt}
                     type="public"
                     onFavoriteChange={handleFavoriteChange}
                     onDelete={handleDeleteFavorite}
+                    locale={locale}
                   />
                 ))}
               </div>
@@ -257,14 +337,14 @@ export default function FavoritesPage() {
               <Card className="text-center py-12">
                 <CardContent>
                   <Star className="h-16 w-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-                  <h3 className="text-xl font-medium text-gray-900 dark:text-gray-100 mb-2">暂无收藏</h3>
-                  <p className="text-gray-600 dark:text-gray-400 mb-6">开始收藏您喜欢的提示词吧</p>
+                  <h3 className="text-xl font-medium text-gray-900 dark:text-gray-100 mb-2">{copy.emptyTitle}</h3>
+                  <p className="text-gray-600 dark:text-gray-400 mb-6">{copy.emptyText}</p>
                   <Button
                     onClick={handleDiscoverMore}
                     className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
                   >
                     <Sparkles className="h-4 w-4 mr-2" />
-                    发现优质提示词
+                    {copy.discoverQuality}
                   </Button>
                 </CardContent>
               </Card>
@@ -279,26 +359,26 @@ export default function FavoritesPage() {
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold flex items-center">
               <Sparkles className="h-6 w-6 mr-2 text-blue-600" />
-              发现更多优质提示词
+              {copy.dialogTitle}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-6">
             {/* 推荐理由 */}
             <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">为什么推荐这些提示词？</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">{copy.whyTitle}</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="flex items-center">
                   <Zap className="h-5 w-5 text-yellow-500 mr-2" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">高收藏率</span>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{copy.highSaveRate}</span>
                 </div>
                 <div className="flex items-center">
                   <TrendingUp className="h-5 w-5 text-green-500 mr-2" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">热门内容</span>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{copy.hotContent}</span>
                 </div>
                 <div className="flex items-center">
                   <Users className="h-5 w-5 text-blue-500 mr-2" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">社区精选</span>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{copy.communityPicked}</span>
                 </div>
               </div>
             </div>
@@ -307,12 +387,12 @@ export default function FavoritesPage() {
             {discoverLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                <span className="ml-2 text-gray-600 dark:text-gray-400">正在加载推荐内容...</span>
+                <span className="ml-2 text-gray-600 dark:text-gray-400">{copy.loadingRecommendations}</span>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {discoverPrompts.map((prompt) => (
-                  <Card key={prompt.id} className="hover:shadow-lg transition-shadow">
+                  <Card key={`${prompt.source || 'published'}:${prompt.id}`} className="hover:shadow-lg transition-shadow">
                     <CardHeader>
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -336,12 +416,12 @@ export default function FavoritesPage() {
                           {prompt.author}
                         </div>
                         <Button
-                          onClick={() => handleImportToFavorites(prompt.id)}
+                          onClick={() => handleImportToFavorites(prompt)}
                           size="sm"
                           className="bg-blue-600 hover:bg-blue-700"
                         >
                           <Plus className="h-4 w-4 mr-1" />
-                          收藏
+                          {copy.save}
                         </Button>
                       </div>
                     </CardContent>
@@ -353,11 +433,11 @@ export default function FavoritesPage() {
             {/* 底部操作 */}
             <div className="flex justify-center pt-6 border-t">
               <Button
-                onClick={() => router.push('/public-prompts')}
+                onClick={() => router.push(href('/public-prompts'))}
                 className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
                 size="lg"
               >
-                浏览全部提示词
+                {copy.browseAll}
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>

@@ -1,37 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
-import { LoginRequest, AuthResponse } from '@/types'
+import { AuthResponse } from '@/types'
 import db from '@/lib/mysql-database'
-import { checkRateLimit, getClientIp, RateLimitRules, createRateLimitResponse } from '@/lib/rate-limit'
+import { createSessionToken, setSessionCookie } from '@/lib/auth'
+import { databaseBoolean, toSafeUserDto } from '@/lib/auth-security'
+import { isBrowserCredentialMutationAllowed } from '@/lib/session-security'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+import { MAX_AUTH_JSON_BODY_BYTES, MAX_EMAIL_LENGTH } from '@/lib/verification-code-security'
+import {
+  checkAccountRateLimit,
+  checkIpRateLimit,
+  createRateLimitResponse,
+  RateLimitRules,
+  rateLimitHttpStatus,
+} from '@/lib/rate-limit'
 
-// JWT密钥从统一配置获取
-const JWT_SECRET = process.env.JWT_SECRET
-if (!JWT_SECRET) {
-  throw new Error('FATAL: JWT_SECRET environment variable is required')
-}
+// A fixed non-account hash keeps unknown-user and wrong-password paths comparable.
+const DUMMY_PASSWORD_HASH = '$2b$12$ggC56wQye1z6O.WhGGkT/ud.u6gsFBF/PROx2NSulhmnOFst97fdS'
 
 export async function POST(request: NextRequest) {
   try {
-    // 检查速率限制（基于IP）
-    const ip = getClientIp(request)
-    const rateCheck = await checkRateLimit(`login:${ip}`, RateLimitRules.login)
-
-    if (!rateCheck.allowed) {
-      return NextResponse.json(
-        createRateLimitResponse(rateCheck.resetAt!),
-        { status: 429 }
+    if (!isBrowserCredentialMutationAllowed(request.headers)) {
+      return NextResponse.json<AuthResponse>(
+        { success: false, error: '跨站登录请求已拒绝' },
+        { status: 403 },
       )
     }
 
-    const body: LoginRequest = await request.json()
-    const { username, password } = body
+    const ipLimit = await checkIpRateLimit(request, 'login', RateLimitRules.login.ip)
+    if (!ipLimit.allowed) {
+      return NextResponse.json(createRateLimitResponse(ipLimit), { status: rateLimitHttpStatus(ipLimit) })
+    }
 
-    if (!username || !password) {
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_AUTH_JSON_BODY_BYTES,
+    )
+    const username = typeof body.username === 'string' ? body.username.trim() : ''
+    const password = body.password
+
+    if (
+      !username || username.length > MAX_EMAIL_LENGTH ||
+      typeof password !== 'string' || password.length === 0 || password.length > 128
+    ) {
       return NextResponse.json<AuthResponse>({
         success: false,
         error: '用户名和密码不能为空'
       }, { status: 400 })
+    }
+
+    const accountLimit = await checkAccountRateLimit(
+      'login',
+      username.toLowerCase(),
+      RateLimitRules.login.account,
+    )
+    if (!accountLimit.allowed) {
+      return NextResponse.json(createRateLimitResponse(accountLimit), { status: rateLimitHttpStatus(accountLimit) })
     }
 
     // 查找用户（支持用户名或邮箱登录）
@@ -40,17 +64,12 @@ export async function POST(request: NextRequest) {
       dbUser = await db.getUserByEmail(username)
     }
 
-    if (!dbUser) {
-      return NextResponse.json<AuthResponse>({
-        success: false,
-        error: '用户名或密码错误'
-      }, { status: 401 })
-    }
-
     // 验证密码
-    const passwordHash = String(dbUser.password_hash || '')
+    const passwordHash = dbUser
+      ? String(dbUser.password_hash || DUMMY_PASSWORD_HASH)
+      : DUMMY_PASSWORD_HASH
     const isPasswordValid = await bcrypt.compare(password, passwordHash)
-    if (!isPasswordValid) {
+    if (!dbUser || !isPasswordValid) {
       return NextResponse.json<AuthResponse>({
         success: false,
         error: '用户名或密码错误'
@@ -58,9 +77,9 @@ export async function POST(request: NextRequest) {
     }
 
     // 检查账户是否激活
-    if (!dbUser.is_active) {
+    if (!databaseBoolean(dbUser.is_active)) {
       // 如果未激活且邮箱未验证，提示用户验证邮箱
-      if (!dbUser.email_verified) {
+      if (!databaseBoolean(dbUser.email_verified)) {
         return NextResponse.json<AuthResponse>({
           success: false,
           error: '请先验证您的邮箱后再登录',
@@ -80,31 +99,27 @@ export async function POST(request: NextRequest) {
       }, { status: 403 })
     }
 
-    // 生成JWT token
-    const token = jwt.sign(
-      {
-        userId: dbUser.id,
-        username: dbUser.username,
-        userType: dbUser.user_type
-      },
-      JWT_SECRET as string,
-      { expiresIn: '7d' }
-    )
+    const token = createSessionToken(dbUser)
 
-    // 返回用户信息（不包含密码）
-    const { password_hash, ...userWithoutPassword } = dbUser
     const authResponse: AuthResponse = {
       success: true,
       data: {
-        user: userWithoutPassword,
-        token
+        user: toSafeUserDto(dbUser)
       }
     }
 
-    return NextResponse.json(authResponse)
+    const response = NextResponse.json(authResponse)
+    setSessionCookie(response, token)
+    return response
 
   } catch (error) {
-    console.error('Login error:', error)
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json<AuthResponse>(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
+    console.error('Login error:', error instanceof Error ? error.message : 'unknown')
     return NextResponse.json<AuthResponse>({
       success: false,
       error: '服务器内部错误'

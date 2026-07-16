@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Badge, badgeVariants } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 import { Star, Download, Edit, Trash2, User, Calendar, Upload, Folder, Eye, Heart, Copy } from 'lucide-react'
@@ -17,7 +17,7 @@ interface PromptCardProps {
   prompt: PublicPrompt | Prompt
   type: 'public' | 'user'
   onEdit?: (id: number) => void
-  onDelete?: (id: number) => void
+  onDelete?: (id: number, source?: PublicPrompt['source']) => void
   onFavoriteChange?: () => void
   onClick?: (prompt: PublicPrompt | Prompt) => void
   onTagClick?: (tag: string) => void
@@ -81,6 +81,7 @@ const promptCardCopy = {
     deleteDescription: (title: string) => `确定要删除提示词 "${title}" 吗？此操作不可撤销。`,
     unfavoriting: '取消收藏中...',
     deleting: '删除中...',
+    openPrompt: (title: string) => `打开提示词：${title}`,
     locale: 'zh-CN',
   },
   en: {
@@ -125,6 +126,7 @@ const promptCardCopy = {
     deleteDescription: (title: string) => `Delete "${title}"? This action cannot be undone.`,
     unfavoriting: 'Removing...',
     deleting: 'Deleting...',
+    openPrompt: (title: string) => `Open prompt: ${title}`,
     locale: 'en-US',
   },
 }
@@ -199,7 +201,7 @@ export default function PromptCard({
     try {
       if (isFavorited) {
         // 取消收藏
-        const response = await api.favorites.remove(prompt.id)
+        const response = await api.favorites.remove(prompt.id, publicPrompt.source)
         
         if (response.success) {
           setIsFavorited(false)
@@ -222,7 +224,7 @@ export default function PromptCard({
       } else {
         // 添加收藏
         try {
-          const response = await api.favorites.add(prompt.id)
+          const response = await api.favorites.add(prompt.id, publicPrompt.source)
           
           if (response.success) {
             setIsFavorited(true)
@@ -279,7 +281,7 @@ export default function PromptCard({
 
     setLoading(true)
     try {
-      await api.publicPrompts.import(prompt.id)
+      await api.publicPrompts.import(prompt.id, undefined, publicPrompt.source)
       toast({
         title: copy.importSuccess,
         description: copy.importSuccessDesc,
@@ -336,7 +338,7 @@ export default function PromptCard({
     setLoading(true)
     try {
       // 调用父组件的删除回调，让父组件处理具体的删除逻辑
-      onDelete?.(prompt.id)
+      onDelete?.(prompt.id, isPublicPrompt ? publicPrompt.source : undefined)
       setShowDeleteDialog(false)
     } catch (error) {
       toast({
@@ -361,11 +363,33 @@ export default function PromptCard({
     }
   }
 
+  const renderTag = (tag: string, key: string, variant: 'secondary' | 'outline' = 'secondary') => {
+    const hoverClass = variant === 'outline' ? 'hover:bg-blue-100' : 'hover:bg-blue-200'
+
+    if (onTagClick) {
+      return (
+        <button
+          key={key}
+          type="button"
+          className={`${badgeVariants({ variant })} text-xs cursor-pointer ${hoverClass}`}
+          onClick={() => onTagClick(tag)}
+        >
+          {tag}
+        </button>
+      )
+    }
+
+    return (
+      <Badge key={key} variant={variant} className="text-xs">
+        {tag}
+      </Badge>
+    )
+  }
+
   return (
     <>
       <Card 
-        className="hover:shadow-md transition-shadow cursor-pointer" 
-        onClick={() => onClick?.(prompt)}
+        className="transition-shadow hover:shadow-md"
         draggable={draggable}
         onDragStart={(e) => onDragStart?.(e, prompt)}
       >
@@ -375,6 +399,7 @@ export default function PromptCard({
             {showCheckbox && (
               <input
                 type="checkbox"
+                aria-label={`${prompt.title}: ${isSelected ? copy.cancel : copy.add}`}
                 checked={isSelected}
                 onChange={(e) => {
                   e.stopPropagation()
@@ -383,8 +408,17 @@ export default function PromptCard({
                 className="mt-1 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
               />
             )}
-            <CardTitle className="text-lg font-semibold line-clamp-2">
-              {prompt.title}
+            <CardTitle className="text-lg font-semibold line-clamp-2" role="heading" aria-level={3}>
+              {onClick ? (
+                <button
+                  type="button"
+                  className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2"
+                  onClick={() => onClick(prompt)}
+                  aria-label={copy.openPrompt(prompt.title)}
+                >
+                  {prompt.title}
+                </button>
+              ) : prompt.title}
             </CardTitle>
             {isPublicPrompt && publicPrompt.is_featured && (
               <div className="flex items-center px-2 py-1 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-xs font-medium rounded-full">
@@ -396,6 +430,7 @@ export default function PromptCard({
           <div className="flex items-center space-x-1 ml-2">
             {isPublicPrompt && onDelete ? (
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
@@ -404,8 +439,9 @@ export default function PromptCard({
                 }}
                 disabled={loading}
                 className="p-1 text-gray-400 hover:text-red-600"
+                aria-label={`${copy.delete}: ${prompt.title}`}
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
               </Button>
             ) : null}
           </div>
@@ -470,45 +506,16 @@ export default function PromptCard({
           <div className="flex flex-wrap gap-2 mb-3">
             {isPublicPrompt ? (
               publicPrompt.tags && Array.isArray(publicPrompt.tags) ? publicPrompt.tags.map((tag, index) => (
-                <Badge
-                  key={`public-tag-${prompt.id}-${index}`}
-                  variant="secondary"
-                  className="text-xs cursor-pointer hover:bg-blue-200"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onTagClick?.(tag)
-                  }}
-                >
-                  {tag}
-                </Badge>
+                renderTag(tag, `public-tag-${prompt.id}-${index}`)
               )) : null
             ) : (
               userPrompt.tags && Array.isArray(userPrompt.tags) ? userPrompt.tags.map((tag, index) => (
-                <Badge
-                  key={`user-tag-${prompt.id}-${tag.id || index}`}
-                  variant="secondary"
-                  className="text-xs cursor-pointer hover:bg-blue-200"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onTagClick?.(tag.name)
-                  }}
-                >
-                  {tag.name}
-                </Badge>
+                renderTag(tag.name, `user-tag-${prompt.id}-${tag.id || index}`)
               )) : null
             )}
 
             {isPublicPrompt && publicPrompt.category && (
-              <Badge
-                variant="outline"
-                className="text-xs cursor-pointer hover:bg-blue-100"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onTagClick?.(publicPrompt.category)
-                }}
-              >
-                {publicPrompt.category}
-              </Badge>
+              renderTag(publicPrompt.category, `public-category-${prompt.id}`, 'outline')
             )}
           </div>
 

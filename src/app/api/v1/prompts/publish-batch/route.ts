@@ -1,56 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
+import { requireAuth } from '@/lib/auth'
+import { normalizeResourceIds } from '@/lib/resource-authorization'
+import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
+
+const MAX_BATCH_PUBLISH_BODY_BYTES = 16 * 1024
 
 // POST - 批量发布用户提示词到公共库
 export async function POST(request: NextRequest) {
   try {
-    const { prompt_ids } = await request.json()
+    const auth = await requireAuth(request)
+    if ('error' in auth) {
+      return NextResponse.json({ success: false, error: auth.error }, { status: auth.status })
+    }
 
-    if (!Array.isArray(prompt_ids) || prompt_ids.length === 0) {
+    const body = await readLimitedJson<Record<string, unknown>>(
+      request,
+      MAX_BATCH_PUBLISH_BODY_BYTES,
+    )
+    if (Object.keys(body).some(key => key !== 'prompt_ids')) {
       return NextResponse.json(
-        { success: false, error: '请提供有效的提示词ID列表' },
+        { success: false, error: '请求包含不支持的字段' },
+        { status: 400 },
+      )
+    }
+    const prompt_ids = body.prompt_ids
+
+    if (!Array.isArray(prompt_ids) || prompt_ids.length === 0 || prompt_ids.length > 100) {
+      return NextResponse.json(
+        { success: false, error: '请提供 1 到 100 个有效的提示词ID' },
         { status: 400 }
       )
     }
 
-    const publishedPrompts = []
+    const promptIds = normalizeResourceIds(prompt_ids)
+    if (!promptIds) {
+      return NextResponse.json(
+        { success: false, error: '提示词ID必须是唯一的正整数' },
+        { status: 400 }
+      )
+    }
 
-    // 批量发布提示词
-    for (const promptId of prompt_ids) {
-      try {
-        // 检查用户提示词是否存在
-        const existingPrompt = await db.getUserPromptById(promptId)
-        if (!existingPrompt) {
-          console.warn(`提示词 ${promptId} 不存在，跳过`)
-          continue
-        }
-
-        // 创建公共提示词
-        const publicPrompt = await db.createPublicPrompt({
-          title: existingPrompt.title as string,
-          content: existingPrompt.content as string,
-          description: existingPrompt.description as string | null,
-          author_id: existingPrompt.user_id as number,
-          category_id: existingPrompt.category_id as number | null
-        })
-
-        // 复制标签（如果有）
-        try {
-          const tags = await db.getUserPromptTags(promptId)
-          if (tags && tags.length > 0) {
-            const tagNames = tags.map(tag => (tag as any).name)
-            await db.addPublicPromptTags((publicPrompt as any).id, tagNames)
-          }
-        } catch (tagError) {
-          console.error(`复制标签失败 (提示词 ${promptId}):`, tagError)
-          // 标签复制失败不影响发布
-        }
-
-        publishedPrompts.push(publicPrompt)
-      } catch (error) {
-        console.error(`发布提示词 ${promptId} 失败:`, error)
-        // 继续处理其他提示词
-      }
+    // 所有权检查、公共记录创建和标签复制在同一事务中完成。
+    // 任一资源不存在或不属于当前用户时，整个批次回滚。
+    const publishedPrompts = await db.publishOwnedUserPrompts(auth.user.id, promptIds)
+    if (!publishedPrompts) {
+      return NextResponse.json(
+        { success: false, error: '提示词不存在' },
+        { status: 404 }
+      )
     }
 
     return NextResponse.json({
@@ -59,10 +57,16 @@ export async function POST(request: NextRequest) {
       message: `成功发布 ${publishedPrompts.length} 个提示词`
     })
   } catch (error) {
+    if (error instanceof RequestPolicyError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.status },
+      )
+    }
     console.error('Batch publish prompts error:', error)
     return NextResponse.json(
       { success: false, error: '批量发布提示词失败' },
       { status: 500 }
     )
   }
-} 
+}

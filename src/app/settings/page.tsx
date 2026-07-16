@@ -1,16 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 // Alert component removed - using Card instead
-import { Switch } from '@/components/ui/switch'
 import {
   Settings,
-  Shield,
-  Bell,
   Palette,
   Download,
   Trash2,
@@ -22,40 +19,41 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useUISettings } from '@/contexts/UISettingsContext'
+import { useTheme } from '@/contexts/ThemeContext'
 import { visualStyleOptions } from '@/config/visual-styles'
 import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
+import {
+  DEFAULT_USER_PREFERENCES,
+  type UserPreferencesDto,
+} from '@/lib/user-preferences'
+import { getPasswordPolicyError } from '@/lib/password-security'
+
+type PasswordFields = {
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
+}
 
 export default function SettingsPage() {
   const { user, logout, loading: authLoading } = useAuth()
-  const { visualStyle, setVisualStyle } = useUISettings()
+  const { setVisualStyle } = useUISettings()
+  const { setTheme } = useTheme()
   const router = useRouter()
 
   const [loading, setLoading] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
 
-  // 设置项状态
-  const [settings, setSettings] = useState({
-    // 隐私设置
-    profilePublic: false,
-    showEmail: false,
-    allowIndexing: true,
-
-    // 通知设置
-    emailNotifications: true,
-    browserNotifications: false,
-    weeklyDigest: true,
-
-    // 界面设置
-    darkMode: false,
-    compactView: false,
-    showTips: true,
-
-    // 密码修改
+  const [settings, setSettings] = useState<PasswordFields>({
     currentPassword: '',
     newPassword: '',
-    confirmPassword: ''
+    confirmPassword: '',
   })
+  const [preferences, setPreferences] = useState<UserPreferencesDto>(DEFAULT_USER_PREFERENCES)
+  const [preferencesLoading, setPreferencesLoading] = useState(true)
+  const [preferencesSaving, setPreferencesSaving] = useState(false)
+  const [preferencesError, setPreferencesError] = useState('')
 
   // 检查登录状态
   useEffect(() => {
@@ -65,11 +63,71 @@ export default function SettingsPage() {
     }
   }, [user, authLoading, router])
 
-  const handleSettingChange = (key: string, value: boolean | string) => {
+  const applyPreferences = useCallback((next: UserPreferencesDto) => {
+    setPreferences(next)
+    setTheme(next.theme)
+    setVisualStyle(next.visualStyle)
+  }, [setTheme, setVisualStyle])
+
+  useEffect(() => {
+    if (!user) return
+    const controller = new AbortController()
+
+    const loadPreferences = async () => {
+      setPreferencesLoading(true)
+      setPreferencesError('')
+      try {
+        const response = await fetch('/api/v1/user/preferences', {
+          credentials: 'same-origin',
+          signal: controller.signal,
+        })
+        const payload = await response.json()
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error || '获取偏好设置失败')
+        }
+        applyPreferences(payload.data as UserPreferencesDto)
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setPreferencesError(error instanceof Error ? error.message : '获取偏好设置失败')
+      } finally {
+        if (!controller.signal.aborted) setPreferencesLoading(false)
+      }
+    }
+
+    void loadPreferences()
+    return () => controller.abort()
+  }, [applyPreferences, user])
+
+  const handleSettingChange = (key: keyof PasswordFields, value: string) => {
     setSettings(prev => ({
       ...prev,
       [key]: value
     }))
+  }
+
+  const handleSavePreferences = async () => {
+    setPreferencesSaving(true)
+    setPreferencesError('')
+    try {
+      const response = await fetch('/api/v1/user/preferences', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(preferences),
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || '保存偏好设置失败')
+      }
+      applyPreferences(payload.data as UserPreferencesDto)
+      toast({ description: '偏好设置已保存' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存偏好设置失败'
+      setPreferencesError(message)
+      toast({ description: message, variant: 'destructive' })
+    } finally {
+      setPreferencesSaving(false)
+    }
   }
 
   const handlePasswordChange = async () => {
@@ -83,8 +141,9 @@ export default function SettingsPage() {
       return
     }
 
-    if (settings.newPassword.length < 6) {
-      toast({ description: '新密码长度至少6位', variant: 'destructive' })
+    const passwordPolicyError = getPasswordPolicyError(settings.newPassword)
+    if (passwordPolicyError) {
+      toast({ description: passwordPolicyError, variant: 'destructive' })
       return
     }
 
@@ -98,13 +157,15 @@ export default function SettingsPage() {
       })
 
       if (response.success) {
-        toast({ description: '密码修改成功' })
+        toast({ description: '密码修改成功，请重新登录' })
         setSettings(prev => ({
           ...prev,
           currentPassword: '',
           newPassword: '',
           confirmPassword: ''
         }))
+        logout()
+        router.replace('/login')
       } else {
         toast({ description: response.error || '密码修改失败', variant: 'destructive' })
       }
@@ -152,10 +213,15 @@ export default function SettingsPage() {
       return
     }
 
+    if (!deletePassword) {
+      toast({ description: '请输入当前密码以确认删除账户', variant: 'destructive' })
+      return
+    }
+
     setLoading(true)
     try {
       // 调用账户删除API
-      const response = await api.user.deleteAccount()
+      const response = await api.user.deleteAccount(deletePassword)
 
       if (response.success) {
         toast({ description: '账户删除成功，即将退出登录..' })
@@ -189,101 +255,13 @@ export default function SettingsPage() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">账户设置</h1>
-          <p className="text-gray-600 mt-2">管理您的账户偏好和隐私设置</p>
+          <p className="text-gray-600 mt-2">管理真实生效并可跨设备同步的界面偏好与账户安全</p>
         </div>
 
 
 
         <div className="space-y-6">
-          {/* 隐私设置 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Shield className="h-5 w-5 mr-2" />
-                隐私设置
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">公开个人资料</h4>
-                  <p className="text-sm text-gray-600">允许其他用户查看您的基本信息</p>
-                </div>
-                <Switch
-                  checked={settings.profilePublic}
-                  onCheckedChange={(checked) => handleSettingChange('profilePublic', checked)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">显示邮箱地址</h4>
-                  <p className="text-sm text-gray-600">在个人资料中显示邮箱地址</p>
-                </div>
-                <Switch
-                  checked={settings.showEmail}
-                  onCheckedChange={(checked) => handleSettingChange('showEmail', checked)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">允许搜索引擎索引</h4>
-                  <p className="text-sm text-gray-600">您的公开内容可能出现在搜索结果中</p>
-                </div>
-                <Switch
-                  checked={settings.allowIndexing}
-                  onCheckedChange={(checked) => handleSettingChange('allowIndexing', checked)}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 通知设置 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Bell className="h-5 w-5 mr-2" />
-                通知设置
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">邮件通知</h4>
-                  <p className="text-sm text-gray-600">接收重要更新和活动通知</p>
-                </div>
-                <Switch
-                  checked={settings.emailNotifications}
-                  onCheckedChange={(checked) => handleSettingChange('emailNotifications', checked)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">浏览器通知</h4>
-                  <p className="text-sm text-gray-600">在浏览器中显示即时通知</p>
-                </div>
-                <Switch
-                  checked={settings.browserNotifications}
-                  onCheckedChange={(checked) => handleSettingChange('browserNotifications', checked)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">每周摘要</h4>
-                  <p className="text-sm text-gray-600">接收每周使用情况摘要</p>
-                </div>
-                <Switch
-                  checked={settings.weeklyDigest}
-                  onCheckedChange={(checked) => handleSettingChange('weeklyDigest', checked)}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 界面设置 */}
+          {/* 仅展示已经接入真实行为和持久化的偏好。 */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center">
@@ -292,17 +270,58 @@ export default function SettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {preferencesError && (
+                <div role="alert" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                  {preferencesError}
+                </div>
+              )}
+
+              <div>
+                <h4 className="font-medium">主题</h4>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">浅色、深色或跟随设备设置，选择后立即生效。</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  {([
+                    ['light', '浅色'],
+                    ['dark', '深色'],
+                    ['system', '跟随系统'],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={preferences.theme === value}
+                      onClick={() => {
+                        setPreferences(current => ({ ...current, theme: value }))
+                        setTheme(value)
+                      }}
+                      className={`rounded-[8px] border px-3 py-2 text-sm font-medium transition-colors ${
+                        preferences.theme === value
+                          ? 'border-teal-500 bg-teal-50 text-teal-950 dark:border-teal-400 dark:bg-teal-950/30 dark:text-teal-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-gray-200 pt-4 dark:border-gray-800" />
+
               <div>
                 <h4 className="font-medium">界面风格</h4>
                 <p className="text-sm text-gray-600 mt-1">调整优化工作台和后续新版页面的视觉密度与色彩取向</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   {visualStyleOptions.map(option => {
-                    const isSelected = visualStyle === option.value
+                    const isSelected = preferences.visualStyle === option.value
                     return (
                       <button
                         key={option.value}
                         type="button"
-                        onClick={() => setVisualStyle(option.value)}
+                        aria-pressed={isSelected}
+                        onClick={() => {
+                          setPreferences(current => ({ ...current, visualStyle: option.value }))
+                          setVisualStyle(option.value)
+                        }}
                         className={`rounded-[8px] border p-4 text-left transition-colors ${
                           isSelected
                             ? 'border-teal-500 bg-teal-50 text-teal-950 dark:border-teal-400 dark:bg-teal-950/30 dark:text-teal-50'
@@ -322,39 +341,39 @@ export default function SettingsPage() {
 
               <div className="border-t border-gray-200 pt-4 dark:border-gray-800" />
 
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">深色模式</h4>
-                  <p className="text-sm text-gray-600">使用深色主题（即将推出）</p>
+              <div>
+                <h4 className="font-medium">默认编辑模式</h4>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">新建提示词时默认打开普通编辑器或结构化专业编辑器。</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {([
+                    ['normal', '普通模式'],
+                    ['professional', '专业模式'],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={preferences.defaultEditorMode === value}
+                      onClick={() => setPreferences(current => ({ ...current, defaultEditorMode: value }))}
+                      className={`rounded-[8px] border px-3 py-2 text-sm font-medium transition-colors ${
+                        preferences.defaultEditorMode === value
+                          ? 'border-teal-500 bg-teal-50 text-teal-950 dark:border-teal-400 dark:bg-teal-950/30 dark:text-teal-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <Switch
-                  checked={settings.darkMode}
-                  onCheckedChange={(checked) => handleSettingChange('darkMode', checked)}
-                  disabled
-                />
               </div>
 
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">紧凑视图</h4>
-                  <p className="text-sm text-gray-600">减少界面间距，显示更多内容</p>
-                </div>
-                <Switch
-                  checked={settings.compactView}
-                  onCheckedChange={(checked) => handleSettingChange('compactView', checked)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">显示使用提示</h4>
-                  <p className="text-sm text-gray-600">在界面上显示操作提示和帮助信息</p>
-                </div>
-                <Switch
-                  checked={settings.showTips}
-                  onCheckedChange={(checked) => handleSettingChange('showTips', checked)}
-                />
-              </div>
+              <Button
+                type="button"
+                onClick={handleSavePreferences}
+                disabled={preferencesLoading || preferencesSaving}
+                className="bg-teal-700 text-white hover:bg-teal-800"
+              >
+                {preferencesLoading ? '加载中...' : preferencesSaving ? '保存中...' : '保存界面偏好'}
+              </Button>
             </CardContent>
           </Card>
 
@@ -368,9 +387,12 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">当前密码</label>
+                <label htmlFor="current-password" className="block text-sm font-medium text-gray-700 mb-2">当前密码</label>
                 <Input
+                  id="current-password"
                   type="password"
+                  autoComplete="current-password"
+                  maxLength={128}
                   value={settings.currentPassword}
                   onChange={(e) => handleSettingChange('currentPassword', e.target.value)}
                   placeholder="输入当前密码"
@@ -378,19 +400,25 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">新密码</label>
+                <label htmlFor="new-password" className="block text-sm font-medium text-gray-700 mb-2">新密码</label>
                 <Input
+                  id="new-password"
                   type="password"
+                  autoComplete="new-password"
+                  maxLength={128}
                   value={settings.newPassword}
                   onChange={(e) => handleSettingChange('newPassword', e.target.value)}
-                  placeholder="输入新密码（至少6位）"
+                  placeholder="8-128位，包含大小写字母和数字"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">确认新密码</label>
+                <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700 mb-2">确认新密码</label>
                 <Input
+                  id="confirm-password"
                   type="password"
+                  autoComplete="new-password"
+                  maxLength={128}
                   value={settings.confirmPassword}
                   onChange={(e) => handleSettingChange('confirmPassword', e.target.value)}
                   placeholder="再次输入新密码"
@@ -466,6 +494,20 @@ export default function SettingsPage() {
                         </div>
                       </CardContent>
                     </Card>
+                    <div>
+                      <label htmlFor="delete-account-password" className="block text-sm font-medium text-gray-700 mb-2">
+                        当前密码
+                      </label>
+                      <Input
+                        id="delete-account-password"
+                        type="password"
+                        autoComplete="current-password"
+                        maxLength={128}
+                        value={deletePassword}
+                        onChange={(event) => setDeletePassword(event.target.value)}
+                        placeholder="输入当前密码以确认"
+                      />
+                    </div>
                     <div className="flex space-x-3">
                       <Button
                         onClick={handleDeleteAccount}
@@ -475,7 +517,10 @@ export default function SettingsPage() {
                         {loading ? '删除中..' : '确认删除'}
                       </Button>
                       <Button
-                        onClick={() => setShowDeleteConfirm(false)}
+                        onClick={() => {
+                          setShowDeleteConfirm(false)
+                          setDeletePassword('')
+                        }}
                         variant="outline"
                       >
                         取消

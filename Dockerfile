@@ -1,51 +1,67 @@
-#
-# 第一个阶段: 构建
-#
-FROM node:18-alpine AS builder
+# syntax=docker/dockerfile:1.7
 
+# The default image is pinned by manifest digest for reproducible builds.
+# Override NODE_IMAGE only through a reviewed dependency-update change.
+ARG NODE_IMAGE=node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
+
+FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# 复制依赖配置文件。
 COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
-# 安装所有依赖
-RUN npm install
+FROM ${NODE_IMAGE} AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# 复制项目源代码和配置文件。
+COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
-
-# 如果你的 next.config.mjs 包含了 output: 'standalone'，
-# Next.js 会将所有生产文件（包括 node_modules）移动到 .next/standalone。
-# 因此，我们不需要单独复制 node_modules，这能进一步减小镜像大小。
 RUN npm run build
 
-#
-# 第二个阶段: 运行
-#
-# 我们使用 Next.js 推荐的 standalone 模式。
-# 这里的基础镜像可以使用更轻量级的 `node:18-alpine`，
-# 因为 standalone 模式会将所有依赖打包进去。
-FROM node:18-alpine AS runner
+# The standalone output intentionally contains only modules found by Next's
+# static tracer. OCR is launched as a separate Node process, so keep a pruned,
+# deterministic production dependency tree for that runtime path.
+FROM dependencies AS production-dependencies
+RUN npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
-# 设置工作目录
+FROM ${NODE_IMAGE} AS runner
+
+# Runtime document extraction is fully local: no production OCR language-pack
+# download and no Windows-only PDF binary assumptions.
+RUN apk add --no-cache \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    tesseract-ocr-data-chi_sim
+
+ARG APP_VERSION=unknown
+LABEL org.opencontainers.image.title="Note Prompt" \
+      org.opencontainers.image.revision="${APP_VERSION}"
+
 WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0 \
+    APP_VERSION=${APP_VERSION} \
+    PDFTOTEXT_PATH=/usr/bin/pdftotext \
+    TESSERACT_PATH=/usr/bin/tesseract
 
-# 复制 standalone 模式生成的整个目录
-# 这将把所有必要的代码、依赖和配置文件一次性复制过来
+# The official Node image already provides the unprivileged `node` user. Keep
+# application code root-owned; only explicit tmpfs mounts are writable at run time.
+COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.mjs ./next.config.mjs
-COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/scripts/ocr-image.cjs ./scripts/ocr-image.cjs
+COPY --from=builder /app/scripts/mysql-migrate.cjs ./scripts/mysql-migrate.cjs
+COPY --from=builder /app/scripts/lib ./scripts/lib
+COPY --from=builder /app/database/migrations ./database/migrations
+COPY --from=builder /app/database/schema-requirements.json ./database/schema-requirements.json
 
-# 同样，设置非 root 用户以提高安全性
-RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
-RUN chown -R nextjs:nextjs /app
-
-USER nextjs
-
-# 暴露应用运行的端口
+USER node
 EXPOSE 3000
+STOPSIGNAL SIGTERM
 
-# 启动命令: 使用 Next.js standalone 模式的正确启动命令
 CMD ["node", "server.js"]

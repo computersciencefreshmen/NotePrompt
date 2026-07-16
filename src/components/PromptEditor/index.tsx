@@ -21,16 +21,28 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { EditMode, NormalModeData, ProfessionalModeData, Prompt } from '@/types'
+import {
+  EditMode,
+  NormalModeData,
+  ProfessionalModeData,
+  Prompt,
+  PromptEditorSaveData,
+  PromptEditorState,
+} from '@/types'
 import NormalEditor from './NormalEditor'
 import ProfessionalEditor from './ProfessionalEditor'
 import VersionHistory from '@/components/VersionHistory'
 import { featureFlags } from '@/config/features'
 import { composeProfessionalPrompt } from '@/lib/prompt-content'
+import {
+  PROMPT_EDITOR_SCHEMA_VERSION,
+  resolveStoredPromptEditorState,
+} from '@/lib/prompt-editor-state'
 
 interface PromptEditorProps {
   prompt?: Prompt // 编辑模式时传入
-  onSave: (data: { title: string; content: string; mode: EditMode; tags: string[]; is_public: boolean }) => void
+  defaultMode?: EditMode
+  onSave: (data: PromptEditorSaveData) => void
   onCancel: () => void
   onVersionRestore?: () => void
   loading?: boolean
@@ -38,13 +50,14 @@ interface PromptEditorProps {
 
 export default function PromptEditor({
   prompt,
+  defaultMode = 'normal',
   onSave,
   onCancel,
   onVersionRestore,
   loading = false
 }: PromptEditorProps) {
   const router = useRouter()
-  const [editMode, setEditMode] = useState<EditMode>('normal')
+  const [editMode, setEditMode] = useState<EditMode>(prompt?.editor_mode || defaultMode)
   const [showModeCard, setShowModeCard] = useState(!prompt) // 新建时显示模式选择卡片，编辑时不显示
   const [normalData, setNormalData] = useState<NormalModeData>({
     title: '',
@@ -82,33 +95,55 @@ export default function PromptEditor({
   // 初始化数据（编辑模式）
   useEffect(() => {
     if (prompt) {
+      const editorState = resolveStoredPromptEditorState(prompt as unknown as Record<string, unknown>)
       // 处理历史数据中的"目标："前缀（新保存的数据不再包含此前缀）
       let processedContent = prompt.content
       if (processedContent.startsWith('目标：')) {
         processedContent = processedContent.substring(3).trim()
       }
       
-      setNormalData(prev => ({
-        ...prev,
-        title: prompt.title,
-        objective: processedContent // 不再截断内容
-      }))
-      setProfessionalData(prev => ({
-        ...prev,
-        title: prompt.title,
-        content: prompt.content, // 保持完整内容
-        task: processedContent
-      }))
+      setEditMode(editorState.editor_mode)
+      if (editorState.editor_mode === 'normal') {
+        setNormalData(editorState.payload)
+        setProfessionalData({
+          title: editorState.payload.title,
+          content: prompt.content,
+          task: editorState.payload.objective,
+          role: '',
+          background: editorState.payload.context || '',
+          format: editorState.payload.format || '',
+          outputStyle: editorState.payload.style || '',
+          formatRules: [],
+          qualityMetrics: [],
+          acceptanceCriteria: [],
+          constraints: [],
+          examples: editorState.payload.examples ? [editorState.payload.examples] : [],
+          variables: {},
+        })
+      } else {
+        setProfessionalData(editorState.payload)
+        setNormalData({
+          title: editorState.payload.title,
+          objective: editorState.payload.task || editorState.payload.content || processedContent,
+          context: editorState.payload.background || '',
+          style: editorState.payload.outputStyle || '',
+          tone: '',
+          format: editorState.payload.format || '',
+          examples: (editorState.payload.examples || []).join('\n'),
+        })
+      }
       // 初始化标签
       if (prompt.tags) {
         setTags(prompt.tags.map(tag => tag.name))
       }
       // 初始化公开状态
-      if (prompt.is_public) {
-        setIsPublic(true)
-      }
+      setIsPublic(Boolean(prompt.is_public))
     }
   }, [prompt])
+
+  useEffect(() => {
+    if (!prompt) setEditMode(defaultMode)
+  }, [defaultMode, prompt])
 
   const handleModeChange = (mode: EditMode) => {
     setEditMode(mode)
@@ -145,6 +180,17 @@ export default function PromptEditor({
   const handleSave = () => {
     const currentData = editMode === 'normal' ? normalData : professionalData
     const finalContent = editMode === 'normal' ? generateNormalPrompt() : composeProfessionalPrompt(professionalData)
+    const editorState: PromptEditorState = editMode === 'normal'
+      ? {
+          editor_mode: 'normal',
+          payload: normalData,
+          schema_version: PROMPT_EDITOR_SCHEMA_VERSION,
+        }
+      : {
+          editor_mode: 'professional',
+          payload: professionalData,
+          schema_version: PROMPT_EDITOR_SCHEMA_VERSION,
+        }
 
     const saveData = {
       title: currentData.title,
@@ -152,6 +198,7 @@ export default function PromptEditor({
       mode: editMode,
       tags: tags,
       is_public: isPublic,
+      ...editorState,
     }
 
     onSave(saveData)
@@ -190,7 +237,7 @@ export default function PromptEditor({
     router.push(prompt ? `/optimizer?source=edit&id=${prompt.id}` : '/optimizer?source=create')
   }
 
-  if (!prompt) {
+  if (!prompt && editMode === 'normal') {
     return (
       <div className="min-h-screen bg-[#f3eee6] px-4 py-6 text-[#2f2a24] dark:bg-[#14120f] dark:text-[#f4efe7] sm:px-6 lg:px-8">
         <div className="mx-auto max-w-6xl space-y-5">
@@ -359,6 +406,7 @@ export default function PromptEditor({
             <div className="flex items-center space-x-3">
               <span className="text-sm font-medium">普通</span>
               <Switch
+                aria-label="切换专业编辑模式"
                 checked={editMode === 'professional'}
                 onCheckedChange={(checked) => handleModeChange(checked ? 'professional' : 'normal')}
                 className="data-[state=checked]:bg-teal-600"
@@ -372,10 +420,19 @@ export default function PromptEditor({
         {showModeCard && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card
-              className={`cursor-pointer transition-all hover:shadow-md border-2 ${
+              className={`cursor-pointer transition-all hover:shadow-md border-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2 ${
                 editMode === 'normal' ? 'border-teal-500 bg-teal-50/50' : 'border-gray-200 hover:border-teal-300'
               }`}
               onClick={() => handleModeChange('normal')}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                handleModeChange('normal')
+              }}
+              role="button"
+              tabIndex={0}
+              aria-pressed={editMode === 'normal'}
+              aria-label="选择普通模式"
             >
               <CardContent className="p-6">
                 <div className="flex items-start space-x-4">
@@ -399,10 +456,19 @@ export default function PromptEditor({
             </Card>
 
             <Card
-              className={`cursor-pointer transition-all hover:shadow-md border-2 ${
+              className={`cursor-pointer transition-all hover:shadow-md border-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-600 focus-visible:ring-offset-2 ${
                 editMode === 'professional' ? 'border-purple-500 bg-purple-50/50' : 'border-gray-200 hover:border-purple-300'
               }`}
               onClick={() => handleModeChange('professional')}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                handleModeChange('professional')
+              }}
+              role="button"
+              tabIndex={0}
+              aria-pressed={editMode === 'professional'}
+              aria-label="选择专业模式"
             >
               <CardContent className="p-6">
                 <div className="flex items-start space-x-4">

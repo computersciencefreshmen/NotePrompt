@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAIRequestConfig, AI_MODELS } from '@/config/ai'
 import { validateAIModel, formatAIError } from '@/lib/ai-utils'
 import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
+import { requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
+import {
+  MAX_AI_INPUT_CHARS,
+  parseAIRequestAttachments,
+  readLimitedJson,
+} from '@/lib/ai-runtime-policy'
 
 type RequestedAttachment = {
   name: string
@@ -12,21 +18,29 @@ type RequestedAttachment = {
 
 /**
 * 提示词优化API
-* 请求体大小限制: 10MB (通过Next.js默认配置)
+* 请求体大小限制: 256KiB（服务端按实际读取字节强制执行）
 * 输入验证: 提示词长度不能超过10000字符
 */
 export async function POST(request: NextRequest) {
+  const auth = await requireAIUser(request)
+  if (!auth.ok) return auth.response
+
   try {
-    const body = await request.json()
+    const body = await readLimitedJson<Record<string, unknown>>(request)
 
     // 兼容两种字段命名：prompt/originalPrompt, provider/modelType, model/modelName
-    const prompt = body.prompt || body.originalPrompt
-    const provider = body.provider || body.modelType || 'deepseek'
-    const model = body.model || body.modelName || 'deepseek-v4-flash'
-    const temperatureOverride = body.temperature as number | undefined
-    const topPOverride = (body.topP ?? body.top_p) as number | undefined
-    const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
-    const requestedMode = body.mode as string | undefined // simple/pro/professional/normal
+    const rawPrompt = body.prompt ?? body.originalPrompt
+    const prompt = typeof rawPrompt === 'string' ? rawPrompt : ''
+    const rawProvider = body.provider ?? body.modelType
+    const rawModel = body.model ?? body.modelName
+    const provider = typeof rawProvider === 'string' ? rawProvider : 'deepseek'
+    const model = typeof rawModel === 'string' ? rawModel : 'deepseek-v4-flash'
+    const temperatureOverride = typeof body.temperature === 'number' ? body.temperature : undefined
+    const rawTopP = body.topP ?? body.top_p
+    const rawMaxTokens = body.maxTokens ?? body.max_tokens
+    const topPOverride = typeof rawTopP === 'number' ? rawTopP : undefined
+    const maxTokensOverride = typeof rawMaxTokens === 'number' ? rawMaxTokens : undefined
+    const requestedMode = typeof body.mode === 'string' ? body.mode : undefined // simple/pro/professional/normal
     const requestedStyle = typeof body.style === 'string' ? body.style : ''
     const requestedTone = typeof body.tone === 'string' ? body.tone : ''
     const requestedOutputFormat = typeof body.outputFormat === 'string' ? body.outputFormat : ''
@@ -36,22 +50,11 @@ export async function POST(request: NextRequest) {
           .slice(0, 12)
           .map((item: string) => item.trim().slice(0, 500))
       : []
-    const requestedAttachments: RequestedAttachment[] = Array.isArray(body.attachments)
-      ? body.attachments
-          .filter((item: unknown) => item && typeof item === 'object')
-          .slice(0, 12)
-          .map((item: { name?: unknown; type?: unknown; size?: unknown; textPreview?: unknown }) => ({
-            name: typeof item.name === 'string' ? item.name.slice(0, 120) : 'unnamed',
-            type: typeof item.type === 'string' ? item.type.slice(0, 80) : 'application/octet-stream',
-            size: typeof item.size === 'number' ? item.size : 0,
-            textPreview: typeof item.textPreview === 'string' ? item.textPreview.slice(0, 4000) : '',
-          }))
-      : []
+    const requestedAttachments: RequestedAttachment[] = parseAIRequestAttachments(body.attachments)
 
     // 输入长度限制
-    const MAX_INPUT_LENGTH = 10000;
-    if (prompt && prompt.length > MAX_INPUT_LENGTH) {
-      return NextResponse.json({ error: "输入长度不能超过" + MAX_INPUT_LENGTH + "字符" }, { status: 400 });
+    if (prompt.length > MAX_AI_INPUT_CHARS) {
+      return NextResponse.json({ error: "输入长度不能超过" + MAX_AI_INPUT_CHARS + "字符" }, { status: 400 });
     }
     if (!prompt) {
       return NextResponse.json(
@@ -62,9 +65,10 @@ export async function POST(request: NextRequest) {
 
     // 如果是local则重定向到qwen（本地模型已移除）
     const effectiveProvider = provider === 'local' ? 'qwen' : provider
+    const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, effectiveProvider)
 
     // 验证AI模型配置
-    const validation = validateAIModel(effectiveProvider, model);
+    const validation = validateAIModel(effectiveProvider, model, userRuntimeConfig || undefined);
     if (!validation.isValid) {
       return NextResponse.json(
         { success: false, error: validation.error },
@@ -74,6 +78,9 @@ export async function POST(request: NextRequest) {
 
     // 获取AI配置
     const aiConfig = validation.config!
+    const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+    if (!quota.ok) return quota.response
+    const reservation = quota.reservation
     
     // 根据请求的mode确定优化模式指令
     const modeInstruction = requestedMode === 'professional' || requestedMode === 'pro'
@@ -189,12 +196,11 @@ ${contextInstruction}
     try {
       if (effectiveProvider === 'local') {
         // 使用本地AI服务
-        console.log('尝试连接本地AI服务:', aiConfig.baseURL)
-        
         // 先测试连接
         try {
           const testResponse = await fetch(`${aiConfig.baseURL}/api/tags`, {
             method: 'GET',
+            redirect: 'error',
             signal: AbortSignal.timeout(5000) // 5秒测试连接
           })
           
@@ -203,8 +209,6 @@ ${contextInstruction}
           }
           
           const testData = await testResponse.json()
-          console.log('可用模型:', testData.models?.map((m: { name: string }) => m.name) || [])
-          
           // 检查模型是否可用
           const availableModels = testData.models?.map((m: { name: string }) => m.name) || []
           if (!availableModels.includes(aiConfig.model)) {
@@ -212,7 +216,7 @@ ${contextInstruction}
           }
           
         } catch (testError) {
-          console.error('连接测试失败:', testError)
+          console.error('本地 AI 连接测试失败')
           throw new Error(`无法连接到本地AI服务: ${testError instanceof Error ? testError.message : '未知错误'}`)
         }
         
@@ -223,6 +227,7 @@ ${contextInstruction}
         try {
           const response = await fetch(`${aiConfig.baseURL}/api/generate`, {
             method: 'POST',
+            redirect: 'error',
             headers: {
               'Content-Type': 'application/json',
             },
@@ -293,7 +298,7 @@ ${contextInstruction}
         const timeoutId = setTimeout(() => controller.abort(), 150000)
 
         // 根据不同提供商处理模型名称和参数
-        let requestModel = aiConfig.model
+        const requestModel = aiConfig.model
         // temperature 优先使用用户滑块传入的值，否则用默认值 0.7
         const isMiniMaxProvider = effectiveProvider === 'minimax'
         const isXiaomiProvider = effectiveProvider === 'xiaomi'
@@ -334,6 +339,7 @@ ${contextInstruction}
 
           const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
             method: 'POST',
+            redirect: 'error',
             headers,
             body: JSON.stringify(bodyObj),
             signal: controller.signal
@@ -394,6 +400,7 @@ ${contextInstruction}
         }
       }
 
+      reservation.commit()
       return NextResponse.json({
         success: true,
         optimized: finalOptimizedPrompt,
@@ -404,26 +411,19 @@ ${contextInstruction}
       })
 
     } catch (error) {
-      console.error('AI优化失败:', error)
+      await reservation.rollback()
+      console.error('AI优化失败')
       const formattedError = formatAIError(error, effectiveProvider)
       return NextResponse.json(
         {
           success: false,
-          error: formattedError,
-          details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : 'Internal server error'
+          error: formattedError
         },
         { status: 500 }
       )
     }
 
   } catch (error) {
-    console.error('API错误:', error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: '请求处理失败'
-      },
-      { status: 500 }
-    )
+    return requestPolicyResponse(error)
   }
 }

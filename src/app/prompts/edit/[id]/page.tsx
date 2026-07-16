@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 
 import PromptEditor from '@/components/PromptEditor'
-import { Prompt } from '@/types'
+import { Prompt, PromptEditorSaveData } from '@/types'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Loader2 } from 'lucide-react'
@@ -69,7 +69,7 @@ export default function EditPromptPage() {
   }, [user, promptId])
 
   // 保存提示词
-  const handleSave = async (data: { title: string; content: string; mode: string; tags: string[]; is_public: boolean }) => {
+  const handleSave = async (data: PromptEditorSaveData) => {
     setSaving(true)
     setError('')
 
@@ -79,6 +79,10 @@ export default function EditPromptPage() {
         content: data.content,
         tags: data.tags || [],
         is_public: data.is_public,
+        mode: data.mode,
+        editor_mode: data.editor_mode,
+        payload: data.payload,
+        schema_version: data.schema_version,
       }
 
       const response = await api.prompts.update(promptId, updateData)

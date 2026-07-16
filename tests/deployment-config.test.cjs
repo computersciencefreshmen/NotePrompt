@@ -23,6 +23,9 @@ test('production Compose fails closed on Redis and checks database readiness plu
   const compose = read('docker-compose.yml')
 
   assert.match(compose, /REDIS_URL:\?REDIS_URL is required in production/)
+  assert.match(compose, /JWT_SECRET:\?JWT_SECRET is required/)
+  assert.match(compose, /PROVIDER_KEY_ENCRYPTION_SECRET:\?PROVIDER_KEY_ENCRYPTION_SECRET is required/)
+  assert.match(compose, /VERIFICATION_CODE_SECRET:\?VERIFICATION_CODE_SECRET is required/)
   assert.match(compose, /RATE_LIMIT_ALLOW_MEMORY_FALLBACK:\s*"false"/)
   assert.match(compose, /\/api\/health/)
   assert.match(compose, /b\.status!=='ready'/)

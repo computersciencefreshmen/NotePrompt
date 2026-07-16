@@ -24,6 +24,10 @@ test('release workflow pins every external action and uses least privilege', () 
 })
 
 test('Node quality work is sequential and rejects runtime configuration', () => {
+  const qualityJob = workflow.slice(
+    workflow.indexOf('  quality:'),
+    workflow.indexOf('  mysql-migrations:'),
+  )
   const lint = workflow.indexOf('run: npm run lint')
   const tests = workflow.indexOf('run: npm test')
   const build = workflow.indexOf('run: npm run build')
@@ -35,6 +39,23 @@ test('Node quality work is sequential and rejects runtime configuration', () => 
   assert.match(workflow, /-name '\.env\*'/)
   assert.match(workflow, /-name '\.provider-config\*\.local\.json'/)
   assert.match(workflow, /run: npm run db:plan/)
+  assert.doesNotMatch(qualityJob, /JWT_SECRET/)
+})
+
+test('Compose validation proves every runtime cryptographic secret is required', () => {
+  const loopStart = workflow.indexOf('for required_secret in')
+  const requiredSecretLoop = workflow.slice(loopStart, workflow.indexOf('\n          do', loopStart))
+
+  assert.ok(loopStart > 0)
+  assert.match(workflow, /env -u "\$\{required_secret\}" docker compose/)
+
+  for (const requiredSecret of [
+    'JWT_SECRET',
+    'PROVIDER_KEY_ENCRYPTION_SECRET',
+    'VERIFICATION_CODE_SECRET',
+  ]) {
+    assert.match(requiredSecretLoop, new RegExp(`\\b${requiredSecret}\\b`))
+  }
 })
 
 test('real MySQL migrations start empty, replay, and use a pinned LTS image', () => {

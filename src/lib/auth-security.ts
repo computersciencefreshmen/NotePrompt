@@ -28,6 +28,10 @@ export type SafeUserDto = {
   updated_at: string
 }
 
+type JwtSecretEnvironment = {
+  JWT_SECRET?: string
+}
+
 type SessionPrincipal = {
   userId: number
   username: string
@@ -41,6 +45,20 @@ export function normalizeUserType(value: unknown): SafeUserType {
 
 export function databaseBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true'
+}
+
+export function getJwtSecret(
+  environment: JwtSecretEnvironment = { JWT_SECRET: process.env.JWT_SECRET },
+): string {
+  // Resolve only when an authentication operation runs. Next.js imports route
+  // modules while building; requiring a build-time secret would either break a
+  // clean build or tempt callers to bake a placeholder credential into it.
+  const secret = environment.JWT_SECRET
+  if (!secret || !secret.trim()) {
+    throw new Error('FATAL: JWT_SECRET environment variable is required at runtime.')
+  }
+
+  return secret
 }
 
 export function getSessionVersion(user: { session_version?: unknown }): number | null {

@@ -166,6 +166,17 @@ jobs:
           TLS_CERT_DIR: ./nginx/ssl
           CERTBOT_WEBROOT: ./certbot/www
         run: |
+          for required_secret in \
+            JWT_SECRET \
+            PROVIDER_KEY_ENCRYPTION_SECRET \
+            VERIFICATION_CODE_SECRET
+          do
+            if env -u "${required_secret}" docker compose -f docker-compose.yml config --quiet >/dev/null 2>&1; then
+              echo "Compose accepted missing runtime secret: ${required_secret}" >&2
+              exit 1
+            fi
+          done
+
           docker compose -f docker-compose.yml config --quiet
           docker compose -f compose.acme.yml config --quiet
 

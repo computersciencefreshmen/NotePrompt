@@ -31,6 +31,7 @@ The runner:
 - removes a legacy plaintext `api_keys.api_key` only after all rows have a SHA-256 hash and non-secret prefix.
 - migrates legacy public-folder live pointers into durable prompt snapshots; explicitly publishing again is the only operation that refreshes a published folder from its private source.
 - keeps curated catalog IDs, view counters, and favorites outside the business `public_prompts` AUTO_INCREMENT domain; migration `008` moves only legacy rows proven by an integrity-checked catalog manifest and retains an audit record.
+- keeps administrative suspension distinct from pending email verification; migration `009` treats ambiguous legacy inactive rows as suspended so verification cannot silently undo an administrator action.
 
 The manifest used by migration `008` is part of the migration checksum. Changing either the migration source or `008_curated_catalog_manifest.json` after deployment is rejected by `status`/`up`. Add a new migration for catalog-storage changes; never edit the applied manifest, reset `public_prompts` AUTO_INCREMENT, or classify rows by an ID range.
 

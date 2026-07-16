@@ -91,7 +91,14 @@ function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof ty
   }
 }
 
-async function probeProvider(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], force: boolean, userId?: number | null, runtimeConfig?: UserProviderRuntimeConfig | null): Promise<CachedDiagnostic> {
+async function probeProvider(
+  provider: string,
+  config: typeof AI_MODELS[keyof typeof AI_MODELS],
+  force: boolean,
+  userId?: number | null,
+  runtimeConfig?: UserProviderRuntimeConfig | null,
+  onProviderCallStart?: () => void,
+): Promise<CachedDiagnostic> {
   const model = getDiagnosticModel(provider, config.models)
   const validation = validateAIModel(provider, model, runtimeConfig || undefined)
   const cacheKey = `${userId ? `user:${userId}` : 'platform'}:${provider}:${model}`
@@ -121,6 +128,7 @@ async function probeProvider(provider: string, config: typeof AI_MODELS[keyof ty
   const timeout = setTimeout(() => controller.abort(), provider === 'xiaomi' ? 30000 : 10000)
 
   try {
+    onProviderCallStart?.()
     const response = await fetch(`${validation.config.baseURL}/chat/completions`, {
       method: 'POST',
       redirect: 'error',
@@ -190,29 +198,68 @@ export async function POST(request: NextRequest) {
   let reservation: AIUsageReservation | undefined
 
   try {
-    const body = await readLimitedJson<{ mode?: DiagnosticMode; force?: boolean; confirmed?: boolean }>(request)
+    const body = await readLimitedJson<{
+      mode?: DiagnosticMode
+      force?: unknown
+      confirmed?: unknown
+      provider?: unknown
+    }>(request)
     const mode: DiagnosticMode = body.mode === 'probe' ? 'probe' : 'config'
-    const force = Boolean(body.force)
+    if (body.force !== undefined && typeof body.force !== 'boolean') {
+      return NextResponse.json({ success: false, error: 'force 必须是布尔值' }, { status: 400 })
+    }
+    const force = body.force === true
     if (mode === 'probe' && body.confirmed !== true) {
       return NextResponse.json({ success: false, error: '实际调用探针需要用户确认' }, { status: 400 })
     }
-
-    if (mode === 'probe') {
-      const quota = await reserveAIUsage(auth.user, 'ai_optimize')
-      if (!quota.ok) return quota.response
-      reservation = quota.reservation
+    if (
+      body.provider !== undefined &&
+      (typeof body.provider !== 'string' || !Object.prototype.hasOwnProperty.call(AI_MODELS, body.provider))
+    ) {
+      return NextResponse.json({ success: false, error: '不支持的模型供应商' }, { status: 400 })
     }
 
-    const providers = await Promise.all(Object.entries(AI_MODELS).map(async ([provider, config]) => {
+    const entries = await Promise.all(Object.entries(AI_MODELS).map(async ([provider, config]) => {
       const runtimeConfig = await getUserProviderRuntimeConfig(auth.user.id, provider)
-      return mode === 'probe'
-        ? probeProvider(provider, config, force, auth.user.id, runtimeConfig)
-        : getConfigOnlyResult(provider, config, runtimeConfig)
+      return {
+        provider,
+        config,
+        runtimeConfig,
+        diagnostic: getConfigOnlyResult(provider, config, runtimeConfig),
+      }
     }))
 
-    if (reservation) {
-      if (providers.some(provider => provider.callable)) reservation.commit()
-      else await reservation.rollback()
+    let providers = entries.map(entry => entry.diagnostic)
+    let probedProvider: string | null = null
+
+    if (mode === 'probe') {
+      const requestedProvider = typeof body.provider === 'string' ? body.provider : null
+      const target = requestedProvider
+        ? entries.find(entry => entry.provider === requestedProvider)
+        : entries.find(entry => entry.diagnostic.status === 'configured')
+
+      // A probe request is allowed to make at most one external call. Missing
+      // provider configuration is reported without consuming user/global quota.
+      if (target && target.diagnostic.status === 'configured') {
+        const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+        if (!quota.ok) return quota.response
+        reservation = quota.reservation
+
+        const diagnostic = await probeProvider(
+          target.provider,
+          target.config,
+          force,
+          auth.user.id,
+          target.runtimeConfig,
+          () => reservation?.markProviderCallStarted(),
+        )
+        probedProvider = target.provider
+        providers = entries.map(entry => entry.provider === target.provider ? diagnostic : entry.diagnostic)
+
+        // Cached probes never invoke the callback and therefore remain
+        // refundable. A dispatched provider request has already committed.
+        await reservation.rollback()
+      }
     }
 
     return NextResponse.json({
@@ -222,6 +269,7 @@ export async function POST(request: NextRequest) {
         checkedAt: new Date().toISOString(),
         durationMs: Date.now() - startedAt,
         cacheTtlMs: PROBE_CACHE_TTL_MS,
+        probedProvider,
         providers,
       }
     })

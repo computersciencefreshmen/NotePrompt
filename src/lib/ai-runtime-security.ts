@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth'
 import db from '@/lib/mysql-database'
 import { RequestPolicyError } from '@/lib/ai-runtime-policy'
 import { resolveAiMonthlyLimit } from '@/lib/entitlement-policy'
+import { ReservationSettlement } from '@/lib/reservation-settlement'
 import {
   checkAccountRateLimit,
   checkIpRateLimit,
@@ -107,7 +108,7 @@ export async function requireAIUser(
 }
 
 export class AIUsageReservation {
-  private settled = false
+  private readonly settlement = new ReservationSettlement()
 
   constructor(
     private readonly userId: number,
@@ -117,17 +118,20 @@ export class AIUsageReservation {
   ) {}
 
   commit() {
-    this.globalReservation.commit()
-    this.settled = true
+    return this.settlement.commit(() => this.globalReservation.commit())
+  }
+
+  markProviderCallStarted() {
+    return this.commit()
   }
 
   async rollback() {
-    if (this.settled) return
-    this.settled = true
-    await Promise.allSettled([
-      db.rollbackAIUsage(this.userId, this.mode, this.usageDate),
-      this.globalReservation.rollback(),
-    ])
+    return this.settlement.rollback(async () => {
+      await Promise.allSettled([
+        db.rollbackAIUsage(this.userId, this.mode, this.usageDate),
+        this.globalReservation.rollback(),
+      ])
+    })
   }
 }
 

@@ -7,7 +7,13 @@ import {
   assertExportBudget,
   assertExportResponseSize,
   ExportSizeError,
+  MAX_EXPORT_RECORDS,
 } from '@/lib/export-policy'
+import {
+  checkAccountRateLimit,
+  createRateLimitResponse,
+  rateLimitHttpStatus,
+} from '@/lib/rate-limit'
 
 interface ExportBudgetRow {
   total_prompts?: number | string
@@ -18,6 +24,8 @@ interface ExportBudgetRow {
   total_prompt_tags?: number | string
   source_bytes?: number | string
 }
+
+const EXPORT_QUERY_ROW_LIMIT = MAX_EXPORT_RECORDS + 1
 
 function readCount(value: number | string | undefined): number {
   const parsed = Number(value)
@@ -33,120 +41,171 @@ export async function GET(request: NextRequest) {
     }
 
     const userId = auth.user.id
+    const exportLimit = await checkAccountRateLimit(
+      'export-data',
+      userId,
+      { windowMs: 5 * 60_000, maxRequests: 2 },
+    )
+    if (!exportLimit.allowed) {
+      return NextResponse.json(
+        createRateLimitResponse(exportLimit),
+        { status: rateLimitHttpStatus(exportLimit) },
+      )
+    }
+
     const user = await db.getUserById(userId)
     if (!user) {
       return NextResponse.json({ success: false, error: '用户不存在' }, { status: 404 })
     }
 
-    // Reject oversized online exports before loading large TEXT/JSON columns into memory.
-    const budgetResult = await db.query(
-      `SELECT
-         (SELECT COUNT(*) FROM user_prompts WHERE user_id = ?) AS total_prompts,
-         (SELECT COUNT(*) FROM folders WHERE user_id = ?) AS total_folders,
-         (SELECT COUNT(*) FROM user_favorites WHERE user_id = ?) AS published_favorites,
-         (SELECT COUNT(*) FROM curated_prompt_favorites WHERE user_id = ?) AS curated_favorites,
-         (SELECT COUNT(*) FROM user_imported_folders WHERE user_id = ?) AS total_imported_folders,
-         (SELECT COUNT(*)
-            FROM user_prompt_tags prompt_tag
-            JOIN user_prompts prompt ON prompt.id = prompt_tag.user_prompt_id
-           WHERE prompt.user_id = ?) AS total_prompt_tags,
-         COALESCE((
-           SELECT SUM(
-             OCTET_LENGTH(COALESCE(prompt.title, ''))
-             + OCTET_LENGTH(COALESCE(prompt.content, ''))
-             + OCTET_LENGTH(COALESCE(prompt.description, ''))
-             + OCTET_LENGTH(COALESCE(CAST(prompt.payload AS CHAR), ''))
-           )
-           FROM user_prompts prompt
-           WHERE prompt.user_id = ?
-         ), 0) + COALESCE((
-           SELECT SUM(
-             OCTET_LENGTH(COALESCE(public_prompt.title, ''))
-             + OCTET_LENGTH(COALESCE(public_prompt.content, ''))
-             + OCTET_LENGTH(COALESCE(public_prompt.description, ''))
-           )
-           FROM user_favorites favorite
-           JOIN public_prompts public_prompt ON public_prompt.id = favorite.public_prompt_id
-           WHERE favorite.user_id = ?
-         ), 0) AS source_bytes`,
-      [userId, userId, userId, userId, userId, userId, userId, userId],
-    )
-    const budget = (budgetResult.rows as ExportBudgetRow[])[0] || {}
-    const totalPrompts = readCount(budget.total_prompts)
-    const totalFolders = readCount(budget.total_folders)
-    const publishedFavoritesCount = readCount(budget.published_favorites)
-    const curatedFavoritesCount = readCount(budget.curated_favorites)
-    const totalFavorites = publishedFavoritesCount + curatedFavoritesCount
-    const totalImportedFolders = readCount(budget.total_imported_folders)
-    const totalPromptTags = readCount(budget.total_prompt_tags)
-    const recordCount = totalPrompts
-      + totalFolders
-      + totalFavorites
-      + totalImportedFolders
-      + totalPromptTags
-    const sourceBytes = Number(budget.source_bytes) || 0
-    assertExportBudget(recordCount, sourceBytes)
+    // Budget validation and every data read share one repeatable-read snapshot.
+    // MAX+1 LIMIT clauses provide a second line of defense if the budget query
+    // or schema contract is changed later.
+    const snapshot = await db.withConsistentReadSnapshot(async query => {
+      const budgetResult = await query(
+        `SELECT
+           (SELECT COUNT(*) FROM user_prompts WHERE user_id = ?) AS total_prompts,
+           (SELECT COUNT(*) FROM folders WHERE user_id = ?) AS total_folders,
+           (SELECT COUNT(*) FROM user_favorites WHERE user_id = ?) AS published_favorites,
+           (SELECT COUNT(*) FROM curated_prompt_favorites WHERE user_id = ?) AS curated_favorites,
+           (SELECT COUNT(*) FROM user_imported_folders WHERE user_id = ?) AS total_imported_folders,
+           (SELECT COUNT(*)
+              FROM user_prompt_tags prompt_tag
+              JOIN user_prompts prompt ON prompt.id = prompt_tag.user_prompt_id
+             WHERE prompt.user_id = ?) AS total_prompt_tags,
+           COALESCE((
+             SELECT SUM(
+               OCTET_LENGTH(COALESCE(prompt.title, ''))
+               + OCTET_LENGTH(COALESCE(prompt.content, ''))
+               + OCTET_LENGTH(COALESCE(prompt.description, ''))
+               + OCTET_LENGTH(COALESCE(CAST(prompt.payload AS CHAR), ''))
+             )
+             FROM user_prompts prompt
+             WHERE prompt.user_id = ?
+           ), 0) + COALESCE((
+             SELECT SUM(
+               OCTET_LENGTH(COALESCE(public_prompt.title, ''))
+               + OCTET_LENGTH(COALESCE(public_prompt.content, ''))
+               + OCTET_LENGTH(COALESCE(public_prompt.description, ''))
+             )
+             FROM user_favorites favorite
+             JOIN public_prompts public_prompt ON public_prompt.id = favorite.public_prompt_id
+             WHERE favorite.user_id = ?
+           ), 0) AS source_bytes`,
+        [userId, userId, userId, userId, userId, userId, userId, userId],
+      )
+      const budget = (budgetResult.rows as ExportBudgetRow[])[0] || {}
+      const totalPrompts = readCount(budget.total_prompts)
+      const totalFolders = readCount(budget.total_folders)
+      const publishedFavoritesCount = readCount(budget.published_favorites)
+      const curatedFavoritesCount = readCount(budget.curated_favorites)
+      const totalFavorites = publishedFavoritesCount + curatedFavoritesCount
+      const totalImportedFolders = readCount(budget.total_imported_folders)
+      const totalPromptTags = readCount(budget.total_prompt_tags)
+      const recordCount = totalPrompts
+        + totalFolders
+        + totalFavorites
+        + totalImportedFolders
+        + totalPromptTags
+      const sourceBytes = Number(budget.source_bytes) || 0
+      assertExportBudget(recordCount, sourceBytes)
 
-    const [
-      foldersResult,
-      promptsResult,
-      tagsResult,
-      favoritesResult,
-      curatedFavoritesResult,
-      importedFoldersResult,
-    ] = await Promise.all([
-      db.query(
+      const foldersResult = await query(
         `SELECT id, name, created_at, updated_at
            FROM folders
           WHERE user_id = ?
-          ORDER BY created_at DESC`,
+          ORDER BY created_at DESC
+          LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],
-      ),
-      db.query(
+      )
+      const promptsResult = await query(
         `SELECT prompt.id, prompt.title, prompt.content, prompt.description,
                 prompt.editor_mode, prompt.payload, prompt.schema_version,
                 folder.name AS folder_name, prompt.created_at, prompt.updated_at
            FROM user_prompts prompt
            LEFT JOIN folders folder ON prompt.folder_id = folder.id
           WHERE prompt.user_id = ?
-          ORDER BY prompt.updated_at DESC`,
+          ORDER BY prompt.updated_at DESC
+          LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],
-      ),
-      db.query(
+      )
+      const tagsResult = await query(
         `SELECT prompt_tag.user_prompt_id, tag.name
            FROM user_prompt_tags prompt_tag
            JOIN user_prompts prompt ON prompt.id = prompt_tag.user_prompt_id
            JOIN tags tag ON tag.id = prompt_tag.tag_id
           WHERE prompt.user_id = ?
-          ORDER BY prompt_tag.user_prompt_id ASC, tag.name ASC`,
+          ORDER BY prompt_tag.user_prompt_id ASC, tag.name ASC
+          LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],
-      ),
-      db.query(
+      )
+      const favoritesResult = await query(
         `SELECT public_prompt.id, public_prompt.title, public_prompt.content,
                 public_prompt.description, public_prompt.category_id,
                 public_prompt.views_count, favorite.created_at AS favorited_at
            FROM user_favorites favorite
            JOIN public_prompts public_prompt ON favorite.public_prompt_id = public_prompt.id
           WHERE favorite.user_id = ?
-          ORDER BY favorite.created_at DESC`,
+          ORDER BY favorite.created_at DESC
+          LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],
-      ),
-      db.query(
+      )
+      const curatedFavoritesResult = await query(
         `SELECT favorite.catalog_id, favorite.created_at AS favorited_at, catalog.views_count
            FROM curated_prompt_favorites favorite
            JOIN curated_catalog_entries catalog ON catalog.catalog_id = favorite.catalog_id
           WHERE favorite.user_id = ?
-          ORDER BY favorite.created_at DESC`,
+          ORDER BY favorite.created_at DESC
+          LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],
-      ),
-      db.query(
+      )
+      const importedFoldersResult = await query(
         `SELECT id, name, created_at
            FROM user_imported_folders
           WHERE user_id = ?
-          ORDER BY created_at DESC`,
+          ORDER BY created_at DESC
+          LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],
-      ),
-    ])
+      )
+
+      for (const result of [
+        foldersResult,
+        promptsResult,
+        tagsResult,
+        favoritesResult,
+        curatedFavoritesResult,
+        importedFoldersResult,
+      ]) {
+        if ((result.rows as unknown[]).length > MAX_EXPORT_RECORDS) {
+          throw new ExportSizeError()
+        }
+      }
+
+      return {
+        totalPrompts,
+        totalFolders,
+        totalFavorites,
+        totalImportedFolders,
+        foldersResult,
+        promptsResult,
+        tagsResult,
+        favoritesResult,
+        curatedFavoritesResult,
+        importedFoldersResult,
+      }
+    })
+    const {
+      totalPrompts,
+      totalFolders,
+      totalFavorites,
+      totalImportedFolders,
+      foldersResult,
+      promptsResult,
+      tagsResult,
+      favoritesResult,
+      curatedFavoritesResult,
+      importedFoldersResult,
+    } = snapshot
 
     const folders = (foldersResult.rows as Record<string, unknown>[]).map(folder => ({
       id: folder.id,

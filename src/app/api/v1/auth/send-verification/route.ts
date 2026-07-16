@@ -62,9 +62,10 @@ export async function POST(request: NextRequest) {
       getVerificationCodeSecret(),
     );
 
-    // 不存在或已验证账户均返回相同的公开响应，避免账户枚举。
+    // 不存在、已验证或被管理员停用的账户均返回相同的公开响应，
+    // 避免账户枚举，也避免停用账户通过邮件流程自行恢复。
     const user = await db.getUserByEmail(email);
-    if (!user || databaseBoolean(user.email_verified)) {
+    if (!user || databaseBoolean(user.email_verified) || user.admin_disabled_at) {
       return NextResponse.json(GENERIC_SEND_RESPONSE);
     }
 

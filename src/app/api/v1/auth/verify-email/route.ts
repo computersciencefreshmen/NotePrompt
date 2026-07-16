@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
       verificationSecret,
     );
     const canVerify = Boolean(user) &&
+      !user?.admin_disabled_at &&
       !databaseBoolean(user?.email_verified) &&
       verificationAttempts < 5 &&
       Number.isFinite(expiresAt) &&
@@ -83,6 +84,7 @@ export async function POST(request: NextRequest) {
       // 增加失败计数（防止暴力破解）
       if (
         user &&
+        !user.admin_disabled_at &&
         !databaseBoolean(user.email_verified) &&
         user.verification_code &&
         verificationAttempts < 5 &&
@@ -116,6 +118,7 @@ export async function POST(request: NextRequest) {
        WHERE id = ?
          AND verification_code = ?
          AND verification_expires >= NOW()
+         AND admin_disabled_at IS NULL
          AND email_verified = 0`,
       [user!.id, submittedCodeHash]
     );

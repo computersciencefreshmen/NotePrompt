@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   isRetryableMySQLRead,
+  mysqlErrorMetadata,
   mysqlQueryAttemptLimit,
 } from '../src/lib/mysql-query-policy.ts'
 
@@ -38,4 +39,17 @@ test('locking, advisory-lock, file-output, and analyzing reads are not retried',
   ]) {
     assert.equal(isRetryableMySQLRead(sql), false, sql)
   }
+})
+
+test('database log metadata excludes SQL text, parameters, and driver messages', () => {
+  assert.deepEqual(
+    mysqlErrorMetadata({
+      code: 'ER_ACCESS_DENIED_ERROR',
+      errno: 1045,
+      sqlState: '28000',
+      sql: "SELECT * FROM users WHERE email = 'secret@example.com'",
+      message: 'password=must-not-leak',
+    }),
+    { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' },
+  )
 })

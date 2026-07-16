@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-16T14:49:43.059+08:00",
+  "title": "Design System: NotePrompt",
+  "extensions": {
+    "semanticContract": {
+      "colorSpace": "OKLCH",
+      "themeFunction": "light-dark()",
+      "rule": "Components consume one semantic role vocabulary. They never select a theme-specific color token or variant."
+    },
+    "themes": {
+      "light": {
+        "action": "oklch(0.5109 0.0861 186.39)",
+        "action-hover": "oklch(0.4370 0.0705 188.22)",
+        "on-action": "oklch(0.9833 0.0025 165.08)",
+        "canvas": "oklch(0.9833 0.0025 165.08)",
+        "surface": "oklch(0.9687 0.0078 139.44)",
+        "surface-raised": "oklch(0.9923 0.0025 165.08)",
+        "text": "oklch(0.1408 0.0044 285.82)",
+        "text-muted": "oklch(0.4419 0.0146 285.79)",
+        "border": "oklch(0.9197 0.0040 286.32)",
+        "focus": "oklch(0.5109 0.0861 186.39)",
+        "attention": "oklch(0.8790 0.1534 91.61)",
+        "destructive": "oklch(0.5771 0.2152 27.33)"
+      },
+      "dark": {
+        "action": "oklch(0.7845 0.1325 181.91)",
+        "action-hover": "oklch(0.8549 0.1251 181.07)",
+        "on-action": "oklch(0.1658 0.0174 181.85)",
+        "canvas": "oklch(0.1658 0.0174 181.85)",
+        "surface": "oklch(0.1957 0.0195 177.89)",
+        "surface-raised": "oklch(0.2348 0.0253 178.14)",
+        "text": "oklch(0.9836 0.0142 180.72)",
+        "text-muted": "oklch(0.7782 0.0280 176.10)",
+        "border": "oklch(0.3268 0.0378 179.38)",
+        "focus": "oklch(0.7845 0.1325 181.91)",
+        "attention": "oklch(0.8790 0.1534 91.61)",
+        "destructive": "oklch(0.7106 0.1661 22.22)"
+      }
+    },
+    "colorMeta": {
+      "action": {
+        "role": "primary",
+        "displayName": "Operational Action",
+        "canonical": "light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91))",
+        "tonalRamp": ["oklch(0.20 0.035 186.4)", "oklch(0.30 0.052 186.4)", "oklch(0.40 0.069 186.4)", "oklch(0.5109 0.0861 186.39)", "oklch(0.62 0.105 184)", "oklch(0.72 0.122 182)", "oklch(0.82 0.105 181)", "oklch(0.94 0.035 180)"]
+      },
+      "action-hover": {
+        "role": "primary",
+        "displayName": "Operational Action Hover",
+        "canonical": "light-dark(oklch(0.4370 0.0705 188.22), oklch(0.8549 0.1251 181.07))",
+        "tonalRamp": ["oklch(0.18 0.030 188)", "oklch(0.28 0.047 188)", "oklch(0.37 0.061 188)", "oklch(0.4370 0.0705 188.22)", "oklch(0.57 0.095 185)", "oklch(0.69 0.115 183)", "oklch(0.80 0.115 181)", "oklch(0.95 0.030 180)"]
+      },
+      "on-action": {
+        "role": "neutral",
+        "displayName": "On Action",
+        "canonical": "light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85))",
+        "tonalRamp": ["oklch(0.15 0.012 180)", "oklch(0.28 0.011 178)", "oklch(0.42 0.009 175)", "oklch(0.58 0.007 172)", "oklch(0.72 0.006 170)", "oklch(0.84 0.005 168)", "oklch(0.93 0.004 166)", "oklch(0.985 0.0025 165)"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "canonical": "light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85))",
+        "tonalRamp": ["oklch(0.15 0.018 182)", "oklch(0.28 0.015 179)", "oklch(0.42 0.011 175)", "oklch(0.58 0.008 172)", "oklch(0.72 0.006 170)", "oklch(0.84 0.005 168)", "oklch(0.93 0.004 166)", "oklch(0.9833 0.0025 165.08)"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "light-dark(oklch(0.9687 0.0078 139.44), oklch(0.1957 0.0195 177.89))",
+        "tonalRamp": ["oklch(0.17 0.020 178)", "oklch(0.30 0.017 172)", "oklch(0.44 0.014 165)", "oklch(0.58 0.012 157)", "oklch(0.72 0.010 150)", "oklch(0.84 0.009 145)", "oklch(0.92 0.008 142)", "oklch(0.9687 0.0078 139.44)"]
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised Surface",
+        "canonical": "light-dark(oklch(0.9923 0.0025 165.08), oklch(0.2348 0.0253 178.14))",
+        "tonalRamp": ["oklch(0.19 0.025 178)", "oklch(0.32 0.020 176)", "oklch(0.46 0.015 173)", "oklch(0.60 0.011 170)", "oklch(0.74 0.008 168)", "oklch(0.86 0.006 167)", "oklch(0.94 0.004 166)", "oklch(0.9923 0.0025 165.08)"]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Primary Text",
+        "canonical": "light-dark(oklch(0.1408 0.0044 285.82), oklch(0.9836 0.0142 180.72))",
+        "tonalRamp": ["oklch(0.14 0.004 286)", "oklch(0.27 0.008 286)", "oklch(0.40 0.012 286)", "oklch(0.54 0.014 286)", "oklch(0.68 0.013 270)", "oklch(0.80 0.012 230)", "oklch(0.91 0.013 195)", "oklch(0.984 0.014 181)"]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Muted Text",
+        "canonical": "light-dark(oklch(0.4419 0.0146 285.79), oklch(0.7782 0.0280 176.10))",
+        "tonalRamp": ["oklch(0.18 0.007 286)", "oklch(0.30 0.011 286)", "oklch(0.4419 0.0146 285.79)", "oklch(0.55 0.018 260)", "oklch(0.66 0.023 220)", "oklch(0.7782 0.0280 176.10)", "oklch(0.87 0.020 174)", "oklch(0.95 0.010 170)"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Quiet Rule",
+        "canonical": "light-dark(oklch(0.9197 0.0040 286.32), oklch(0.3268 0.0378 179.38))",
+        "tonalRamp": ["oklch(0.22 0.025 180)", "oklch(0.3268 0.0378 179.38)", "oklch(0.44 0.030 190)", "oklch(0.56 0.022 220)", "oklch(0.68 0.015 250)", "oklch(0.79 0.009 275)", "oklch(0.9197 0.0040 286.32)", "oklch(0.98 0.002 286)"]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus Ring",
+        "canonical": "light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91))",
+        "tonalRamp": ["oklch(0.20 0.035 186.4)", "oklch(0.30 0.052 186.4)", "oklch(0.40 0.069 186.4)", "oklch(0.5109 0.0861 186.39)", "oklch(0.62 0.105 184)", "oklch(0.72 0.122 182)", "oklch(0.7845 0.1325 181.91)", "oklch(0.94 0.035 180)"]
+      },
+      "attention": {
+        "role": "tertiary",
+        "displayName": "Attention Amber",
+        "canonical": "light-dark(oklch(0.8790 0.1534 91.61), oklch(0.8790 0.1534 91.61))",
+        "tonalRamp": ["oklch(0.22 0.055 70)", "oklch(0.34 0.080 75)", "oklch(0.47 0.110 80)", "oklch(0.60 0.135 85)", "oklch(0.72 0.150 88)", "oklch(0.82 0.158 90)", "oklch(0.8790 0.1534 91.61)", "oklch(0.96 0.045 95)"]
+      },
+      "destructive": {
+        "role": "tertiary",
+        "displayName": "Destructive",
+        "canonical": "light-dark(oklch(0.5771 0.2152 27.33), oklch(0.7106 0.1661 22.22))",
+        "tonalRamp": ["oklch(0.22 0.080 27)", "oklch(0.34 0.125 27)", "oklch(0.46 0.175 27)", "oklch(0.5771 0.2152 27.33)", "oklch(0.65 0.195 25)", "oklch(0.7106 0.1661 22.22)", "oklch(0.84 0.090 20)", "oklch(0.96 0.025 18)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Homepage Display", "purpose": "Retained marketing homepage hero only." },
+      "headline": { "displayName": "Workspace Headline", "purpose": "Major section and workspace titles." },
+      "title": { "displayName": "Panel Title", "purpose": "Panels, collections, and editor sections." },
+      "body": { "displayName": "Product Body", "purpose": "Controls, explanations, and prompt asset metadata." },
+      "label": { "displayName": "Operational Label", "purpose": "Status, metadata, and rare marketing eyebrows." }
+    },
+    "shadows": [
+      { "name": "ambient-low", "value": "0 1px 2px rgb(6 17 15 / 0.08)", "purpose": "Menus, controls, and small floating surfaces." },
+      { "name": "ambient-lift", "value": "0 18px 48px rgb(15 118 110 / 0.12)", "purpose": "Homepage product preview or one dominant floating work surface." }
+    ],
+    "motion": [
+      { "name": "state-fast", "value": "150ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Hover, focus, pressed, and compact disclosure state." },
+      { "name": "panel-standard", "value": "220ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Panel reveal, mobile task switch, and navigation collapse." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single dominant action in a task region.",
+      "html": "<button class=\"ds-btn-primary\">Save checkpoint</button>",
+      "css": ":host { color-scheme: light dark; --np-action: light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91)); --np-action-hover: light-dark(oklch(0.4370 0.0705 188.22), oklch(0.8549 0.1251 181.07)); --np-on-action: light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85)); --np-focus: var(--np-action); } .ds-btn-primary { min-height: 36px; border: 0; border-radius: 8px; padding: 8px 16px; background: var(--np-action); color: var(--np-on-action); font: 600 14px/1.25 ui-sans-serif, system-ui, sans-serif; transition: background 150ms cubic-bezier(0.16,1,0.3,1), transform 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary:hover { background: var(--np-action-hover); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--np-focus); outline-offset: 2px; } .ds-btn-primary:disabled { opacity: .5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A quiet supporting action that stays visually subordinate.",
+      "html": "<button class=\"ds-btn-secondary\">Compare versions</button>",
+      "css": ":host { color-scheme: light dark; --np-surface: light-dark(oklch(0.9687 0.0078 139.44), oklch(0.1957 0.0195 177.89)); --np-surface-raised: light-dark(oklch(0.9923 0.0025 165.08), oklch(0.2348 0.0253 178.14)); --np-text: light-dark(oklch(0.1408 0.0044 285.82), oklch(0.9836 0.0142 180.72)); --np-border: light-dark(oklch(0.9197 0.0040 286.32), oklch(0.3268 0.0378 179.38)); --np-focus: light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91)); } .ds-btn-secondary { min-height: 36px; border: 1px solid var(--np-border); border-radius: 8px; padding: 8px 16px; background: var(--np-surface); color: var(--np-text); font: 600 14px/1.25 ui-sans-serif, system-ui, sans-serif; transition: background 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-secondary:hover, .ds-btn-secondary:active { background: var(--np-surface-raised); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--np-focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A compact field with an explicit focus state and no decorative glow.",
+      "html": "<label class=\"ds-field-label\" for=\"ds-title\">Prompt title</label><input id=\"ds-title\" class=\"ds-input\" value=\"Research synthesis\" />",
+      "css": ":host { color-scheme: light dark; --np-canvas: light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85)); --np-text: light-dark(oklch(0.1408 0.0044 285.82), oklch(0.9836 0.0142 180.72)); --np-text-muted: light-dark(oklch(0.4419 0.0146 285.79), oklch(0.7782 0.0280 176.10)); --np-border: light-dark(oklch(0.9197 0.0040 286.32), oklch(0.3268 0.0378 179.38)); --np-focus: light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91)); } .ds-field-label { display: block; margin-bottom: 6px; color: var(--np-text-muted); font: 600 12px/1.25 ui-sans-serif, system-ui, sans-serif; } .ds-input { width: 100%; height: 36px; border: 1px solid var(--np-border); border-radius: 8px; padding: 8px 12px; background: var(--np-canvas); color: var(--np-text); font: 400 14px/1.5 ui-sans-serif, system-ui, sans-serif; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-input:focus-visible { outline: 2px solid var(--np-focus); outline-offset: 2px; border-color: var(--np-focus); }"
+    },
+    {
+      "name": "Collection Chip",
+      "kind": "chip",
+      "description": "A compact multi-collection membership indicator with a non-color selection cue.",
+      "html": "<button class=\"ds-chip\" aria-pressed=\"true\"><span aria-hidden=\"true\">✓</span> Research</button>",
+      "css": ":host { color-scheme: light dark; --np-action: light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91)); --np-canvas: light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85)); --np-focus: var(--np-action); } .ds-chip { min-height: 32px; border: 1px solid color-mix(in oklch, var(--np-action) 45%, var(--np-canvas)); border-radius: 6px; padding: 6px 10px; background: color-mix(in oklch, var(--np-action) 12%, var(--np-canvas)); color: var(--np-action); font: 600 12px/1.25 ui-sans-serif, system-ui, sans-serif; transition: background 150ms cubic-bezier(0.16,1,0.3,1); } .ds-chip:hover { background: color-mix(in oklch, var(--np-action) 18%, var(--np-canvas)); } .ds-chip:focus-visible { outline: 2px solid var(--np-focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "Asset Row",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A master-detail asset row, not a decorative card tile.",
+      "html": "<a class=\"ds-asset-row\" href=\"#\"><span><strong>Research synthesis</strong><small>Updated 8 minutes ago · 3 collections</small></span><span class=\"ds-status\">Saved</span></a>",
+      "css": ":host { color-scheme: light dark; --np-action: light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91)); --np-canvas: light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85)); --np-surface: light-dark(oklch(0.9687 0.0078 139.44), oklch(0.1957 0.0195 177.89)); --np-text: light-dark(oklch(0.1408 0.0044 285.82), oklch(0.9836 0.0142 180.72)); --np-text-muted: light-dark(oklch(0.4419 0.0146 285.79), oklch(0.7782 0.0280 176.10)); --np-border: light-dark(oklch(0.9197 0.0040 286.32), oklch(0.3268 0.0378 179.38)); --np-focus: var(--np-action); } .ds-asset-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--np-border); padding: 14px 4px; background: var(--np-canvas); color: var(--np-text); text-decoration: none; font: 400 14px/1.4 ui-sans-serif, system-ui, sans-serif; } .ds-asset-row:hover { background: var(--np-surface); } .ds-asset-row small { display: block; margin-top: 4px; color: var(--np-text-muted); font-size: 12px; } .ds-status { color: var(--np-action); font-size: 12px; font-weight: 600; } .ds-asset-row:focus-visible { outline: 2px solid var(--np-focus); outline-offset: 2px; }"
+    },
+    {
+      "name": "App Navigation Item",
+      "kind": "nav",
+      "description": "A familiar active navigation item for the authenticated App Shell.",
+      "html": "<a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\">Prompt Studio</a>",
+      "css": ":host { color-scheme: light dark; --np-action: light-dark(oklch(0.5109 0.0861 186.39), oklch(0.7845 0.1325 181.91)); --np-canvas: light-dark(oklch(0.9833 0.0025 165.08), oklch(0.1658 0.0174 181.85)); --np-surface: light-dark(oklch(0.9687 0.0078 139.44), oklch(0.1957 0.0195 177.89)); --np-text: light-dark(oklch(0.1408 0.0044 285.82), oklch(0.9836 0.0142 180.72)); --np-text-muted: light-dark(oklch(0.4419 0.0146 285.79), oklch(0.7782 0.0280 176.10)); --np-focus: var(--np-action); } .ds-nav-item { display: flex; min-height: 40px; align-items: center; border-radius: 8px; padding: 8px 12px; color: var(--np-text-muted); text-decoration: none; font: 600 14px/1.25 ui-sans-serif, system-ui, sans-serif; transition: background 150ms cubic-bezier(0.16,1,0.3,1), color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-nav-item:hover { background: var(--np-surface); color: var(--np-text); } .ds-nav-item[aria-current=page] { background: color-mix(in oklch, var(--np-action) 12%, var(--np-canvas)); color: var(--np-action); } .ds-nav-item:focus-visible { outline: 2px solid var(--np-focus); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Precision Workbench",
+    "overview": "NotePrompt should feel like a calibrated instrument on a knowledge worker's desk: quiet at rest, dense only where the task demands it, and unambiguous when state changes. The homepage supplies the visual anchor. One OKLCH semantic role vocabulary resolves through light and dark without component-specific theme variants.",
+    "keyCharacteristics": [
+      "Restrained teal action role used for action, selection, focus, and verified status.",
+      "Tinted neutral canvases that remain comfortable during long editing sessions.",
+      "Compact six and eight-pixel geometry with clear hierarchy instead of decoration.",
+      "Familiar product affordances, keyboard reliability, and explicit system feedback.",
+      "Responsive structure that changes panels and navigation, not merely type size."
+    ],
+    "rules": [
+      { "name": "The One Operational Voice Rule", "body": "Teal may occupy no more than ten percent of a product screen. If everything calls for attention, the interface has lost its hierarchy.", "section": "colors" },
+      { "name": "The Two-Theme Rule", "body": "Only light and dark are supported. Workbench, editorial, dashboard, and lightweight skins are transitional code to remove, not styles to extend.", "section": "colors" },
+      { "name": "The State Before Decoration Rule", "body": "Amber and red communicate real attention or failure. They never decorate headings, pricing blocks, or empty states.", "section": "colors" },
+      { "name": "The Quiet Hierarchy Rule", "body": "Product UI uses fixed sizes and clear weight contrast. Display-scale typography, all-caps labels, and extra-black weights cannot spread into routine controls.", "section": "typography" },
+      { "name": "The Flat by Default Rule", "body": "Persistent panels and cards are flat at rest. If a screen looks like stacked floating tiles, elevation has been overused.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do preserve the current homepage structure and use its teal, ink, amber, compact geometry, and strong hierarchy as the brand anchor.",
+      "Do use one semantic token vocabulary across light and dark themes, with reliable focus and state contrast.",
+      "Do make creation, optimization, comparison, checkpoints, collections, and publication feel like one continuous workflow.",
+      "Do use familiar controls, explicit labels, non-color state cues, reduced motion, and 44px mobile touch targets.",
+      "Do use progressive disclosure for professional fields, model parameters, attachments, versions, and diagnostics."
+    ],
+    "donts": [
+      "Don't introduce generic AI SaaS marketing built from purple gradients, glowing blobs, glass panels, and unsupported superlatives.",
+      "Don't recreate fragmented CRUD dashboards where creation, optimization, versions, publishing, and discovery feel like unrelated products.",
+      "Don't preserve four interchangeable visual skins that override one another and make component behavior unpredictable.",
+      "Don't build endless identical card grids, nested cards, decorative metrics, or modal-first workflows.",
+      "Don't ship controls that imply saved privacy, notification, billing, or collaboration behavior when the backend does not persist it.",
+      "Don't publish product copy that sells Pro, Team, or commercial capabilities which are only roadmap ideas.",
+      "Don't use colored side-stripe borders, gradient text, decorative glassmorphism, pure black, or pure white."
+    ]
+  }
+}

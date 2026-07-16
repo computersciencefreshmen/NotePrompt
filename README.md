@@ -26,6 +26,15 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 > 🌐 Production endpoint: [noteprompt.cn](https://noteprompt.cn). A release is considered healthy only after the commit-SHA image, migration status, database/Redis readiness, and live TLS checks in [DEPLOY.md](./DEPLOY.md) pass. Certificate-date or 80/443 reachability incidents follow the [TLS incident runbook](./docs/operations/tls-certificate-incident.md).
 
+## 🧭 Product and Architecture Baseline
+
+- [PRODUCT.md](./PRODUCT.md) defines the accepted users, product boundaries, brand personality, non-goals, and accessibility commitment.
+- [DESIGN.md](./DESIGN.md) defines the target light/dark product system derived from the current homepage. Existing selectable visual skins are migration debt, not supported design directions.
+- [SOTA upgrade execution plan](./docs/plans/2026-07-16-sota-upgrade-plan.md) distinguishes current behavior from target behavior and tracks each atomic delivery batch.
+- [Architecture Decision Records](./docs/adr/README.md) define the modular monolith, snapshot, collection, import, AI metering, and single-ECS operating semantics.
+
+These governance documents describe accepted direction. This README describes the current codebase, and [DEPLOY.md](./DEPLOY.md) remains the only supported production procedure.
+
 ---
 
 ## 🎯 Key Features

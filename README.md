@@ -24,7 +24,7 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 **NotePrompt** is an AI prompt management platform built with Next.js 15. It provides a workspace for creating, organizing, optimizing, and sharing AI prompts across multiple AI providers, with a dual-mode editor, community library, and administration tools.
 
-> 🌐 Production endpoint: [noteprompt.cn](https://noteprompt.cn). A release is considered healthy only after the commit-SHA image, migration status, database/Redis readiness, and live TLS checks in [DEPLOY.md](./DEPLOY.md) pass.
+> 🌐 Production endpoint: [noteprompt.cn](https://noteprompt.cn). A release is considered healthy only after the commit-SHA image, migration status, database/Redis readiness, and live TLS checks in [DEPLOY.md](./DEPLOY.md) pass. Certificate-date or 80/443 reachability incidents follow the [TLS incident runbook](./docs/operations/tls-certificate-incident.md).
 
 ---
 

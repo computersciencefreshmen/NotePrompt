@@ -9,7 +9,7 @@ import {
 } from '@/lib/pagination-policy'
 
 // 安全的用户字段列表（不包含 password_hash）
-const SAFE_USER_FIELDS = 'id, username, email, user_type, is_admin, is_active, avatar_url, created_at, updated_at'
+const SAFE_USER_FIELDS = 'id, username, email, user_type, is_admin, is_active, admin_disabled_at, avatar_url, created_at, updated_at'
 const MAX_ADMIN_USER_BODY_BYTES = 8 * 1024
 const VALID_USER_TYPES = new Set(['free', 'pro', 'admin'])
 
@@ -184,6 +184,7 @@ export async function PUT(request: NextRequest) {
     if (isActive !== undefined) {
       setClauses.push('is_active = ?')
       updateParams.push(isActive ? 1 : 0)
+      setClauses.push(isActive ? 'admin_disabled_at = NULL' : 'admin_disabled_at = NOW()')
     }
     if (isAdmin !== undefined) {
       setClauses.push('is_admin = ?')

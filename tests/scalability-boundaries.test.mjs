@@ -95,15 +95,34 @@ test('list routes use shared bounded pagination while preserving legacy array da
   }
 })
 
-test('user export preflights size and batches tags instead of querying once per prompt', async () => {
+test('user export uses a bounded consistent snapshot and batches tags', async () => {
   const source = await readFile(
     new URL('../src/app/api/v1/user/export-data/route.ts', import.meta.url),
     'utf8',
   )
   assert.match(source, /assertExportBudget\(recordCount, sourceBytes\)/)
   assert.match(source, /assertExportResponseSize\(responseBody\)/)
+  assert.match(source, /withConsistentReadSnapshot\(async query/)
+  assert.match(source, /checkAccountRateLimit\([\s\S]*'export-data'/)
+  assert.match(source, /LIMIT \$\{EXPORT_QUERY_ROW_LIMIT\}/)
+  assert.doesNotMatch(source, /await Promise\.all\(/)
   assert.match(source, /WHERE prompt\.user_id = \?[\s\S]*ORDER BY prompt_tag\.user_prompt_id ASC/)
   assert.match(source, /const tagsByPrompt = new Map/)
   assert.doesNotMatch(source, /map\(async \(p\)[\s\S]*user_prompt_tags/)
   assert.match(source, /Cache-Control': 'private, no-store/)
+})
+
+test('published folder detail routes and their clients paginate snapshot rows', async () => {
+  const files = [
+    '../src/app/api/v1/public-folders/[id]/prompts/route.ts',
+    '../src/app/api/v1/admin/public-folders/[id]/prompts/route.ts',
+    '../src/app/public-folders/[id]/page.tsx',
+    '../src/app/admin/folders/[id]/page.tsx',
+  ]
+  const sources = await Promise.all(files.map(file => readFile(new URL(file, import.meta.url), 'utf8')))
+
+  assert.match(sources[0], /parseBoundedPagination\(/)
+  assert.match(sources[1], /parseBoundedPagination\(/)
+  assert.match(sources[2], /pagination\?\.totalPages/)
+  assert.match(sources[3], /pagination\?\.totalPages/)
 })

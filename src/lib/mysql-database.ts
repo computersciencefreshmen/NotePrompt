@@ -1145,7 +1145,7 @@ class MySQLDB {
       );
       return result.rows as DbRow[];
     } catch (error) {
-      console.error('收藏查询失败:', error)
+      console.error('收藏查询失败', mysqlErrorMetadata(error))
       throw error;
     }
   }
@@ -2007,7 +2007,7 @@ class MySQLDB {
       );
       return Number((result.rows as MutationResult).affectedRows) > 0;
     } catch (error) {
-      console.error('删除用户导入文件夹失败:', error);
+      console.error('删除用户导入文件夹失败', mysqlErrorMetadata(error));
       return false;
     }
   }

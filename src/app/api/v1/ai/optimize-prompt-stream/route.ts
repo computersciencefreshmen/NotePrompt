@@ -326,6 +326,7 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now()
     const encoder = new TextEncoder()
     let activeAbortController: AbortController | undefined
+    let clientCancelled = false
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -381,12 +382,18 @@ export async function POST(request: NextRequest) {
               bodyObj.top_p = Math.min(Math.max(topPOverride, 0.1), 1)
             }
 
+            // Cancellation before this point is free because no provider request
+            // has left the process. From the moment fetch is invoked the provider
+            // may bill the request, so the reservation becomes non-refundable.
+            if (clientCancelled) throw new Error('AI stream was cancelled before dispatch')
+
             const requestApiKey = config.headers['Authorization']?.replace('Bearer ', '')
             const abortController = new AbortController()
             activeAbortController = abortController
             const timeoutId = setTimeout(() => abortController.abort(), 150000)
 
             try {
+              reservation.markProviderCallStarted()
               const response = await fetch(`${config.baseURL}/chat/completions`, {
                 method: 'POST',
                 redirect: 'error',
@@ -604,12 +611,14 @@ export async function POST(request: NextRequest) {
         } catch (error) {
           activeAbortController?.abort()
           await reservation.rollback()
+          if (clientCancelled) return
           console.error('流式优化失败')
           send({ type: 'error', message: formatAIError(error, effectiveProvider) })
           controller.close()
         }
       },
       async cancel() {
+        clientCancelled = true
         activeAbortController?.abort()
         await reservation.rollback()
       },

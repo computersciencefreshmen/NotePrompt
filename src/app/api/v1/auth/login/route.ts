@@ -76,23 +76,34 @@ export async function POST(request: NextRequest) {
       }, { status: 401 })
     }
 
-    // 检查账户是否激活
-    if (!databaseBoolean(dbUser.is_active)) {
-      // 如果未激活且邮箱未验证，提示用户验证邮箱
-      if (!databaseBoolean(dbUser.email_verified)) {
-        return NextResponse.json<AuthResponse>({
-          success: false,
-          error: '请先验证您的邮箱后再登录',
-          code: 'EMAIL_NOT_VERIFIED',
-          data: {
-            email_verified: false,
-            requireVerification: true,
-            user: {
-              email: String(dbUser.email || '')
-            }
+    // Administrative suspension is independent from verification state and
+    // always wins. A suspended pending account must not self-reactivate.
+    if (dbUser.admin_disabled_at) {
+      return NextResponse.json<AuthResponse>({
+        success: false,
+        error: '账户未激活，请联系管理员'
+      }, { status: 403 })
+    }
+
+    if (
+      process.env.ENABLE_EMAIL_VERIFICATION === 'true' &&
+      !databaseBoolean(dbUser.email_verified)
+    ) {
+      return NextResponse.json<AuthResponse>({
+        success: false,
+        error: '请先验证您的邮箱后再登录',
+        code: 'EMAIL_NOT_VERIFIED',
+        data: {
+          email_verified: false,
+          requireVerification: true,
+          user: {
+            email: String(dbUser.email || '')
           }
-        }, { status: 403 })
-      }
+        }
+      }, { status: 403 })
+    }
+
+    if (!databaseBoolean(dbUser.is_active)) {
       return NextResponse.json<AuthResponse>({
         success: false,
         error: '账户未激活，请联系管理员'

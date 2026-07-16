@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 8,
-  "requiredMigrations": ["001", "002", "003", "004", "005", "006", "007", "008"],
+  "schemaVersion": 9,
+  "requiredMigrations": ["001", "002", "003", "004", "005", "006", "007", "008", "009"],
   "tables": {
     "schema_migrations": ["version", "name", "checksum", "applied_at", "execution_ms"],
-    "users": ["id", "username", "email", "password_hash", "avatar_url", "user_type", "is_admin", "permissions", "is_active", "email_verified", "verification_code", "verification_expires", "verification_attempts", "email_verify_sent_at", "session_version", "created_at", "updated_at"],
+    "users": ["id", "username", "email", "password_hash", "avatar_url", "user_type", "is_admin", "permissions", "is_active", "admin_disabled_at", "email_verified", "verification_code", "verification_expires", "verification_attempts", "email_verify_sent_at", "session_version", "created_at", "updated_at"],
     "user_preferences": ["user_id", "locale", "theme", "default_editor_mode", "preferences", "created_at", "updated_at"],
     "api_keys": ["id", "api_key_hash", "key_prefix", "user_id", "name", "is_active", "created_at", "expires_at", "last_used_at"],
     "user_provider_configs": ["id", "user_id", "provider", "encrypted_api_key", "base_url", "is_active", "created_at", "updated_at"],

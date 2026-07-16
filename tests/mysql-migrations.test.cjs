@@ -39,6 +39,7 @@ test('offline plan does not require database configuration', () => {
   assert.match(output, /006\s+pending/)
   assert.match(output, /007\s+pending/)
   assert.match(output, /008\s+pending/)
+  assert.match(output, /009\s+pending/)
   assert.match(output, /no database connection was opened/i)
 })
 
@@ -65,6 +66,7 @@ test('applied migration checksums and history gaps fail closed', () => {
 
 test('canonical requirements cover the known schema gaps and exclude plaintext API keys', () => {
   assert.ok(requirements.tables.users.includes('session_version'))
+  assert.ok(requirements.tables.users.includes('admin_disabled_at'))
   assert.deepEqual(
     ['editor_mode', 'payload', 'schema_version'].filter(column => requirements.tables.user_prompts.includes(column)),
     ['editor_mode', 'payload', 'schema_version']

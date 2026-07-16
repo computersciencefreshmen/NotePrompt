@@ -7,6 +7,7 @@ import {
   type SessionTokenPayload,
   createApiKeyMaterial,
   databaseBoolean,
+  getJwtSecret,
   getSessionVersion,
   hashApiKey,
   isSessionVersionCurrent,
@@ -29,14 +30,8 @@ export {
   getUserLimits,
 } from './entitlement-policy'
 
-// JWT密钥必须在环境变量中配置，否则应用启动失败
-const configuredJwtSecret = process.env.JWT_SECRET
-if (!configuredJwtSecret) {
-  throw new Error('FATAL: JWT_SECRET environment variable is required. Please set it in your .env file.')
-}
-const JWT_SECRET: string = configuredJwtSecret
 export function verifyToken(token: string): SessionTokenPayload | null {
-  return verifySessionToken(token, JWT_SECRET)
+  return verifySessionToken(token, getJwtSecret())
 }
 
 export function createSessionToken(user: Record<string, unknown>): string {
@@ -52,7 +47,7 @@ export function createSessionToken(user: Record<string, unknown>): string {
       userType: normalizeUserType(user.user_type),
       sessionVersion,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     (process.env.JWT_EXPIRES_IN || DEFAULT_SESSION_TTL) as SignOptions['expiresIn'],
   )
 }

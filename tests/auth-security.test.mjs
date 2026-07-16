@@ -7,6 +7,7 @@ import {
   SESSION_TOKEN_AUDIENCE,
   SESSION_TOKEN_ISSUER,
   createApiKeyMaterial,
+  getJwtSecret,
   hashApiKey,
   isSessionVersionCurrent,
   signSessionToken,
@@ -15,6 +16,33 @@ import {
 } from '../src/lib/auth-security.ts'
 
 const secret = 'test-session-secret-that-is-at-least-32-bytes'
+
+test('JWT secrets are resolved at runtime and missing configuration fails closed', () => {
+  assert.equal(getJwtSecret({ JWT_SECRET: secret }), secret)
+  assert.throws(() => getJwtSecret({}), /JWT_SECRET environment variable is required at runtime/)
+  assert.throws(
+    () => getJwtSecret({ JWT_SECRET: '   ' }),
+    /JWT_SECRET environment variable is required at runtime/,
+  )
+})
+
+test('the default JWT secret source is evaluated after module import', () => {
+  const originalSecret = process.env.JWT_SECRET
+
+  try {
+    delete process.env.JWT_SECRET
+    assert.throws(() => getJwtSecret(), /JWT_SECRET environment variable is required at runtime/)
+
+    process.env.JWT_SECRET = secret
+    assert.equal(getJwtSecret(), secret)
+  } finally {
+    if (originalSecret === undefined) {
+      delete process.env.JWT_SECRET
+    } else {
+      process.env.JWT_SECRET = originalSecret
+    }
+  }
+})
 
 test('session tokens use fixed HS256 issuer/audience and a short default lifetime', () => {
   const token = signSessionToken({

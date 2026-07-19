@@ -115,3 +115,24 @@ test('public liveness is dependency free while readiness stays private at the ed
   assert.match(publicLiveness, /proxy_pass http:\/\/note_prompt_app;/)
   assert.doesNotMatch(publicLiveness, /deny all;/)
 })
+
+test('edge-local health never exposes application readiness through private proxy ranges', () => {
+  const nginx = read('nginx/nginx.conf')
+  const edgeHealthLocations = [...nginx.matchAll(/location\s*=\s*\/health\s*\{([\s\S]*?)\n\s*\}/g)]
+    .map((match) => match[1])
+
+  assert.equal(edgeHealthLocations.length, 2, 'HTTP and HTTPS listeners must define explicit /health boundaries')
+
+  const localHealth = edgeHealthLocations.find((body) => /return 200 "healthy\\n";/.test(body))
+  const publicHealth = edgeHealthLocations.find((body) => /return 404;/.test(body))
+
+  assert.ok(localHealth, 'the internal HTTP listener must expose process health')
+  assert.match(localHealth, /allow 127\.0\.0\.1;/)
+  assert.match(localHealth, /allow ::1;/)
+  assert.match(localHealth, /deny all;/)
+  assert.doesNotMatch(localHealth, /proxy_pass|api\/health/)
+  assert.doesNotMatch(localHealth, /allow 10\.|allow 172\.16\.|allow 192\.168\./)
+
+  assert.ok(publicHealth, 'the public HTTPS listener must reject /health')
+  assert.doesNotMatch(publicHealth, /proxy_pass|allow 10\.|allow 172\.16\.|allow 192\.168\./)
+})

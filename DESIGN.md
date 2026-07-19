@@ -88,6 +88,12 @@ components:
 
 # Design System: NotePrompt
 
+## 2026 Authenticated Workbench Direction
+
+The accepted design for `/prompts` and the authenticated product shell is the [Claude-inspired Prompt Workbench decision](docs/plans/2026-07-20-claude-prompt-workbench-design.md). It introduces a warm paper surface (`#f5f4ee`), near-black ink (`#141413`), clay action color (`#da7756`), a contrast-safe `accent-strong` role, serif UI typography, and monospace technical metadata. Only light and dark remain supported.
+
+For authenticated product implementation, that decision supersedes the cool-teal palette and system-sans guidance below. The existing material remains the marketing-homepage baseline until its semantic-token compatibility pass; the homepage structure itself is preserved. This is a visual and interaction decision only: it does not change database, ownership, publication, revision, AI metering, or deployment contracts.
+
 ## Overview
 
 **Creative North Star: "The Precision Workbench"**

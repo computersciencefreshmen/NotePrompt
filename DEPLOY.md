@@ -11,7 +11,7 @@
 - 应用不得使用 MySQL `root`；3306 和 6379 不得暴露到公网。
 - 长期运行的应用账号只有 DML 权限；DDL 只由一次性迁移账号执行，两个账号不得相同。
 - 生产环境必须使用私网 Redis，且明确禁用内存限流降级。
-- `/api/live` 是可公开探测、完全不访问依赖的应用 liveness。`/api/health` 是数据库 readiness；旧 `/api/v1/health-check` 与它保持兼容。公网 Nginx 对两个 readiness 地址无条件返回 404；readiness 只允许从应用容器内部访问，Compose 直接探测并额外核对 Redis 与 commit version。
+- `/api/live` 是可公开探测、完全不访问依赖的应用 liveness。`/api/health` 是数据库 readiness；旧 `/api/v1/health-check` 与它保持兼容。公网 Nginx 对两个 readiness 地址无条件返回 404；readiness 只允许从应用容器内部访问，Compose 直接探测并额外核对 Redis 与 commit version。边缘 `/health` 只在 HTTP 回环地址证明 Nginx 进程存活，公网 HTTPS 固定返回 404，绝不代理应用 readiness。
 - Nginx 只有在应用 readiness 通过后才启动。
 
 `database/migrations/*.cjs` 是唯一 schema 事实来源。请求处理期间不得建表、改列或回填；生产应用账号不需要且不得持有 DDL 权限。
@@ -349,6 +349,7 @@ curl -fsS --max-time 15 http://127.0.0.1/health
 docker compose --env-file /opt/note-prompt-secrets/runtime.env exec -T note-prompt-app \
   node -e "(async()=>{for(const p of ['/api/health','/api/v1/health-check']){const r=await fetch('http://127.0.0.1:3000'+p,{cache:'no-store'});const b=await r.json();if(!r.ok||b.status!=='ready')throw new Error(p)}})().catch(()=>process.exit(1))"
 curl -fsS --max-time 15 https://noteprompt.cn/api/live
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://noteprompt.cn/health)" = "404"
 test "$(curl -sS -o /dev/null -w '%{http_code}' https://noteprompt.cn/api/health)" = "404"
 test "$(curl -sS -o /dev/null -w '%{http_code}' https://noteprompt.cn/api/v1/health-check)" = "404"
 curl -fsSI --max-time 15 https://noteprompt.cn/

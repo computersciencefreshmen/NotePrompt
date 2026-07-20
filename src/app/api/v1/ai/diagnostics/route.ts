@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AI_MODELS } from '@/config/ai'
-import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+import { AI_MODEL_CATALOG, PublicAIModelDefinition, isPublicAIProvider } from '@/config/ai-models'
 import { validateAIModel } from '@/lib/ai-utils'
 import { getUserProviderRuntimeConfig, UserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { requireAIUser, reserveAIUsage, requestPolicyResponse, AIUsageReservation } from '@/lib/ai-runtime-security'
 import { readLimitedJson } from '@/lib/ai-runtime-policy'
+import { buildAIChatCompletionBody } from '@/lib/ai-request-policy'
 
 type DiagnosticStatus = 'ready' | 'configured' | 'missing-key' | 'missing-base-url' | 'rate-limited' | 'billing' | 'error'
 type DiagnosticMode = 'config' | 'probe'
@@ -22,54 +23,54 @@ type CachedDiagnostic = {
   cached?: boolean
 }
 
-const CHEAP_DIAGNOSTIC_MODELS: Record<string, string[]> = {
-  qwen: ['qwen3.6-flash', 'qwen-turbo', 'qwen-plus'],
-  deepseek: ['deepseek-v4-flash', 'deepseek-chat'],
-  kimi: ['moonshot-v1-32k', 'kimi-k2.5'],
-  zhipu: ['glm-4.7-flash', 'glm-5-turbo'],
-  minimax: ['MiniMax-M2.5-highspeed', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.1'],
-  xiaomi: ['mimo-v2-flash', 'mimo-v2.5'],
-}
-
 const PROBE_CACHE_TTL_MS = 10 * 60 * 1000
+const PROBE_CACHE_MAX_ENTRIES = 500
 const globalDiagnosticsCache = globalThis as unknown as { __aiDiagnosticsProbeCache?: Map<string, CachedDiagnostic> }
 const probeCache = globalDiagnosticsCache.__aiDiagnosticsProbeCache ?? new Map<string, CachedDiagnostic>()
 if (process.env.NODE_ENV !== 'production') globalDiagnosticsCache.__aiDiagnosticsProbeCache = probeCache
 
+function cacheProbeResult(cacheKey: string, result: CachedDiagnostic) {
+  const now = Date.now()
+  for (const [key, cached] of probeCache) {
+    const checkedAt = Date.parse(cached.checkedAt)
+    if (!Number.isFinite(checkedAt) || now - checkedAt >= PROBE_CACHE_TTL_MS) probeCache.delete(key)
+  }
+
+  probeCache.delete(cacheKey)
+  while (probeCache.size >= PROBE_CACHE_MAX_ENTRIES) {
+    const oldestKey = probeCache.keys().next().value
+    if (typeof oldestKey !== 'string') break
+    probeCache.delete(oldestKey)
+  }
+  probeCache.set(cacheKey, result)
+}
+
 function classifyError(errorText: string): DiagnosticStatus {
   const normalized = errorText.toLowerCase()
+  if (normalized.includes('unauthorized') || normalized.includes('forbidden') || normalized.includes('authentication') || normalized.includes('401') || normalized.includes('403')) return 'missing-key'
   if (normalized.includes('quota') || normalized.includes('balance') || normalized.includes('billing') || normalized.includes('insufficient') || normalized.includes('402')) return 'billing'
   if (normalized.includes('rate') || normalized.includes('429') || normalized.includes('limit')) return 'rate-limited'
   return 'error'
 }
 
-type DiagnosticRequestConfig = {
-  fixedTemperature?: boolean
-  temperature: number
-}
-
-function getRequestBody(provider: string, model: string, config: DiagnosticRequestConfig) {
-  const messages = [
-    { role: 'system', content: 'You are a concise health-check assistant.' },
-    { role: 'user', content: 'OK' },
-  ]
-
-  const temperature = config.fixedTemperature ? 1 : 0.2
-
-  if (provider === 'minimax') {
-    return { model, messages, max_completion_tokens: 2, temperature: Math.max(0.01, Math.min(1, temperature)), stream: false }
-  }
-
-  if (provider === 'xiaomi') {
-    return { model, messages, max_completion_tokens: 2, temperature: 1, top_p: 0.95, thinking: { type: 'disabled' }, stream: false }
-  }
-
-  return { model, messages, max_tokens: 2, temperature, stream: false }
+function diagnosticFailureMessage(status: DiagnosticStatus, httpStatus: number) {
+  if (status === 'missing-key') return `供应商认证失败（HTTP ${httpStatus}）`
+  if (status === 'billing') return `供应商账户额度不足（HTTP ${httpStatus}）`
+  if (status === 'rate-limited') return `供应商限流（HTTP ${httpStatus}）`
+  return `供应商探针失败（HTTP ${httpStatus}）`
 }
 
 function getDiagnosticModel(provider: string, models: Record<string, unknown>) {
-  const preferred = CHEAP_DIAGNOSTIC_MODELS[provider] || []
-  return preferred.find(model => model in models) || Object.keys(models)[0]
+  if (isPublicAIProvider(provider)) {
+    const catalogModels = Object.values(AI_MODEL_CATALOG[provider].models) as PublicAIModelDefinition[]
+    const availableModels = catalogModels.filter(model => model.id in models)
+    return availableModels.find(model => model.tier === 'fast')?.id
+      || availableModels.find(model => model.tier === 'balanced')?.id
+      || availableModels.find(model => model.default)?.id
+      || availableModels[0]?.id
+  }
+
+  return Object.keys(models)[0]
 }
 
 function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], runtimeConfig?: UserProviderRuntimeConfig | null): CachedDiagnostic {
@@ -136,13 +137,26 @@ async function probeProvider(
         'Content-Type': 'application/json',
         Authorization: validation.config.headers.Authorization,
       },
-      body: JSON.stringify(getRequestBody(provider, validation.config.model, validation.config)),
+      body: JSON.stringify(buildAIChatCompletionBody({
+        provider,
+        model: validation.config.model,
+        messages: [
+          { role: 'system', content: 'You are a concise health-check assistant.' },
+          { role: 'user', content: 'OK' },
+        ],
+        maxTokens: 2,
+        temperature: 0.2,
+        topP: provider === 'xiaomi' ? 0.95 : undefined,
+        fixedTemperature: validation.config.fixedTemperature,
+      })),
       signal: controller.signal,
     })
 
     const latencyMs = Date.now() - requestStartedAt
     if (!response.ok) {
-      const safeError = sanitizeAIProviderError(await response.text())
+      await response.body?.cancel().catch(() => undefined)
+      const status = classifyError(String(response.status))
+      console.warn(`AI diagnostic failed for ${provider}/${model} (${response.status})`)
       const result: CachedDiagnostic = {
         checkedAt: new Date().toISOString(),
         provider,
@@ -150,13 +164,15 @@ async function probeProvider(
         model,
         keyConfigured: true,
         callable: false,
-        status: classifyError(`${response.status} ${safeError}`),
-        message: safeError || `HTTP ${response.status}`,
+        status,
+        message: diagnosticFailureMessage(status, response.status),
         latencyMs,
       }
-      probeCache.set(cacheKey, result)
+      cacheProbeResult(cacheKey, result)
       return result
     }
+
+    await response.body?.cancel().catch(() => undefined)
 
     const result: CachedDiagnostic = {
       checkedAt: new Date().toISOString(),
@@ -169,9 +185,10 @@ async function probeProvider(
       message: '低成本探针调用成功',
       latencyMs,
     }
-    probeCache.set(cacheKey, result)
+    cacheProbeResult(cacheKey, result)
     return result
   } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'AbortError'
     const result: CachedDiagnostic = {
       checkedAt: new Date().toISOString(),
       provider,
@@ -180,10 +197,10 @@ async function probeProvider(
       keyConfigured: true,
       callable: false,
       status: 'error',
-      message: error instanceof Error ? sanitizeAIProviderError(error.message) : '检测失败',
+      message: timedOut ? '供应商探针请求超时' : '供应商探针调用失败',
       latencyMs: Date.now() - requestStartedAt,
     }
-    probeCache.set(cacheKey, result)
+    cacheProbeResult(cacheKey, result)
     return result
   } finally {
     clearTimeout(timeout)

@@ -44,7 +44,7 @@ test('stream cancellation is checked before dispatch and dispatch commits the re
   const requestProvider = source.indexOf('const requestProvider = async')
   const cancellationCheck = source.indexOf('if (clientCancelled)', requestProvider)
   const commit = source.indexOf('reservation.markProviderCallStarted()', cancellationCheck)
-  const fetchCall = source.indexOf('const response = await fetch', commit)
+  const fetchCall = source.indexOf('await fetch', commit)
 
   assert.ok(requestProvider >= 0)
   assert.ok(cancellationCheck > requestProvider)

@@ -647,6 +647,7 @@ export async function optimizePromptStream(
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let terminalEventReceived = false
 
     while (true) {
       const { done, value } = await reader.read()
@@ -664,6 +665,7 @@ export async function optimizePromptStream(
 
         try {
           const event = JSON.parse(jsonStr)
+          if (terminalEventReceived) continue
           switch (event.type) {
             case 'thinking':
               callbacks.onThinking?.(event.content)
@@ -672,9 +674,11 @@ export async function optimizePromptStream(
               callbacks.onContent?.(event.content)
               break
             case 'done':
+              terminalEventReceived = true
               callbacks.onDone?.(event)
               break
             case 'error':
+              terminalEventReceived = true
               callbacks.onError?.(event.message)
               break
           }
@@ -683,6 +687,7 @@ export async function optimizePromptStream(
         }
       }
     }
+    if (!terminalEventReceived) callbacks.onError?.('AI 流式响应意外中断，请重试')
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       callbacks.onError?.('请求超时，请稍后重试')

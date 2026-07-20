@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validateAIModel, formatAIError } from '@/lib/ai-utils'
-import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+import { DEFAULT_PUBLIC_AI_PROVIDER, getDefaultAIModel } from '@/config/ai-models'
 import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
+import { buildAIChatCompletionBody, createAIIncompleteResponse, isCompleteAIFinishReason, readLimitedAIProviderJSON } from '@/lib/ai-request-policy'
 import {
   MAX_AI_INPUT_CHARS,
+  parseAIOptimizationPreferences,
   parseAIRequestAttachments,
   readLimitedJson,
 } from '@/lib/ai-runtime-policy'
@@ -33,23 +35,20 @@ export async function POST(request: NextRequest) {
     const prompt = typeof rawPrompt === 'string' ? rawPrompt : ''
     const rawProvider = body.provider ?? body.modelType
     const rawModel = body.model ?? body.modelName
-    const provider = typeof rawProvider === 'string' ? rawProvider : 'deepseek'
-    const model = typeof rawModel === 'string' ? rawModel : 'deepseek-v4-flash'
+    const provider = typeof rawProvider === 'string' ? rawProvider : DEFAULT_PUBLIC_AI_PROVIDER
+    const model = typeof rawModel === 'string' ? rawModel : getDefaultAIModel(provider)
     const temperatureOverride = typeof body.temperature === 'number' ? body.temperature : undefined
     const rawTopP = body.topP ?? body.top_p
     const rawMaxTokens = body.maxTokens ?? body.max_tokens
     const topPOverride = typeof rawTopP === 'number' ? rawTopP : undefined
     const maxTokensOverride = typeof rawMaxTokens === 'number' ? rawMaxTokens : undefined
-    const requestedMode = typeof body.mode === 'string' ? body.mode : undefined // simple/pro/professional/normal
-    const requestedStyle = typeof body.style === 'string' ? body.style : ''
-    const requestedTone = typeof body.tone === 'string' ? body.tone : ''
-    const requestedOutputFormat = typeof body.outputFormat === 'string' ? body.outputFormat : ''
-    const requestedConstraints = Array.isArray(body.constraints)
-      ? body.constraints
-          .filter((item: unknown) => typeof item === 'string' && item.trim())
-          .slice(0, 12)
-          .map((item: string) => item.trim().slice(0, 500))
-      : []
+    const {
+      mode: requestedMode,
+      style: requestedStyle,
+      tone: requestedTone,
+      outputFormat: requestedOutputFormat,
+      constraints: requestedConstraints,
+    } = parseAIOptimizationPreferences(body)
     const requestedAttachments: RequestedAttachment[] = parseAIRequestAttachments(body.attachments)
 
     // 输入长度限制
@@ -63,8 +62,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 如果是local则重定向到qwen（本地模型已移除）
-    const effectiveProvider = provider === 'local' ? 'qwen' : provider
+    // Never reinterpret a provider choice: validation must reject retired aliases.
+    const effectiveProvider = provider
     const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, effectiveProvider)
 
     // 验证AI模型配置
@@ -194,178 +193,72 @@ ${contextInstruction}
     const startTime = Date.now()
 
     try {
-      if (effectiveProvider === 'local') {
-        // 使用本地AI服务
-        // 先测试连接
-        try {
-          const testResponse = await fetch(`${aiConfig.baseURL}/api/tags`, {
-            method: 'GET',
-            redirect: 'error',
-            signal: AbortSignal.timeout(5000) // 5秒测试连接
-          })
-          
-          if (!testResponse.ok) {
-            throw new Error(`连接测试失败: ${testResponse.status}`)
-          }
-          
-          const testData = await testResponse.json()
-          // 检查模型是否可用
-          const availableModels = testData.models?.map((m: { name: string }) => m.name) || []
-          if (!availableModels.includes(aiConfig.model)) {
-            throw new Error(`模型 ${aiConfig.model} 不可用，可用模型: ${availableModels.join(', ')}`)
-          }
-          
-        } catch (testError) {
-          console.error('本地 AI 连接测试失败')
-          throw new Error(`无法连接到本地AI服务: ${testError instanceof Error ? testError.message : '未知错误'}`)
-        }
-        
-        // 添加超时控制
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 30000) // 30秒超时
-        
-        try {
-          const response = await fetch(`${aiConfig.baseURL}/api/generate`, {
-            method: 'POST',
-            redirect: 'error',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: aiConfig.model,
-              prompt: `${systemPrompt}\n\n${userMessage}`,
-              stream: false,
-              options: {
-                temperature: Math.min(Math.max(temperatureOverride ?? aiConfig.temperature, 0), 2),
-                top_p: Math.min(Math.max(topPOverride ?? 0.9, 0.1), 1),
-                num_predict: Math.min(Math.max(maxTokensOverride ?? aiConfig.max_tokens, 512), 8192)
-              }
-            }),
-            signal: controller.signal
-          })
-
-          clearTimeout(timeoutId)
-
-          if (!response.ok) {
-            if (response.status === 404) {
-              throw new Error('本地AI服务未找到，请检查Ollama是否已启动')
-            } else if (response.status === 500) {
-              throw new Error('本地AI服务内部错误，请检查模型是否正确安装')
-            } else {
-              throw new Error(`本地AI服务请求失败: ${response.status} ${response.statusText}`)
-            }
-          }
-
-          const data = await response.json()
-          let rawResponse = data.response || ''
-          
-          // 处理本地模型输出，移除<think></think>标签
-          if (effectiveProvider === 'local') {
-            // 移除<think>标签及其内容
-            rawResponse = rawResponse.replace(/<think>[\s\S]*?<\/think>/g, '')
-            // 移除可能的<think>标签（没有闭合标签的情况）
-            rawResponse = rawResponse.replace(/<think>[\s\S]*/g, '')
-            // 清理多余的空白字符
-            rawResponse = rawResponse.trim()
-          }
-          
-          optimizedPrompt = rawResponse
-          processingTime = (Date.now() - startTime) / 1000
-        } catch (fetchError) {
-          clearTimeout(timeoutId)
-          if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-            throw new Error('本地AI服务响应超时，请稍后重试')
-          }
-          throw fetchError
-        }
-      } else {
-        // 使用在线AI服务 - 从headers中获取API密钥
-        const apiKey = aiConfig.headers['Authorization']?.replace('Bearer ', '')
-        if (!apiKey) {
-          throw new Error(`未配置${effectiveProvider}的API密钥，请在环境变量中设置${effectiveProvider.toUpperCase()}_API_KEY`)
-        }
-
-        // 使用在线AI服务
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        }
-
-        // 统一设置认证头
-        headers['Authorization'] = `Bearer ${apiKey}`
-
-        // 统一超时控制
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 150000)
-
-        // 根据不同提供商处理模型名称和参数
-        const requestModel = aiConfig.model
-        // temperature 优先使用用户滑块传入的值，否则用默认值 0.7
-        const isMiniMaxProvider = effectiveProvider === 'minimax'
-        const isXiaomiProvider = effectiveProvider === 'xiaomi'
-        const usesCompletionTokensParam = isMiniMaxProvider || isXiaomiProvider
-        const requestTemperature = isMiniMaxProvider
-          ? Math.min(Math.max(temperatureOverride ?? aiConfig.temperature, 0.01), 1)
-          : Math.min(Math.max(temperatureOverride ?? aiConfig.temperature, 0), 2)
-        const requestTopP = Math.min(Math.max(topPOverride ?? 0.9, 0.1), 1)
-        const requestMaxTokens = isMiniMaxProvider
-          ? Math.min(Math.max(maxTokensOverride ?? aiConfig.max_tokens, 1), 2048)
-          : Math.min(Math.max(maxTokensOverride ?? aiConfig.max_tokens, 512), 8192)
-
-        try {
-          // DeepSeek reasoner 不支持 system 角色，需要合并到 user 消息
-          const isReasonerModel = requestModel === 'deepseek-reasoner'
-          const messages = isReasonerModel
-            ? [{ role: 'user', content: systemPrompt + '\n\n' + userMessage }]
-            : [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userMessage }
-              ]
-
-          // 部分模型不支持修改 temperature（如 kimi-k2.5, kimi-k2-thinking），不发送该参数
-          const isFixedTempModel = aiConfig.fixedTemperature
-          const bodyObj: Record<string, unknown> = {
-            model: requestModel,
-            messages,
-            top_p: requestTopP,
-            stream: false
-          }
-          bodyObj[usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens'] = requestMaxTokens
-          if (!isFixedTempModel) {
-            bodyObj.temperature = requestTemperature
-          }
-          if (isXiaomiProvider) {
-            bodyObj.thinking = { type: 'disabled' }
-          }
-
-          const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-            method: 'POST',
-            redirect: 'error',
-            headers,
-            body: JSON.stringify(bodyObj),
-            signal: controller.signal
-          })
-
-          clearTimeout(timeoutId)
-
-          if (!response.ok) {
-            const errorText = await response.text()
-            const safeErrorText = sanitizeAIProviderError(errorText)
-            console.error(`${effectiveProvider} API错误 (${response.status}):`, safeErrorText)
-            throw new Error(`${effectiveProvider} API请求失败: ${response.status} - ${safeErrorText}`)
-          }
-
-          const data = await response.json()
-          optimizedPrompt = data.choices?.[0]?.message?.content || ''
-        } catch (fetchError) {
-          clearTimeout(timeoutId)
-          if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-            throw new Error(`${effectiveProvider} API请求超时(120秒)，请稍后重试`)
-          }
-          throw fetchError
-        }
-
-        processingTime = (Date.now() - startTime) / 1000
+      // 使用在线AI服务 - 从headers中获取API密钥
+      const apiKey = aiConfig.headers['Authorization']?.replace('Bearer ', '')
+      if (!apiKey) {
+        throw new Error(`未配置${effectiveProvider}的API密钥，请在环境变量中设置${effectiveProvider.toUpperCase()}_API_KEY`)
       }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+
+      headers.Authorization = `Bearer ${apiKey}`
+
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 150000)
+
+      try {
+        const bodyObj = buildAIChatCompletionBody({
+          provider: effectiveProvider,
+          model: aiConfig.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          maxTokens: maxTokensOverride ?? aiConfig.max_tokens,
+          temperature: temperatureOverride ?? aiConfig.temperature,
+          topP: topPOverride ?? 0.9,
+          fixedTemperature: aiConfig.fixedTemperature,
+        })
+
+        reservation.markProviderCallStarted()
+        const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
+          method: 'POST',
+          redirect: 'error',
+          headers,
+          body: JSON.stringify(bodyObj),
+          signal: controller.signal
+        })
+
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => undefined)
+          console.error(`${effectiveProvider} API错误 (${response.status})`)
+          throw new Error(`${effectiveProvider} API请求失败: ${response.status}`)
+        }
+
+        const data = await readLimitedAIProviderJSON<{
+          choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }>
+        }>(response)
+        const choice = data.choices?.[0]
+        if (!isCompleteAIFinishReason(choice?.finish_reason)) {
+          console.error(`${effectiveProvider} API returned incomplete output`)
+          return NextResponse.json(
+            { success: false, ...createAIIncompleteResponse({ provider: effectiveProvider, model }) },
+            { status: 502 },
+          )
+        }
+        optimizedPrompt = choice?.message?.content || ''
+      } catch (fetchError) {
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error(`${effectiveProvider} API请求超时(150秒)，请稍后重试`)
+        }
+        throw fetchError
+      } finally {
+        clearTimeout(timeoutId)
+      }
+
+      processingTime = (Date.now() - startTime) / 1000
 
       if (!optimizedPrompt) {
         throw new Error('AI模型未返回有效响应')

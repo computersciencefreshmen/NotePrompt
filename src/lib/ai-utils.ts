@@ -1,5 +1,6 @@
 import 'server-only'
-import { AI_MODELS } from '@/config/ai'
+import { AI_MODELS, aiConfig } from '@/config/ai'
+import { AI_MODEL_CATALOG, PublicAIModelDefinition } from '@/config/ai-models'
 import { getProviderRuntimeConfig } from '@/lib/provider-runtime-config'
 import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
 import { formatSafeAIError } from '@/lib/ai-error-sanitizer'
@@ -31,6 +32,7 @@ export function validateAIModel(provider: string, modelId: string, runtimeOverri
     model: string;
     temperature: number;
     max_tokens: number;
+    top_p: number;
     fixedTemperature: boolean;
     headers: Record<string, string>;
   };
@@ -40,7 +42,7 @@ export function validateAIModel(provider: string, modelId: string, runtimeOverri
     if (!providerConfig) {
       return {
         isValid: false,
-        error: "不支持的AI提供商: " + provider
+        error: "不支持的AI提供商"
       };
     }
 
@@ -49,7 +51,7 @@ export function validateAIModel(provider: string, modelId: string, runtimeOverri
     if (!modelConfig) {
       return {
         isValid: false,
-        error: "不支持的模型: " + modelId
+        error: "不支持的模型"
       };
     }
 
@@ -88,6 +90,7 @@ export function validateAIModel(provider: string, modelId: string, runtimeOverri
         model: modelConfig.model,
         temperature: modelConfig.temperature ?? 0.7,
         max_tokens: modelConfig.max_tokens,
+        top_p: aiConfig.requestDefaults.top_p,
         fixedTemperature: modelConfig.fixedTemperature || false,
         headers: { 'Authorization': 'Bearer ' + runtimeConfig.apiKey }
       }
@@ -127,36 +130,15 @@ export function getRecommendedModels(): Array<{
   name: string;
   reason: string;
 }> {
-  return [
-    {
-      provider: 'qwen',
-      model: 'qwen3.6-plus',
-      name: 'Qwen3.6 Plus',
-      reason: '阿里百炼最新通用文本模型，适合日常优化'
-    },
-    {
-      provider: 'deepseek',
-      model: 'deepseek-v4-flash',
-      name: 'DeepSeek V4 Flash',
-      reason: '最新低成本高并发模型，适合默认优化'
-    },
-    {
-      provider: 'zhipu',
-      model: 'glm-5.1',
-      name: 'GLM-5.1',
-      reason: '长程任务和 Agent 场景能力强'
-    },
-    {
-      provider: 'kimi',
-      model: 'kimi-k2.6',
-      name: 'Kimi K2.6',
-      reason: '长上下文和代码任务能力强'
-    },
-    {
-      provider: 'minimax',
-      model: 'MiniMax-M2.7',
-      name: 'MiniMax M2.7',
-      reason: 'MiniMax 最新文本模型，适合 Agent 和长任务优化'
-    }
-  ];
+  return Object.entries(AI_MODEL_CATALOG).flatMap(([provider, definition]) =>
+    Object.values(definition.models)
+      .map(model => model as PublicAIModelDefinition)
+      .filter(model => model.recommendation !== null)
+      .map(model => ({
+        provider,
+        model: model.id,
+        name: model.name,
+        reason: model.recommendation as string,
+      })),
+  )
 }

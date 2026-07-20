@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAIRequestConfig, aiConfig } from '@/config/ai'
 import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { AIUsageReservation, requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
+import { buildAIChatCompletionBody, createAIIncompleteResponse, createAIProviderFailure, isCompleteAIFinishReason, readLimitedAIProviderJSON } from '@/lib/ai-request-policy'
 import {
   MAX_AI_INPUT_CHARS,
   MAX_CONVERSATION_HISTORY_MESSAGES,
@@ -10,44 +11,6 @@ import {
   RequestPolicyError,
 } from '@/lib/ai-runtime-policy'
 import { ConversationMessage } from '@/types'
-
-function buildLocalRefinement({
-  originalPrompt,
-  currentPrompt,
-  userFeedback,
-  optimizationMode,
-}: {
-  originalPrompt: string
-  currentPrompt: string
-  userFeedback: string
-  optimizationMode: 'optimize' | 'rewrite'
-}) {
-  if (optimizationMode === 'rewrite') {
-    return `# 任务
-${originalPrompt}
-
-## 本轮重写要求
-${userFeedback}
-
-## 重写后的提示词
-请你作为专业提示词工程师，基于以上任务重新生成一个完整提示词。要求：
-- 明确角色、目标、上下文、约束条件和输出格式。
-- 保留用户原始目标，不遗漏关键事实。
-- 如信息不足，先列出需要确认的问题。
-- 输出可直接复制使用的 Markdown 结构。`
-  }
-
-  return `${currentPrompt.trim()}
-
-## 本轮修改要求
-${userFeedback}
-
-## 执行方式
-- 在上一版提示词基础上修改，不从零另起。
-- 保留已经有效的角色、约束、上下文和输出规范。
-- 只根据本轮要求调整表达、结构或格式。
-- 最终输出一版完整可复制的提示词。`
-}
 
 function buildPromptTitle(content: string) {
   const line = content
@@ -74,12 +37,9 @@ export async function POST(request: NextRequest) {
   const auth = await requireAIUser(request)
   if (!auth.ok) return auth.response
 
-  let fallbackOriginalPrompt = ''
-  let fallbackCurrentPrompt = ''
-  let fallbackUserFeedback = ''
-  let fallbackOptimizationMode: 'optimize' | 'rewrite' = 'optimize'
-  let fallbackConversationHistory: ConversationMessage[] = []
   let reservation: AIUsageReservation | undefined
+  let selectedProvider = ''
+  let selectedModel = ''
 
   try {
     const body = await readLimitedJson<Record<string, unknown>>(request)
@@ -88,11 +48,6 @@ export async function POST(request: NextRequest) {
     const userFeedback = typeof body.userFeedback === 'string' ? body.userFeedback : ''
     const conversationHistory = parseConversationHistory(body.conversationHistory)
     const optimizationMode: 'optimize' | 'rewrite' = body.optimizationMode === 'rewrite' ? 'rewrite' : 'optimize'
-    fallbackOriginalPrompt = originalPrompt
-    fallbackCurrentPrompt = currentPrompt
-    fallbackUserFeedback = userFeedback
-    fallbackOptimizationMode = optimizationMode
-    fallbackConversationHistory = conversationHistory
     const rawProvider = body.provider ?? body.modelType
     const rawModel = body.model ?? body.modelName
     const provider = typeof rawProvider === 'string' ? rawProvider : aiConfig.defaultProvider
@@ -123,11 +78,15 @@ export async function POST(request: NextRequest) {
 
     // 获取AI配置
     const config = getAIRequestConfig(provider, model, userRuntimeConfig || undefined)
+    selectedProvider = config.provider
+    selectedModel = config.modelId
+    if (!config.headers.Authorization || !config.baseURL) {
+      return NextResponse.json(
+        { success: false, error: '所选 AI 提供商尚未完成可用配置' },
+        { status: 400 },
+      )
+    }
     const systemPrompt = aiConfig.prompts.multiTurn
-    const requestTemperature = Math.min(Math.max(temperatureOverride ?? config.temperature, 0), 2)
-    const requestTopP = Math.min(Math.max(topPOverride ?? config.top_p, 0.1), 1)
-    const requestMaxTokens = Math.min(Math.max(maxTokensOverride ?? config.max_tokens, 512), 8192)
-    const usesCompletionTokensParam = config.provider === 'minimax' || config.provider === 'xiaomi'
     const quota = await reserveAIUsage(auth.user, 'ai_optimize')
     if (!quota.ok) return quota.response
     reservation = quota.reservation
@@ -148,54 +107,54 @@ export async function POST(request: NextRequest) {
       }
     ]
 
-    // 调用通义千问API
+    // 调用用户明确选择的提供商；请求发出后即按一次 AI 调用计费。
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
-    const requestBody: Record<string, unknown> = {
+    const requestBody = buildAIChatCompletionBody({
+      provider: config.provider,
       model: config.model,
       messages,
-      top_p: requestTopP
-    }
-    requestBody[usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens'] = requestMaxTokens
-    if (!config.fixedTemperature) {
-      requestBody.temperature = requestTemperature
-    }
-    if (config.provider === 'xiaomi') {
-      requestBody.thinking = { type: 'disabled' }
-    }
-
-    const response = await fetch(`${config.baseURL}/chat/completions`, {
-      method: 'POST',
-      redirect: 'error',
-      headers: config.headers,
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
+      maxTokens: maxTokensOverride ?? config.max_tokens,
+      temperature: temperatureOverride ?? config.temperature,
+      topP: topPOverride ?? config.top_p,
+      fixedTemperature: config.fixedTemperature,
     })
-    clearTimeout(timeoutId)
 
-    if (!response.ok) {
-      await reservation.rollback()
-      const localOptimized = buildLocalRefinement({ originalPrompt, currentPrompt, userFeedback, optimizationMode })
-      const localHistory: ConversationMessage[] = [
-        ...history,
-        { role: 'user', content: userFeedback },
-        { role: 'assistant', content: localOptimized }
-      ]
-
-      return NextResponse.json({
-        success: true,
-        optimizedPrompt: localOptimized,
-        conversationHistory: localHistory,
-        round: Math.max(1, Math.floor(localHistory.length / 2)),
-        title: buildPromptTitle(localOptimized),
-        thinking: buildVisibleThinkingSummary(optimizationMode, userFeedback),
-        provider: 'local',
-        model: 'rule-based-refiner'
+    let response: Response
+    let data: { choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }> }
+    try {
+      reservation.markProviderCallStarted()
+      response = await fetch(`${config.baseURL}/chat/completions`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: config.headers,
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
       })
+
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined)
+        return NextResponse.json(
+          { success: false, ...createAIProviderFailure({ provider: config.provider, model: config.modelId, status: response.status }) },
+          { status: 502 },
+        )
+      }
+
+      data = await readLimitedAIProviderJSON<{
+        choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }>
+      }>(response)
+    } finally {
+      clearTimeout(timeoutId)
     }
 
-    const data = await response.json()
-    const optimizedPrompt = data.choices[0]?.message?.content
+    const choice = data.choices?.[0]
+    if (!isCompleteAIFinishReason(choice?.finish_reason)) {
+      return NextResponse.json(
+        { success: false, ...createAIIncompleteResponse({ provider: config.provider, model: config.modelId }) },
+        { status: 502 },
+      )
+    }
+    const optimizedPrompt = choice?.message?.content
 
     if (!optimizedPrompt) {
       throw new Error('No response from AI model')
@@ -301,29 +260,11 @@ export async function POST(request: NextRequest) {
     await reservation?.rollback()
     if (error instanceof RequestPolicyError) return requestPolicyResponse(error)
     console.error('Multi-turn optimization failed')
-    if (fallbackOriginalPrompt && fallbackCurrentPrompt && fallbackUserFeedback) {
-      const localOptimized = buildLocalRefinement({
-        originalPrompt: fallbackOriginalPrompt,
-        currentPrompt: fallbackCurrentPrompt,
-        userFeedback: fallbackUserFeedback,
-        optimizationMode: fallbackOptimizationMode,
-      })
-      const localHistory: ConversationMessage[] = [
-        ...fallbackConversationHistory.slice(-(MAX_CONVERSATION_HISTORY_MESSAGES - 2)),
-        { role: 'user', content: fallbackUserFeedback },
-        { role: 'assistant', content: localOptimized }
-      ]
-
-      return NextResponse.json({
-        success: true,
-        optimizedPrompt: localOptimized,
-        conversationHistory: localHistory,
-        round: Math.max(1, Math.floor(localHistory.length / 2)),
-        title: buildPromptTitle(localOptimized),
-        thinking: buildVisibleThinkingSummary(fallbackOptimizationMode, fallbackUserFeedback),
-        provider: 'local',
-        model: 'rule-based-refiner'
-      })
+    if (selectedProvider && selectedModel) {
+      return NextResponse.json(
+        { success: false, ...createAIProviderFailure({ provider: selectedProvider, model: selectedModel }) },
+        { status: 502 },
+      )
     }
 
     return NextResponse.json(

@@ -9,6 +9,13 @@ export const MAX_ATTACHMENT_UPLOAD_BODY_BYTES = 20 * 1024 * 1024
 export const MAX_CONVERSATION_HISTORY_MESSAGES = 20
 export const MAX_CONVERSATION_MESSAGE_CHARS = 10_000
 export const MAX_CONVERSATION_HISTORY_CHARS = 50_000
+export const MAX_AI_OPTIMIZATION_CONSTRAINTS = 12
+export const MAX_AI_OPTIMIZATION_CONSTRAINT_CHARS = 500
+
+const AI_OPTIMIZATION_MODES = new Set(['simple', 'normal', 'pro', 'professional'])
+const AI_OPTIMIZATION_STYLES = new Set(['concise', 'structured', 'creative', 'business', 'academic'])
+const AI_OPTIMIZATION_TONES = new Set(['neutral', 'friendly', 'professional', 'confident'])
+const AI_OPTIMIZATION_OUTPUT_FORMATS = new Set(['markdown', 'list', 'steps', 'table', 'json'])
 
 const PROVIDER_HTTPS_HOSTS: Readonly<Record<string, readonly string[]>> = {
   qwen: ['dashscope.aliyuncs.com'],
@@ -16,7 +23,7 @@ const PROVIDER_HTTPS_HOSTS: Readonly<Record<string, readonly string[]>> = {
   kimi: ['api.moonshot.cn'],
   zhipu: ['open.bigmodel.cn'],
   minimax: ['api.minimaxi.com'],
-  xiaomi: ['token-plan-ams.xiaomimimo.com'],
+  xiaomi: ['api.xiaomimimo.com'],
 }
 
 export class RequestPolicyError extends Error {
@@ -40,6 +47,46 @@ export type SafeAIRequestAttachment = {
 export type SafeConversationMessage = {
   role: 'user' | 'assistant'
   content: string
+}
+
+function parseOptionalAIOption(value: unknown, allowed: ReadonlySet<string>, fieldName: string) {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value !== 'string' || !allowed.has(value)) {
+    throw new RequestPolicyError(`${fieldName} 不受支持`, 400)
+  }
+  return value
+}
+
+export function parseAIOptimizationPreferences(input: Record<string, unknown>) {
+  const rawMode = input.mode
+  const mode = rawMode === undefined || rawMode === null || rawMode === ''
+    ? undefined
+    : parseOptionalAIOption(rawMode, AI_OPTIMIZATION_MODES, '优化模式')
+  const rawConstraints = input.constraints
+  if (rawConstraints !== undefined && !Array.isArray(rawConstraints)) {
+    throw new RequestPolicyError('约束条件必须是数组', 400)
+  }
+  if (Array.isArray(rawConstraints) && rawConstraints.length > MAX_AI_OPTIMIZATION_CONSTRAINTS) {
+    throw new RequestPolicyError(`约束条件不能超过 ${MAX_AI_OPTIMIZATION_CONSTRAINTS} 项`, 400)
+  }
+
+  const constraintItems = Array.isArray(rawConstraints) ? rawConstraints : []
+  const constraints = constraintItems.map((item: unknown) => {
+    if (typeof item !== 'string') throw new RequestPolicyError('约束条件必须是字符串', 400)
+    const normalized = item.trim()
+    if (!normalized || normalized.length > MAX_AI_OPTIMIZATION_CONSTRAINT_CHARS) {
+      throw new RequestPolicyError(`单项约束必须为 1-${MAX_AI_OPTIMIZATION_CONSTRAINT_CHARS} 个字符`, 400)
+    }
+    return normalized
+  })
+
+  return {
+    mode,
+    style: parseOptionalAIOption(input.style, AI_OPTIMIZATION_STYLES, '优化风格'),
+    tone: parseOptionalAIOption(input.tone, AI_OPTIMIZATION_TONES, '语调'),
+    outputFormat: parseOptionalAIOption(input.outputFormat, AI_OPTIMIZATION_OUTPUT_FORMATS, '输出格式'),
+    constraints,
+  }
 }
 
 function getContentLength(request: Request) {

@@ -35,6 +35,7 @@ import {
   DEFAULT_PUBLIC_AI_MODEL,
   DEFAULT_PUBLIC_AI_PROVIDER,
   getAIProviderModels,
+  getAIModelParameterPolicy,
   getAvailableAIProviders,
   getDefaultAIModel,
 } from '@/config/ai-models'
@@ -207,6 +208,7 @@ const optimizerCopy = {
     tempDesc: '控制随机性和创造性；越高越发散，越低越稳定。',
     topPDesc: '控制候选词采样范围；越低越保守，越高越开放。',
     maxTokensDesc: '控制最长输出长度；长提示词和专业模式可适当提高。',
+    samplingFixed: '该模型的采样参数由供应商固定，NotePrompt 不会发送 Temperature 或 Top P。',
     conversation: '对话与结果',
     conversationDesc: '左侧保持原始提示词可见，右侧负责优化、追问和保存。',
     copy: '复制',
@@ -309,6 +311,7 @@ const optimizerCopy = {
     tempDesc: 'Controls randomness and creativity. Higher is more divergent; lower is more stable.',
     topPDesc: 'Controls the sampling pool. Lower is more conservative; higher is more open.',
     maxTokensDesc: 'Controls maximum output length. Raise it for long prompts and pro mode.',
+    samplingFixed: 'This model fixes sampling at the provider; NotePrompt omits Temperature and Top P.',
     conversation: 'Conversation & result',
     conversationDesc: 'Keep the original prompt visible on the left while refining, comparing, and saving on the right.',
     copy: 'Copy',
@@ -381,11 +384,12 @@ const getPromptScore = (content: string) => {
   }
 }
 
-function OptionDropdown({ label, value, options, onChange }: {
+function OptionDropdown({ label, value, options, onChange, disabled = false }: {
   label: string
   value: string
   options: Choice[]
   onChange: (value: string) => void
+  disabled?: boolean
 }) {
   return (
     <DropdownMenu>
@@ -393,6 +397,7 @@ function OptionDropdown({ label, value, options, onChange }: {
         <Button
           type="button"
           variant="outline"
+          disabled={disabled}
           className="h-12 justify-between rounded-[8px] border-gray-300 bg-white px-4 text-left shadow-sm hover:border-gray-950 dark:border-gray-700 dark:bg-gray-900 dark:hover:border-gray-200"
         >
           <span className="min-w-0">
@@ -423,7 +428,7 @@ function OptionDropdown({ label, value, options, onChange }: {
   )
 }
 
-function ParameterControl({ label, value, min, max, step, description, onChange }: {
+function ParameterControl({ label, value, min, max, step, description, onChange, disabled = false }: {
   label: string
   value: number
   min: number
@@ -431,6 +436,7 @@ function ParameterControl({ label, value, min, max, step, description, onChange 
   step: number
   description: string
   onChange: (value: number) => void
+  disabled?: boolean
 }) {
   return (
     <div className="rounded-[8px] border border-gray-200 bg-white p-4 dark:border-teal-900/60 dark:bg-[#0f1b18]">
@@ -445,6 +451,7 @@ function ParameterControl({ label, value, min, max, step, description, onChange 
           max={max}
           step={step}
           value={value}
+          disabled={disabled}
           onChange={event => onChange(Number(event.target.value))}
           className="h-9 w-full min-w-[96px] rounded-[6px] text-right font-medium tabular-nums dark:border-teal-800 dark:bg-[#07110f] dark:text-teal-50"
         />
@@ -455,6 +462,7 @@ function ParameterControl({ label, value, min, max, step, description, onChange 
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onChange={event => onChange(Number(event.target.value))}
         className="w-full accent-teal-600 dark:accent-teal-400"
       />
@@ -479,11 +487,13 @@ export default function PromptOptimizerV2() {
   const [tone, setTone] = useState('professional')
   const [outputFormat, setOutputFormat] = useState('markdown')
   const [constraints, setConstraints] = useState('')
-  const [provider, setProvider] = useState(DEFAULT_PUBLIC_AI_PROVIDER)
-  const [model, setModel] = useState(DEFAULT_PUBLIC_AI_MODEL)
+  const [provider, setProvider] = useState<string>(DEFAULT_PUBLIC_AI_PROVIDER)
+  const [model, setModel] = useState<string>(DEFAULT_PUBLIC_AI_MODEL)
   const [temperature, setTemperature] = useState(0.7)
   const [topP, setTopP] = useState(0.9)
-  const [maxTokens, setMaxTokens] = useState(4096)
+  const [maxTokens, setMaxTokens] = useState(() =>
+    getAIModelParameterPolicy(DEFAULT_PUBLIC_AI_PROVIDER, DEFAULT_PUBLIC_AI_MODEL).maxOutputTokens
+  )
   const [attachments, setAttachments] = useState<PromptAttachmentDraft[]>([])
   const [optimizedPrompt, setOptimizedPrompt] = useState('')
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
@@ -508,6 +518,7 @@ export default function PromptOptimizerV2() {
   const [showAdvancedParams, setShowAdvancedParams] = useState(false)
   const [showModelDiagnostics, setShowModelDiagnostics] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const requestInFlightRef = useRef(false)
 
   useEffect(() => {
     setLocale(detectLocaleFromSearch())
@@ -539,9 +550,14 @@ export default function PromptOptimizerV2() {
     () => getAIProviderModels(provider).map(option => ({ value: option.key, label: option.name })),
     [provider]
   )
+  const selectedParameterPolicy = useMemo(
+    () => getAIModelParameterPolicy(provider, model),
+    [provider, model]
+  )
   const hasParsedAttachment = attachments.some(attachment => attachment.parseStatus === 'parsed' && attachment.textPreview?.trim())
-  const canOptimize = (prompt.trim().length >= 2 || hasParsedAttachment) && !optimizing && !parsingFiles
-  const canRefine = optimizedPrompt.trim().length > 0 && feedback.trim().length >= 2 && !refining
+  const runInProgress = optimizing || refining
+  const canOptimize = (prompt.trim().length >= 2 || hasParsedAttachment) && !runInProgress && !parsingFiles
+  const canRefine = optimizedPrompt.trim().length > 0 && feedback.trim().length >= 2 && !runInProgress
   const optimizeButtonClass = 'bg-[#1f1a14] text-[#fffaf0] shadow-[0_10px_28px_rgba(31,26,20,0.28)] hover:bg-[#3b3329] dark:bg-[#f4efe7] dark:text-[#171410] dark:hover:bg-white disabled:opacity-100 disabled:bg-[#8b8173] disabled:text-white disabled:shadow-none dark:disabled:bg-[#5a5147] dark:disabled:text-[#d9d0c2]'
   const phaseLabel = streamingPhase === 'thinking'
     ? copy.phaseThinking
@@ -572,10 +588,18 @@ export default function PromptOptimizerV2() {
     const preset = localizedParameterPresets.find(item => item.value === presetId)
     if (!preset) return
     setParameterPreset(presetId)
-    setTemperature(preset.temperature)
-    setTopP(preset.topP)
-    setMaxTokens(preset.maxTokens)
+    if (selectedParameterPolicy.samplingEditable) {
+      setTemperature(Math.min(Math.max(preset.temperature, selectedParameterPolicy.temperature.min), selectedParameterPolicy.temperature.max))
+      setTopP(Math.min(Math.max(preset.topP, selectedParameterPolicy.topP.min), selectedParameterPolicy.topP.max))
+    }
+    setMaxTokens(Math.min(preset.maxTokens, selectedParameterPolicy.maxOutputTokens))
   }
+
+  useEffect(() => {
+    setTemperature(current => Math.min(Math.max(current, selectedParameterPolicy.temperature.min), selectedParameterPolicy.temperature.max))
+    setTopP(current => Math.min(Math.max(current, selectedParameterPolicy.topP.min), selectedParameterPolicy.topP.max))
+    setMaxTokens(current => Math.min(current, selectedParameterPolicy.maxOutputTokens))
+  }, [selectedParameterPolicy])
 
   useEffect(() => {
     if (!localeReady) return
@@ -696,8 +720,9 @@ export default function PromptOptimizerV2() {
   }
 
   const handleOptimize = async () => {
-    if (!canOptimize) return
+    if (!canOptimize || requestInFlightRef.current) return
 
+    requestInFlightRef.current = true
     setOptimizing(true)
     setError('')
     setStatus('')
@@ -757,6 +782,7 @@ export default function PromptOptimizerV2() {
           },
           onError: message => {
             setStreamingPhase('idle')
+            setOptimizedPrompt('')
             setError(message || copy.optimizeFailed)
           },
         }
@@ -764,13 +790,15 @@ export default function PromptOptimizerV2() {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : copy.optimizeFailed)
     } finally {
+      requestInFlightRef.current = false
       setOptimizing(false)
     }
   }
 
   const handleRefine = async () => {
-    if (!canRefine) return
+    if (!canRefine || requestInFlightRef.current) return
 
+    requestInFlightRef.current = true
     setRefining(true)
     setError('')
     setStatus('')
@@ -815,6 +843,7 @@ export default function PromptOptimizerV2() {
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : copy.continueFailed)
     } finally {
+      requestInFlightRef.current = false
       setRefining(false)
     }
   }
@@ -895,13 +924,14 @@ export default function PromptOptimizerV2() {
               <CardContent className="space-y-5 p-5">
                 <Tabs value={mode} onValueChange={value => setMode(value as PromptOptimizerMode)}>
                   <TabsList className="grid h-11 w-full grid-cols-2 rounded-[8px] bg-gray-100 p-1 dark:bg-gray-800">
-                    <TabsTrigger value="simple" className="rounded-[6px]">{copy.simpleMode}</TabsTrigger>
-                    <TabsTrigger value="pro" className="rounded-[6px]">{copy.proMode}</TabsTrigger>
+                    <TabsTrigger value="simple" disabled={runInProgress} className="rounded-[6px]">{copy.simpleMode}</TabsTrigger>
+                    <TabsTrigger value="pro" disabled={runInProgress} className="rounded-[6px]">{copy.proMode}</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="simple" className="space-y-4 pt-4">
                     <Textarea
                       value={prompt}
+                      disabled={runInProgress}
                       onChange={event => setPrompt(event.target.value)}
                       placeholder={copy.inputPlaceholder}
                       className={`min-h-[320px] resize-y rounded-[8px] text-base leading-7 shadow-inner ${visualClasses.editor}`}
@@ -916,12 +946,14 @@ export default function PromptOptimizerV2() {
                   <TabsContent value="pro" className="space-y-4 pt-4">
                     <Textarea
                       value={prompt}
+                      disabled={runInProgress}
                       onChange={event => setPrompt(event.target.value)}
                       placeholder={copy.inputPlaceholder}
                       className={`min-h-[240px] resize-y rounded-[8px] text-base leading-7 shadow-inner ${visualClasses.editor}`}
                     />
                     <Textarea
                       value={constraints}
+                      disabled={runInProgress}
                       onChange={event => setConstraints(event.target.value)}
                       placeholder={copy.constraintsPlaceholder}
                       className="min-h-[120px] resize-y rounded-[8px] border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-950"
@@ -948,7 +980,7 @@ export default function PromptOptimizerV2() {
                     {optimizing && <span className="h-2 w-2 shrink-0 rounded-full bg-teal-500 animate-pulse" />}
                   </div>
                   <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_144px] md:items-center">
-                    <Select value={provider} onValueChange={handleProviderChange}>
+                    <Select value={provider} onValueChange={handleProviderChange} disabled={runInProgress}>
                       <SelectTrigger aria-label={copy.providerAria} className="h-11 rounded-[8px] bg-[#fffdf8] dark:bg-[#171410]">
                         <SelectValue />
                       </SelectTrigger>
@@ -958,7 +990,7 @@ export default function PromptOptimizerV2() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select value={model} onValueChange={setModel}>
+                    <Select value={model} onValueChange={setModel} disabled={runInProgress}>
                       <SelectTrigger aria-label={copy.modelAria} className="h-11 rounded-[8px] bg-[#fffdf8] dark:bg-[#171410]">
                         <SelectValue />
                       </SelectTrigger>
@@ -979,9 +1011,9 @@ export default function PromptOptimizerV2() {
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-3">
-                  <OptionDropdown label={copy.style} value={style} options={localizedStyleOptions} onChange={setStyle} />
-                  <OptionDropdown label={copy.outputFormat} value={outputFormat} options={localizedFormatOptions} onChange={setOutputFormat} />
-                  <OptionDropdown label={copy.tone} value={tone} options={localizedToneOptions} onChange={setTone} />
+                  <OptionDropdown label={copy.style} value={style} options={localizedStyleOptions} onChange={setStyle} disabled={runInProgress} />
+                  <OptionDropdown label={copy.outputFormat} value={outputFormat} options={localizedFormatOptions} onChange={setOutputFormat} disabled={runInProgress} />
+                  <OptionDropdown label={copy.tone} value={tone} options={localizedToneOptions} onChange={setTone} disabled={runInProgress} />
                 </div>
 
                 <div className={`rounded-[8px] border border-dashed p-4 ${visualClasses.softPanel}`}>
@@ -990,10 +1022,11 @@ export default function PromptOptimizerV2() {
                       ref={fileInputRef}
                       type="file"
                       multiple
+                      disabled={runInProgress}
                       className="hidden"
                       onChange={handleFileChange}
                     />
-                    <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="rounded-[8px]">
+                    <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={runInProgress} className="rounded-[8px]">
                       {parsingFiles ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FilePlus className="mr-2 h-4 w-4" />}
                       {parsingFiles ? copy.parsing : copy.addFiles}
                     </Button>
@@ -1019,7 +1052,7 @@ export default function PromptOptimizerV2() {
                               <p className="mt-1 line-clamp-2 text-xs text-amber-700 dark:text-amber-300">{attachment.error}</p>
                             )}
                           </div>
-                          <button type="button" onClick={() => removeAttachment(attachment.id)} aria-label={copy.remove(attachment.name)} className="rounded-[6px] p-1 hover:bg-gray-100 dark:hover:bg-gray-800">
+                          <button type="button" onClick={() => removeAttachment(attachment.id)} disabled={runInProgress} aria-label={copy.remove(attachment.name)} className="rounded-[6px] p-1 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-gray-800">
                             <X className="h-4 w-4" />
                           </button>
                         </div>
@@ -1053,6 +1086,7 @@ export default function PromptOptimizerV2() {
                       key={preset.value}
                       type="button"
                       onClick={() => applyParameterPreset(preset.value)}
+                      disabled={runInProgress}
                       className={`rounded-[8px] border px-3 py-2 text-left transition ${parameterPreset === preset.value ? 'border-teal-700 bg-teal-700 text-white shadow-sm shadow-teal-900/10 dark:border-teal-400 dark:bg-teal-400 dark:text-[#06110f]' : 'border-gray-200 bg-white text-gray-800 hover:border-teal-700 dark:border-teal-900/60 dark:bg-[#0f1b18] dark:text-teal-50 dark:hover:border-teal-400'}`}
                     >
                       <span className="block text-sm font-semibold">{preset.label}</span>
@@ -1065,29 +1099,32 @@ export default function PromptOptimizerV2() {
                     <ParameterControl
                       label="Temperature"
                       value={temperature}
-                      min={0}
-                      max={2}
-                      step={0.1}
-                      description={copy.tempDesc}
+                      min={selectedParameterPolicy.temperature.min}
+                      max={selectedParameterPolicy.temperature.max}
+                      step={selectedParameterPolicy.temperature.step}
+                      description={selectedParameterPolicy.samplingEditable ? copy.tempDesc : copy.samplingFixed}
                       onChange={setTemperature}
+                      disabled={runInProgress || !selectedParameterPolicy.samplingEditable}
                     />
                     <ParameterControl
                       label="Top P"
                       value={topP}
-                      min={0.1}
-                      max={1}
-                      step={0.05}
-                      description={copy.topPDesc}
+                      min={selectedParameterPolicy.topP.min}
+                      max={selectedParameterPolicy.topP.max}
+                      step={selectedParameterPolicy.topP.step}
+                      description={selectedParameterPolicy.samplingEditable ? copy.topPDesc : copy.samplingFixed}
                       onChange={setTopP}
+                      disabled={runInProgress || !selectedParameterPolicy.samplingEditable}
                     />
                     <ParameterControl
                       label="Max Tokens"
                       value={maxTokens}
                       min={512}
-                      max={8192}
+                      max={selectedParameterPolicy.maxOutputTokens}
                       step={256}
                       description={copy.maxTokensDesc}
                       onChange={setMaxTokens}
+                      disabled={runInProgress}
                     />
                   </div>
                 )}
@@ -1134,6 +1171,7 @@ export default function PromptOptimizerV2() {
                 )}
                 <Textarea
                   value={optimizedPrompt}
+                  disabled={runInProgress}
                   onChange={event => setOptimizedPrompt(event.target.value)}
                   placeholder={optimizing ? phaseLabel : copy.resultPlaceholder}
                   className={`min-h-[320px] resize-y rounded-[8px] font-mono text-sm leading-6 ${visualClasses.editor}`}
@@ -1185,6 +1223,7 @@ export default function PromptOptimizerV2() {
                           key={item}
                           type="button"
                           onClick={() => setRefinementMode(item)}
+                          disabled={runInProgress}
                           className={`rounded-[6px] px-3 py-1 text-xs font-medium ${refinementMode === item ? 'bg-white text-[#1f1a14] shadow-sm dark:bg-[#f4efe7]' : 'text-[#6b5f51] dark:text-[#c9bda9]'}`}
                         >
                           {item === 'optimize' ? copy.optimizeMode : copy.rewriteMode}
@@ -1214,7 +1253,7 @@ export default function PromptOptimizerV2() {
                         key={suggestion}
                         type="button"
                         onClick={() => setFeedback(suggestion)}
-                        disabled={!optimizedPrompt}
+                        disabled={!optimizedPrompt || runInProgress}
                         className="rounded-[6px] border border-[#ded6c8] bg-white px-2.5 py-1 text-xs text-[#5f5548] hover:border-[#1f1a14] disabled:opacity-50 dark:border-[#3a342c] dark:bg-gray-900 dark:text-[#c9bda9]"
                       >
                         {suggestion}
@@ -1227,7 +1266,7 @@ export default function PromptOptimizerV2() {
                     onChange={event => setFeedback(event.target.value)}
                     placeholder={copy.feedbackPlaceholder}
                     className="min-h-[96px] resize-y rounded-[8px] border-[#ded6c8] bg-white dark:border-[#3a342c] dark:bg-gray-900"
-                    disabled={!optimizedPrompt}
+                    disabled={!optimizedPrompt || runInProgress}
                   />
                   <Button type="button" onClick={handleRefine} disabled={!canRefine} className={`w-full rounded-[8px] ${optimizeButtonClass}`}>
                     {refining ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MessageSquare className="mr-2 h-4 w-4" />}

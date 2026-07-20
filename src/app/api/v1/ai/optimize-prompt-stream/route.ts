@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validateAIModel, formatAIError } from '@/lib/ai-utils'
-import { FALLBACK_AI_MODEL, FALLBACK_AI_PROVIDER } from '@/config/ai'
-import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER } from '@/config/ai-models'
-import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+import { DEFAULT_PUBLIC_AI_PROVIDER, getDefaultAIModel } from '@/config/ai-models'
+import { MAX_AI_PROVIDER_RESPONSE_BYTES, buildAIChatCompletionBody, createAIIncompleteResponse, createAIProviderFailure, isCompleteAIStreamTermination } from '@/lib/ai-request-policy'
 import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
-import { MAX_AI_INPUT_CHARS, parseAIRequestAttachments, readLimitedJson } from '@/lib/ai-runtime-policy'
+import { MAX_AI_INPUT_CHARS, parseAIOptimizationPreferences, parseAIRequestAttachments, readLimitedJson } from '@/lib/ai-runtime-policy'
 
 type RequestedAttachment = {
   name: string
@@ -15,85 +14,7 @@ type RequestedAttachment = {
   textPreview: string
 }
 
-function buildLocalOptimizedPrompt({
-  prompt,
-  mode,
-  style,
-  tone,
-  outputFormat,
-  constraints,
-  attachments,
-}: {
-  prompt: string
-  mode?: string
-  style?: string
-  tone?: string
-  outputFormat?: string
-  constraints: string[]
-  attachments: RequestedAttachment[]
-}) {
-  const parsedAttachments = attachments.filter(attachment => attachment.parseStatus === 'parsed' && attachment.textPreview)
-  const attachmentSection = parsedAttachments.length > 0
-    ? `\n\n## 参考资料\n${parsedAttachments.map((attachment, index) => `${index + 1}. ${attachment.name}\n\n摘录：${attachment.textPreview.slice(0, 1200)}`).join('\n\n')}`
-    : ''
-  const constraintsSection = constraints.length > 0
-    ? `\n\n## 约束条件\n${constraints.map(item => `- ${item}`).join('\n')}`
-    : ''
-  const preferenceSection = [
-    style ? `- 优化风格：${style}` : '',
-    tone ? `- 语调：${tone}` : '',
-    outputFormat ? `- 输出格式：${outputFormat}` : '',
-  ].filter(Boolean).join('\n')
-
-  if (mode === 'pro' || mode === 'professional') {
-    return `# Role: 专业任务执行助手
-
-## Profile
-- language: 中文
-- description: 根据用户目标、约束条件和附件上下文，完成高质量任务执行。
-
-## Goal
-${prompt}
-
-## Skills
-- 准确理解用户意图，保留原始需求中的关键细节。
-- 将任务拆解为可执行步骤，并在必要时主动补充上下文。
-- 输出结构清晰、可直接复制使用的结果。
-
-## Rules
-- 不编造附件中不存在的事实。
-- 如信息不足，先列出需要确认的问题。
-- 保持表达简洁、专业、可执行。
-${constraintsSection}
-${preferenceSection ? `\n\n## Preferences\n${preferenceSection}` : ''}
-${attachmentSection}
-
-## Workflow
-1. 识别任务目标和最终交付物。
-2. 梳理已知条件、约束和参考资料。
-3. 按最适合的结构输出答案。
-4. 最后给出可检查的质量标准。
-
-## OutputFormat
-请使用 Markdown 输出，层级清晰，重点突出。`
-  }
-
-  return `# 任务
-${prompt}
-
-## 要求
-- 保留原始意图，不遗漏关键细节。
-- 将表达整理得更清晰、更具体、更容易执行。
-- 如任务信息不足，先说明需要补充的内容。
-${constraints.length > 0 ? constraints.map(item => `- ${item}`).join('\n') : ''}
-${preferenceSection ? `\n\n## 偏好\n${preferenceSection}` : ''}
-${attachmentSection}
-
-## 输出
-请直接给出可使用的结果，使用 Markdown 分点分段。`
-}
-
-function buildLocalPromptTitle(content: string) {
+function derivePromptTitle(content: string) {
   const firstMeaningfulLine = content
     .split('\n')
     .map(line => line.replace(/^#+\s*/, '').replace(/^[-*\d.、\s]+/, '').trim())
@@ -102,62 +23,6 @@ function buildLocalPromptTitle(content: string) {
   return firstMeaningfulLine
     .replace(/[：:。,.，；;]+$/g, '')
     .slice(0, 24) || '优化提示词'
-}
-
-async function generatePromptTitle({
-  content,
-  provider,
-  config,
-}: {
-  content: string
-  provider: string
-  config: NonNullable<ReturnType<typeof validateAIModel>['config']>
-}) {
-  const fallbackTitle = buildLocalPromptTitle(content)
-  const apiKey = config.headers['Authorization']?.replace('Bearer ', '')
-  if (!apiKey) return fallbackTitle
-
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 8000)
-  const isMiniMaxProvider = provider === 'minimax'
-  const usesCompletionTokensParam = provider === 'minimax' || provider === 'xiaomi'
-
-  try {
-    const response = await fetch(`${config.baseURL}/chat/completions`, {
-      method: 'POST',
-      redirect: 'error',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          { role: 'system', content: '你只负责给提示词生成中文短标题。只输出标题，不要解释。标题不超过18个汉字。' },
-          { role: 'user', content: `请为这个提示词生成标题：\n\n${content.slice(0, 2400)}` },
-        ],
-        [usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens']: 48,
-        temperature: isMiniMaxProvider ? 0.2 : 0.3,
-        ...(provider === 'xiaomi' ? { thinking: { type: 'disabled' }, top_p: 0.95 } : {}),
-        stream: false,
-      }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) return fallbackTitle
-    const data = await response.json()
-    const aiTitle = String(data.choices?.[0]?.message?.content || '')
-      .replace(/^标题[:：]\s*/i, '')
-      .replace(/["“”'`]/g, '')
-      .trim()
-      .slice(0, 24)
-
-    return aiTitle || fallbackTitle
-  } catch {
-    return fallbackTitle
-  } finally {
-    clearTimeout(timeoutId)
-  }
 }
 
 /**
@@ -176,22 +41,19 @@ export async function POST(request: NextRequest) {
     const rawModel = body.model ?? body.modelName
     const prompt = typeof rawPrompt === 'string' ? rawPrompt : ''
     const provider = typeof rawProvider === 'string' ? rawProvider : DEFAULT_PUBLIC_AI_PROVIDER
-    const model = typeof rawModel === 'string' ? rawModel : DEFAULT_PUBLIC_AI_MODEL
+    const model = typeof rawModel === 'string' ? rawModel : getDefaultAIModel(provider)
     const temperatureOverride = typeof body.temperature === 'number' ? body.temperature : undefined
     const rawTopP = body.topP ?? body.top_p
     const rawMaxTokens = body.maxTokens ?? body.max_tokens
     const topPOverride = typeof rawTopP === 'number' ? rawTopP : undefined
     const maxTokensOverride = typeof rawMaxTokens === 'number' ? rawMaxTokens : undefined
-    const requestedMode = typeof body.mode === 'string' ? body.mode : undefined
-    const requestedStyle = typeof body.style === 'string' ? body.style : ''
-    const requestedTone = typeof body.tone === 'string' ? body.tone : ''
-    const requestedOutputFormat = typeof body.outputFormat === 'string' ? body.outputFormat : ''
-    const requestedConstraints = Array.isArray(body.constraints)
-      ? body.constraints
-          .filter((item: unknown) => typeof item === 'string' && item.trim())
-          .slice(0, 12)
-          .map((item: string) => item.trim().slice(0, 500))
-      : []
+    const {
+      mode: requestedMode,
+      style: requestedStyle,
+      tone: requestedTone,
+      outputFormat: requestedOutputFormat,
+      constraints: requestedConstraints,
+    } = parseAIOptimizationPreferences(body)
     const requestedAttachments: RequestedAttachment[] = parseAIRequestAttachments(body.attachments)
 
     if (prompt.length > MAX_AI_INPUT_CHARS) {
@@ -201,13 +63,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: '提示词内容不能为空' }, { status: 400 })
     }
 
-    const effectiveProvider = provider === 'local' ? 'qwen' : provider
-    const resolveValidation = async (providerKey: string, modelKey: string) => {
-      const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, providerKey)
-      return validateAIModel(providerKey, modelKey, userRuntimeConfig || undefined)
-    }
-
-    const validation = await resolveValidation(effectiveProvider, model)
+    // Never reinterpret a provider choice: validation must reject retired aliases.
+    const effectiveProvider = provider
+    const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, effectiveProvider)
+    const validation = validateAIModel(effectiveProvider, model, userRuntimeConfig || undefined)
     if (!validation.isValid) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 })
     }
@@ -333,6 +192,7 @@ export async function POST(request: NextRequest) {
         const send = (data: Record<string, unknown>) => {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
         }
+        let providerTimeoutId: ReturnType<typeof setTimeout> | undefined
 
         try {
           const apiKey = aiConfig.headers['Authorization']?.replace('Bearer ', '')
@@ -343,128 +203,53 @@ export async function POST(request: NextRequest) {
             return
           }
 
-          let activeProvider = effectiveProvider
-          let activeModel = model
-          let activeConfig = aiConfig
-
-          const isReasonerModel = (modelName: string) => modelName === 'deepseek-reasoner'
           const standardMessages = [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage },
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: userMessage },
           ]
 
-          const requestProvider = async (providerKey: string, modelKey: string, config: typeof aiConfig) => {
-            const isMiniMaxProvider = providerKey === 'minimax'
-            const isXiaomiProvider = providerKey === 'xiaomi'
-            const usesCompletionTokensParam = isMiniMaxProvider || isXiaomiProvider
-            const requestTemperature = isMiniMaxProvider
-              ? Math.min(Math.max(temperatureOverride ?? config.temperature, 0.01), 1)
-              : Math.min(Math.max(temperatureOverride ?? config.temperature, 0), 2)
-            const requestMaxTokens = isMiniMaxProvider
-              ? Math.min(Math.max(maxTokensOverride ?? 2048, 1), 2048)
-              : Math.min(Math.max(maxTokensOverride ?? 2048, 512), 8192)
-            const requestMessages = isReasonerModel(config.model)
-              ? [{ role: 'user', content: systemPrompt + '\n\n' + userMessage }]
-              : standardMessages
-            const bodyObj: Record<string, unknown> = {
-              model: config.model,
-              messages: requestMessages,
+          const requestProvider = async () => {
+            const bodyObj = buildAIChatCompletionBody({
+              provider: effectiveProvider,
+              model: aiConfig.model,
+              messages: standardMessages,
+              maxTokens: maxTokensOverride ?? aiConfig.max_tokens,
+              temperature: temperatureOverride ?? aiConfig.temperature,
+              topP: topPOverride ?? 0.9,
               stream: true,
-            }
-            bodyObj[usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens'] = requestMaxTokens
-            if (!config.fixedTemperature) {
-              bodyObj.temperature = requestTemperature
-            }
-            if (isXiaomiProvider) {
-              bodyObj.thinking = { type: 'disabled' }
-            }
-            if (topPOverride !== undefined) {
-              bodyObj.top_p = Math.min(Math.max(topPOverride, 0.1), 1)
-            }
+              fixedTemperature: aiConfig.fixedTemperature,
+            })
 
             // Cancellation before this point is free because no provider request
             // has left the process. From the moment fetch is invoked the provider
             // may bill the request, so the reservation becomes non-refundable.
             if (clientCancelled) throw new Error('AI stream was cancelled before dispatch')
 
-            const requestApiKey = config.headers['Authorization']?.replace('Bearer ', '')
             const abortController = new AbortController()
             activeAbortController = abortController
-            const timeoutId = setTimeout(() => abortController.abort(), 150000)
+            providerTimeoutId = setTimeout(() => abortController.abort(), 150000)
 
-            try {
-              reservation.markProviderCallStarted()
-              const response = await fetch(`${config.baseURL}/chat/completions`, {
-                method: 'POST',
-                redirect: 'error',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${requestApiKey}`,
-                },
-                body: JSON.stringify(bodyObj),
-                signal: abortController.signal,
-              })
-              return { response, providerKey, modelKey }
-            } finally {
-              clearTimeout(timeoutId)
-            }
+            reservation.markProviderCallStarted()
+            return await fetch(`${aiConfig.baseURL}/chat/completions`, {
+              method: 'POST',
+              redirect: 'error',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify(bodyObj),
+              signal: abortController.signal,
+            })
           }
 
-          let { response } = await requestProvider(activeProvider, activeModel, activeConfig)
+          const response = await requestProvider()
 
           if (!response.ok) {
-            const errorText = await response.text()
-            console.error(`${activeProvider} stream error:`, sanitizeAIProviderError(errorText))
-
-            const fallbackCandidates = [
-              { provider: FALLBACK_AI_PROVIDER, model: FALLBACK_AI_MODEL },
-              { provider: 'kimi', model: 'moonshot-v1-32k' },
-            ].filter(candidate => candidate.provider !== activeProvider || candidate.model !== activeModel)
-
-            let fallbackError = errorText
-            for (const candidate of fallbackCandidates) {
-              const fallbackValidation = await resolveValidation(candidate.provider, candidate.model)
-              if (!fallbackValidation.isValid || !fallbackValidation.config) continue
-
-              activeProvider = candidate.provider
-              activeModel = candidate.model
-              activeConfig = fallbackValidation.config
-              const fallbackAttempt = await requestProvider(activeProvider, activeModel, activeConfig)
-              response = fallbackAttempt.response
-
-              if (response.ok) {
-                break
-              }
-
-              fallbackError = await response.text()
-              console.error(`${activeProvider} stream error:`, sanitizeAIProviderError(fallbackError))
-            }
-
-            if (!response.ok) {
-              console.error(`${activeProvider} final stream error:`, sanitizeAIProviderError(fallbackError))
-              await reservation.rollback()
-              const localOptimized = buildLocalOptimizedPrompt({
-                prompt,
-                mode: requestedMode,
-                style: requestedStyle,
-                tone: requestedTone,
-                outputFormat: requestedOutputFormat,
-                constraints: requestedConstraints,
-                attachments: requestedAttachments,
-              })
-              const processingTime = Math.round(((Date.now() - startTime) / 1000) * 100) / 100
-              send({ type: 'content', content: localOptimized })
-              send({
-                type: 'done',
-                title: buildLocalPromptTitle(localOptimized),
-                optimized: localOptimized,
-                processing_time: processingTime,
-                provider: 'local',
-                model: 'rule-based-v2',
-              })
-              controller.close()
-              return
-            }
+            await response.body?.cancel().catch(() => undefined)
+            console.error(`${effectiveProvider} stream error (${response.status})`)
+            send({ ...createAIProviderFailure({ provider: effectiveProvider, model, status: response.status }) })
+            controller.close()
+            return
           }
 
           // 解析AI提供商的SSE流
@@ -475,10 +260,18 @@ export async function POST(request: NextRequest) {
           let isInThinkTag = false      // 当前是否在 <think> 块内
           let fullContent = ''          // 累积的完整优化内容
           let fullThinking = ''         // 累积的完整思考内容
+          let finishReason: unknown
+          let receivedDoneMarker = false
+          let streamedBytes = 0
 
           while (true) {
             const { done, value } = await reader.read()
             if (done) break
+            streamedBytes += value?.byteLength || 0
+            if (streamedBytes > MAX_AI_PROVIDER_RESPONSE_BYTES) {
+              await reader.cancel().catch(() => undefined)
+              throw new Error('AI provider response exceeded the application limit')
+            }
 
             sseBuffer += decoder.decode(value, { stream: true })
 
@@ -489,11 +282,18 @@ export async function POST(request: NextRequest) {
               const trimmed = line.trim()
               if (!trimmed.startsWith('data:')) continue
               const data = trimmed.slice(5).trim()
-              if (data === '[DONE]') continue
+              if (data === '[DONE]') {
+                receivedDoneMarker = true
+                continue
+              }
 
               try {
                 const parsed = JSON.parse(data)
-                const delta = parsed.choices?.[0]?.delta
+                const choice = parsed.choices?.[0]
+                const delta = choice?.delta
+                if (choice?.finish_reason !== undefined && choice.finish_reason !== null) {
+                  finishReason = choice.finish_reason
+                }
 
                 // 处理 reasoning_content（DeepSeek-R1 专用字段）
                 if (delta?.reasoning_content) {
@@ -568,16 +368,19 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // 后处理：移除常见前缀。如果供应商只返回 reasoning/thinking 而没有正文，使用本地优化兜底，避免前端得到空结果。
-          let finalContent = fullContent.trim() || buildLocalOptimizedPrompt({
-            prompt,
-            mode: requestedMode,
-            style: requestedStyle,
-            tone: requestedTone,
-            outputFormat: requestedOutputFormat,
-            constraints: requestedConstraints,
-            attachments: requestedAttachments,
-          })
+          // 后处理：移除常见前缀。空正文视为供应商失败，不能伪装成本地成功结果。
+          let finalContent = fullContent.trim()
+          if (!isCompleteAIStreamTermination(finishReason, receivedDoneMarker)) {
+            send({ ...createAIIncompleteResponse({ provider: effectiveProvider, model }) })
+            controller.close()
+            return
+          }
+          if (!finalContent) {
+            console.error(`${effectiveProvider} stream returned an empty response`)
+            send({ ...createAIProviderFailure({ provider: effectiveProvider, model }) })
+            controller.close()
+            return
+          }
           const prefixesToRemove = [
             '优化后的提示词：', '优化结果：', '优化后的内容：',
             'AI优化结果：', '优化建议：', '优化版本：',
@@ -592,19 +395,16 @@ export async function POST(request: NextRequest) {
           }
 
           const processingTime = Math.round(((Date.now() - startTime) / 1000) * 100) / 100
-          const generatedTitle = await generatePromptTitle({
-            content: finalContent,
-            provider: activeProvider,
-            config: activeConfig,
-          })
+          // A deterministic title avoids a second, unmetered provider request.
+          const generatedTitle = derivePromptTitle(prompt)
           send({
             type: 'done',
             title: generatedTitle,
             optimized: finalContent,
             thinking: fullThinking || undefined,
             processing_time: processingTime,
-            provider: activeProvider,
-            model: activeModel,
+            provider: effectiveProvider,
+            model,
           })
           reservation.commit()
           controller.close()
@@ -613,8 +413,11 @@ export async function POST(request: NextRequest) {
           await reservation.rollback()
           if (clientCancelled) return
           console.error('流式优化失败')
-          send({ type: 'error', message: formatAIError(error, effectiveProvider) })
+          const failure = createAIProviderFailure({ provider: effectiveProvider, model })
+          send({ ...failure, message: formatAIError(error, effectiveProvider) || failure.message })
           controller.close()
+        } finally {
+          if (providerTimeoutId !== undefined) clearTimeout(providerTimeoutId)
         }
       },
       async cancel() {

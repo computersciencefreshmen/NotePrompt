@@ -32,15 +32,24 @@ test('product baseline captures the accepted register, users, and non-goals', ()
 test('design baseline exposes one two-theme system in Stitch-compatible section order', () => {
   const design = read('DESIGN.md')
   const sectionNames = [...design.matchAll(/^## (.+)$/gm)].map(match => match[1])
-
-  assert.deepEqual(sectionNames, [
+  const stitchSectionNames = [
     'Overview',
     'Colors',
     'Typography',
     'Elevation',
     'Components',
     "Do's and Don'ts",
-  ])
+  ]
+
+  assert.ok(sectionNames.includes('2026 Authenticated Workbench Direction'))
+  assert.deepEqual(
+    sectionNames.filter(sectionName => stitchSectionNames.includes(sectionName)),
+    stitchSectionNames,
+  )
+  assert.match(design, /Claude-inspired Prompt Workbench decision/)
+  assert.match(design, /`#f5f4ee`/)
+  assert.match(design, /`#141413`/)
+  assert.match(design, /`#da7756`/)
   assert.match(design, /^---\r?\nname: NotePrompt/m)
   const colorBlock = design.match(/colors:\r?\n([\s\S]*?)typography:/)?.[1]
   assert.ok(colorBlock)

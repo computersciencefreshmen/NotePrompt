@@ -141,6 +141,8 @@ ZHIPU_API_KEY=
 GEMINI_API_KEY=
 MINIMAX_API_KEY=
 XIAOMI_API_KEY=
+# 仅允许按量付费 OpenAI 兼容入口 https://api.xiaomimimo.com/v1。
+# Token Plan 条款禁止自定义应用后端调用，因此不得填入 token-plan-* 地址。
 XIAOMI_BASE_URL=
 ENABLE_EMAIL_VERIFICATION=false
 EMAIL_HOST=smtp.qq.com

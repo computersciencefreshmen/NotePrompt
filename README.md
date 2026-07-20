@@ -47,10 +47,10 @@ These governance documents describe accepted direction. This README describes th
 - **Tags & Categories** — Organize prompts with 15 built-in categories and custom tagging
 
 ### AI-Powered Optimization
-- **17+ AI Models** — Integrated with DeepSeek (V3.2, R1), Kimi (K2.5, K2 Thinking), Qwen (3.5 Plus, 3 Max, Coder Plus), Zhipu GLM (5, 4.7, 4.6, 4.5)
+- **Curated Current Models** — Versioned catalog covering MiniMax M3, Kimi K3/K2.7, DeepSeek V4, Qwen 3.7, GLM 5.2, and MiMo V2.5
 - **Multi-Turn Optimization** — Iterative prompt refinement through AI-guided conversations
 - **Model Presets** — Creative / Balanced / Precise temperature presets for different use cases
-- **Auto-Fallback** — Seamless failover between providers if one is unavailable
+- **Explicit Provider Boundary** — A failed request never forwards the user's prompt to another provider without consent
 - **Bounded Attachment Parsing** — Local PDF extraction and Chinese/English OCR in the production image, with a finite OCR work queue
 
 ### Community & Sharing

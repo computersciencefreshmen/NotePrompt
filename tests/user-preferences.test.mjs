@@ -20,8 +20,9 @@ test('preferences normalize legacy and malformed database values safely', () => 
     locale: 'en-US',
     theme: 'dark',
     defaultEditorMode: 'professional',
-    visualStyle: 'editorial',
+    visualStyle: 'workbench',
   })
+  assert.equal(normalizeUserPreferencesRow({ theme: 'system' }).theme, 'system')
   assert.equal(normalizeUserPreferencesRow({ preferences: '{bad-json' }).visualStyle, 'workbench')
 })
 
@@ -38,8 +39,19 @@ test('preference updates merge and serialize only supported extras', () => {
   })
   const merged = mergeUserPreferences(DEFAULT_USER_PREFERENCES, update)
   assert.equal(merged.theme, 'light')
-  assert.equal(merged.visualStyle, 'lightweight')
+  assert.equal(merged.visualStyle, 'workbench')
   assert.deepEqual(JSON.parse(serializePreferenceExtras(merged)), {
-    visualStyle: 'lightweight',
+    visualStyle: 'workbench',
   })
+})
+
+test('cached clients may submit legacy preferences but receive the canonical product system', () => {
+  for (const legacyStyle of ['workbench', 'editorial', 'dashboard', 'lightweight']) {
+    assert.deepEqual(parseUserPreferencesUpdate({ visualStyle: legacyStyle }), {
+      visualStyle: 'workbench',
+    })
+  }
+
+  assert.deepEqual(parseUserPreferencesUpdate({ theme: 'system' }), { theme: 'system' })
+  assert.throws(() => parseUserPreferencesUpdate({ visualStyle: 'claude' }), /界面风格/)
 })

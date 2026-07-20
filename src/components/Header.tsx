@@ -10,30 +10,16 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/contexts/AuthContext'
-import { User, Settings, LogOut, Star, FileText, Shield, Palette, Wand2, Menu, X } from 'lucide-react'
+import { User, Settings, LogOut, Star, FileText, Shield, Wand2, Menu, X } from 'lucide-react'
 import ThemeToggle from '@/components/ThemeToggle'
 import GlobalSearch from '@/components/GlobalSearch'
-import { visualStyleOptions, VisualStyle } from '@/config/visual-styles'
 import { featureFlags } from '@/config/features'
-import { useUISettings } from '@/contexts/UISettingsContext'
 import { detectLocaleFromSearch, Locale, updateLocaleInAddressBar, withLocaleHref } from '@/lib/i18n'
-
-const styleAccentClass: Record<VisualStyle, string> = {
-  workbench: 'text-gray-950 dark:text-gray-50 hover:text-gray-700 dark:hover:text-gray-200',
-  editorial: 'text-black dark:text-white hover:text-gray-700 dark:hover:text-gray-200',
-  dashboard: 'text-cyan-700 dark:text-cyan-300 hover:text-cyan-800 dark:hover:text-cyan-200',
-  lightweight: 'text-emerald-700 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-200',
-}
 
 const headerCopy = {
   zh: {
@@ -45,7 +31,6 @@ const headerCopy = {
     published: '我发布的内容',
     profile: '个人资料',
     settings: '设置',
-    visualStyle: '界面风格',
     admin: '管理后台',
     logout: '退出登录',
     login: '登录',
@@ -68,7 +53,6 @@ const headerCopy = {
     published: 'Published',
     profile: 'Profile',
     settings: 'Settings',
-    visualStyle: 'Interface Style',
     admin: 'Admin Console',
     logout: 'Sign out',
     login: 'Log in',
@@ -86,7 +70,6 @@ const headerCopy = {
 
 export default function Header() {
   const { user, logout, loading } = useAuth()
-  const { visualStyle, setVisualStyle } = useUISettings()
   const router = useRouter()
   const pathname = usePathname()
   const [locale, setLocale] = useState<Locale>('zh')
@@ -152,7 +135,7 @@ export default function Header() {
     return user.username.charAt(0).toUpperCase()
   }
 
-  const navLinkClass = `text-gray-700 dark:text-gray-300 transition-colors ${styleAccentClass[visualStyle]}`
+  const navLinkClass = 'text-[var(--np-ink-muted)] transition-colors hover:text-[var(--np-ink)]'
   const navigationItems = [
     { path: '/public-prompts', label: copy.publicPrompts },
     { path: '/public-folders', label: copy.publicFolders },
@@ -165,13 +148,13 @@ export default function Header() {
   const isCurrentPath = (path: string) => pathname === path || pathname.startsWith(`${path}/`)
 
   return (
-    <header className="relative z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+    <header className="relative z-40 border-b border-[var(--np-rule)] bg-[color-mix(in_srgb,var(--np-surface)_94%,transparent)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo and Navigation */}
           <div className="flex items-center space-x-8">
             <Link href={href('/')} className="flex items-center">
-              <span className="note-prompt-brand text-xl font-bold text-teal-600 dark:text-teal-400">Note Prompt</span>
+              <span className="note-prompt-brand text-xl font-semibold tracking-[-0.02em] text-[var(--np-ink)]">Note Prompt</span>
             </Link>
 
             <nav aria-label={copy.primaryNavigation} className="hidden md:flex space-x-6">
@@ -193,7 +176,7 @@ export default function Header() {
             <button
               ref={mobileMenuButtonRef}
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 md:hidden"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-md text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)] md:hidden"
               aria-label={mobileMenuOpen ? copy.closeNavigation : copy.openNavigation}
               aria-expanded={mobileMenuOpen}
               aria-controls="mobile-primary-navigation"
@@ -204,7 +187,7 @@ export default function Header() {
             <GlobalSearch locale={locale} />
             <ThemeToggle />
             <div
-              className="hidden items-center rounded-full border border-gray-200 bg-gray-50 p-0.5 text-xs dark:border-gray-700 dark:bg-gray-800 md:flex"
+              className="hidden items-center rounded-full border border-[var(--np-rule)] bg-[var(--np-surface-soft)] p-0.5 text-xs md:flex"
               role="group"
               aria-label={copy.language}
             >
@@ -215,14 +198,14 @@ export default function Header() {
                   onClick={() => handleLocaleChange(item)}
                   aria-label={item === 'zh' ? copy.chinese : copy.english}
                   aria-pressed={locale === item}
-                  className={`rounded-full px-2 py-1 font-medium transition-colors ${locale === item ? 'bg-teal-600 text-white dark:bg-teal-400 dark:text-gray-950' : 'text-gray-500 hover:text-teal-700 dark:text-gray-400 dark:hover:text-teal-200'}`}
+                  className={`rounded-full px-2 py-1 font-medium transition-colors ${locale === item ? 'bg-[var(--np-accent)] text-[var(--np-ink)]' : 'text-[var(--np-ink-muted)] hover:text-[var(--np-ink)]'}`}
                 >
                   {item === 'zh' ? 'ZH' : 'EN'}
                 </button>
               ))}
             </div>
             {loading ? (
-              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" aria-hidden="true" />
+              <div className="h-8 w-8 animate-pulse rounded-full bg-[var(--np-surface-soft)]" aria-hidden="true" />
             ) : user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -232,7 +215,7 @@ export default function Header() {
                     aria-label={`${copy.accountMenu}: ${getUserDisplayName()}`}
                   >
                     <Avatar className="h-8 w-8">
-                      <AvatarFallback className="bg-blue-100 text-blue-600">
+                      <AvatarFallback className="bg-[var(--np-accent-soft)] text-[var(--np-accent-strong)]">
                         {getUserInitials()}
                       </AvatarFallback>
                     </Avatar>
@@ -303,24 +286,6 @@ export default function Header() {
                     </Link>
                   </DropdownMenuItem>
 
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="cursor-pointer">
-                      <Palette className="mr-2 h-4 w-4" />
-                      <span>{copy.visualStyle}</span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-44">
-                      <DropdownMenuRadioGroup value={visualStyle} onValueChange={value => setVisualStyle(value as VisualStyle)}>
-                        {visualStyleOptions.map(option => (
-                          <DropdownMenuRadioItem key={option.value} value={option.value} className="cursor-pointer">
-                            {option.label}
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-
-                  <DropdownMenuSeparator />
-
                   {(user.user_type === 'admin' || user.is_admin) && (
                     <>
                       <DropdownMenuItem asChild>
@@ -358,7 +323,7 @@ export default function Header() {
       <div
         ref={mobileMenuRef}
         id="mobile-primary-navigation"
-        className={`${mobileMenuOpen ? 'block' : 'hidden'} border-t border-gray-200 bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-900 md:hidden`}
+        className={`${mobileMenuOpen ? 'block' : 'hidden'} border-t border-[var(--np-rule)] bg-[var(--np-surface)] px-4 py-4 md:hidden`}
       >
         <nav aria-label={copy.primaryNavigation} className="mx-auto max-w-7xl space-y-1">
           {navigationItems.map(item => (
@@ -366,15 +331,15 @@ export default function Header() {
               key={item.path}
               href={href(item.path)}
               aria-current={isCurrentPath(item.path) ? 'page' : undefined}
-              className={`block rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800 ${isCurrentPath(item.path) ? 'bg-gray-100 font-semibold dark:bg-gray-800' : ''}`}
+              className={`block min-h-11 rounded-md px-3 py-3 text-sm text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)] ${isCurrentPath(item.path) ? 'bg-[var(--np-accent-soft)] font-semibold text-[var(--np-ink)]' : ''}`}
               onClick={() => setMobileMenuOpen(false)}
             >
               {item.label}
             </Link>
           ))}
 
-          <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-800">
-            <div className="mb-2 px-3 text-xs font-medium text-gray-500 dark:text-gray-400">{copy.language}</div>
+          <div className="mt-3 border-t border-[var(--np-rule)] pt-3">
+            <div className="mb-2 px-3 text-xs font-medium text-[var(--np-ink-muted)]">{copy.language}</div>
             <div className="flex gap-2 px-3" role="group" aria-label={copy.language}>
               {(['zh', 'en'] as Locale[]).map(item => (
                 <button
@@ -383,7 +348,7 @@ export default function Header() {
                   onClick={() => handleLocaleChange(item)}
                   aria-label={item === 'zh' ? copy.chinese : copy.english}
                   aria-pressed={locale === item}
-                  className={`min-h-9 rounded-md px-3 text-sm font-medium ${locale === item ? 'bg-teal-600 text-white dark:bg-teal-400 dark:text-gray-950' : 'border border-gray-200 text-gray-600 dark:border-gray-700 dark:text-gray-300'}`}
+                  className={`min-h-11 rounded-md px-3 text-sm font-medium ${locale === item ? 'bg-[var(--np-accent)] text-[var(--np-ink)]' : 'border border-[var(--np-rule)] text-[var(--np-ink-muted)]'}`}
                 >
                   {item === 'zh' ? 'ZH' : 'EN'}
                 </button>
@@ -392,7 +357,7 @@ export default function Header() {
           </div>
 
           {!user && !loading && (
-            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--np-rule)] pt-3">
               <Button variant="outline" asChild>
                 <Link href={href('/login')} onClick={() => setMobileMenuOpen(false)}>{copy.login}</Link>
               </Button>

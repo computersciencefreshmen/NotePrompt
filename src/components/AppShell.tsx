@@ -22,6 +22,7 @@ function usesAppHeader(pathname: string) {
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
+  const productRoute = usesAppHeader(pathname)
   const contentRef = useRef<HTMLDivElement>(null)
   const previousPath = useRef(pathname)
 
@@ -51,14 +52,25 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [pathname])
 
   return (
-    <>
-      <a className="skip-link" href="#main-content">
-        跳到主内容 / Skip to content
-      </a>
-      {usesAppHeader(pathname) && <Header />}
-      <div id="main-content" ref={contentRef} tabIndex={-1}>
-        {children}
+    productRoute ? (
+      <div className="np-product-surface min-h-screen">
+        <a className="skip-link" href="#main-content">
+          跳到主内容 / Skip to content
+        </a>
+          <Header />
+          <div id="main-content" ref={contentRef} tabIndex={-1}>
+            {children}
+          </div>
       </div>
-    </>
+    ) : (
+      <>
+        <a className="skip-link" href="#main-content">
+          跳到主内容 / Skip to content
+        </a>
+        <div id="main-content" ref={contentRef} tabIndex={-1}>
+          {children}
+        </div>
+      </>
+    )
   )
 }

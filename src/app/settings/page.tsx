@@ -15,12 +15,9 @@ import {
   Lock,
   User,
   Smartphone,
-  Check
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useUISettings } from '@/contexts/UISettingsContext'
-import { useTheme } from '@/contexts/ThemeContext'
-import { visualStyleOptions } from '@/config/visual-styles'
+import { resolveThemePreference, useTheme } from '@/contexts/ThemeContext'
 import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
 import {
@@ -37,7 +34,6 @@ type PasswordFields = {
 
 export default function SettingsPage() {
   const { user, logout, loading: authLoading } = useAuth()
-  const { setVisualStyle } = useUISettings()
   const { setTheme } = useTheme()
   const router = useRouter()
 
@@ -64,10 +60,10 @@ export default function SettingsPage() {
   }, [user, authLoading, router])
 
   const applyPreferences = useCallback((next: UserPreferencesDto) => {
-    setPreferences(next)
-    setTheme(next.theme)
-    setVisualStyle(next.visualStyle)
-  }, [setTheme, setVisualStyle])
+    const resolvedTheme = resolveThemePreference(next.theme)
+    setPreferences({ ...next, theme: resolvedTheme, visualStyle: 'workbench' })
+    setTheme(resolvedTheme)
+  }, [setTheme])
 
   useEffect(() => {
     if (!user) return
@@ -278,12 +274,11 @@ export default function SettingsPage() {
 
               <div>
                 <h4 className="font-medium">主题</h4>
-                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">浅色、深色或跟随设备设置，选择后立即生效。</p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <p className="mt-1 text-sm text-[var(--np-ink-muted)]">仅保留浅色与深色，两者使用同一套产品语义和交互规则。</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {([
                     ['light', '浅色'],
                     ['dark', '深色'],
-                    ['system', '跟随系统'],
                   ] as const).map(([value, label]) => (
                     <button
                       key={value}
@@ -295,8 +290,8 @@ export default function SettingsPage() {
                       }}
                       className={`rounded-[8px] border px-3 py-2 text-sm font-medium transition-colors ${
                         preferences.theme === value
-                          ? 'border-teal-500 bg-teal-50 text-teal-950 dark:border-teal-400 dark:bg-teal-950/30 dark:text-teal-50'
-                          : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700'
+                          ? 'border-[var(--np-accent-strong)] bg-[var(--np-accent-soft)] text-[var(--np-ink)]'
+                          : 'border-[var(--np-rule)] bg-[var(--np-surface-raised)] text-[var(--np-ink-muted)] hover:text-[var(--np-ink)]'
                       }`}
                     >
                       {label}
@@ -305,41 +300,19 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-4 dark:border-gray-800" />
+              <div className="border-t border-[var(--np-rule)] pt-4" />
 
               <div>
-                <h4 className="font-medium">界面风格</h4>
-                <p className="text-sm text-gray-600 mt-1">调整优化工作台和后续新版页面的视觉密度与色彩取向</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  {visualStyleOptions.map(option => {
-                    const isSelected = preferences.visualStyle === option.value
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => {
-                          setPreferences(current => ({ ...current, visualStyle: option.value }))
-                          setVisualStyle(option.value)
-                        }}
-                        className={`rounded-[8px] border p-4 text-left transition-colors ${
-                          isSelected
-                            ? 'border-teal-500 bg-teal-50 text-teal-950 dark:border-teal-400 dark:bg-teal-950/30 dark:text-teal-50'
-                            : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700'
-                        }`}
-                      >
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="font-medium">{option.label}</span>
-                          {isSelected && <Check className="h-4 w-4 text-teal-600 dark:text-teal-300" />}
-                        </span>
-                        <span className="mt-2 block text-sm text-gray-600 dark:text-gray-400">{option.note}</span>
-                      </button>
-                    )
-                  })}
+                <h4 className="font-medium">产品界面</h4>
+                <div className="mt-3 rounded-[8px] border border-[var(--np-rule)] bg-[var(--np-surface-soft)] p-4">
+                  <p className="font-medium text-[var(--np-ink)]">Claude 风格工作台</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--np-ink-muted)]">
+                    全站登录后区域统一使用温暖纸张、克制陶土色与衬线排版；旧版四套视觉偏好已自动归一，不再产生互相覆盖的皮肤。
+                  </p>
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-4 dark:border-gray-800" />
+              <div className="border-t border-[var(--np-rule)] pt-4" />
 
               <div>
                 <h4 className="font-medium">默认编辑模式</h4>
@@ -370,7 +343,7 @@ export default function SettingsPage() {
                 type="button"
                 onClick={handleSavePreferences}
                 disabled={preferencesLoading || preferencesSaving}
-                className="bg-teal-700 text-white hover:bg-teal-800"
+                className="bg-[var(--np-accent)] text-[var(--np-ink)] hover:bg-[var(--np-accent-hover)]"
               >
                 {preferencesLoading ? '加载中...' : preferencesSaving ? '保存中...' : '保存界面偏好'}
               </Button>

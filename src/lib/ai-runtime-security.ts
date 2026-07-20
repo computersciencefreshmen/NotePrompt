@@ -127,10 +127,18 @@ export class AIUsageReservation {
 
   async rollback() {
     return this.settlement.rollback(async () => {
-      await Promise.allSettled([
-        db.rollbackAIUsage(this.userId, this.mode, this.usageDate),
-        this.globalReservation.rollback(),
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => db.rollbackAIUsage(this.userId, this.mode, this.usageDate)),
+        Promise.resolve().then(() => this.globalReservation.rollback()),
       ])
+      const failedCompensations = results.filter(result => result.status === 'rejected').length
+      if (failedCompensations > 0) {
+        console.error('AI usage reservation rollback compensation failed', {
+          userId: this.userId,
+          mode: this.mode,
+          failedCompensations,
+        })
+      }
     })
   }
 }

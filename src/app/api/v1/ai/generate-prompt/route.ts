@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
-import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER } from "@/config/ai-models"
+import { DEFAULT_PUBLIC_AI_PROVIDER, getDefaultAIModel } from "@/config/ai-models"
 import { validateAIModel, formatAIError } from "@/lib/ai-utils"
 import { getUserProviderRuntimeConfig } from "@/lib/user-provider-config"
 import { requireAIUser, reserveAIUsage, requestPolicyResponse } from "@/lib/ai-runtime-security"
 import { MAX_AI_INPUT_CHARS, readLimitedJson } from "@/lib/ai-runtime-policy"
+import { buildAIChatCompletionBody, createAIIncompleteResponse, isCompleteAIFinishReason, readLimitedAIProviderJSON } from "@/lib/ai-request-policy"
 
 /**
  * 提示词生成API
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     const userInfo = typeof body.userInfo === 'string' ? body.userInfo : ''
     const targetDescription = typeof body.targetDescription === 'string' ? body.targetDescription : ''
     const provider = typeof body.provider === 'string' ? body.provider : DEFAULT_PUBLIC_AI_PROVIDER
-    const model = typeof body.model === 'string' ? body.model : DEFAULT_PUBLIC_AI_MODEL
+    const model = typeof body.model === 'string' ? body.model : getDefaultAIModel(provider)
 
     // 输入长度限制
     if (userInfo.length > MAX_AI_INPUT_CHARS || targetDescription.length > MAX_AI_INPUT_CHARS) {
@@ -34,8 +35,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 如果是local则重定向到qwen
-    const effectiveProvider = provider === "local" ? "qwen" : provider
+    // Never reinterpret a provider choice: validation must reject retired aliases.
+    const effectiveProvider = provider
     const userRuntimeConfig = await getUserProviderRuntimeConfig(auth.user.id, effectiveProvider)
 
     // 验证AI模型配置
@@ -77,112 +78,55 @@ export async function POST(request: NextRequest) {
         throw new Error("未配置API密钥")
       }
 
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      }
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 60000)
 
-      if (effectiveProvider === "qwen") {
-        headers["Authorization"] = "Bearer " + apiKey
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-        const response = await fetch(aiConfig.baseURL + "/chat/completions", {
-          method: "POST",
-          redirect: "error",
-          headers,
-          body: JSON.stringify({
-            model: aiConfig.model,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage }
-            ],
-            temperature: aiConfig.temperature,
-            max_tokens: aiConfig.max_tokens,
-            stream: false
-          }),
-          signal: controller.signal
-        })
-        clearTimeout(timeoutId)
-
-        if (!response.ok) {
-          await response.text()
-          console.error("Qwen API请求失败 (" + response.status + ")")
-          throw new Error("Qwen API请求失败: " + response.status)
-        }
-
-        const data = await response.json()
-        generatedPrompt = data.choices?.[0]?.message?.content || ""
-      } else if (effectiveProvider === "deepseek") {
-        headers["Authorization"] = "Bearer " + apiKey
-
-        const deepseekModel = aiConfig.model;
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-        const response = await fetch(aiConfig.baseURL + "/chat/completions", {
-          method: "POST",
-          redirect: "error",
-          headers,
-          body: JSON.stringify({
-            model: deepseekModel,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage }
-            ],
-            temperature: aiConfig.temperature,
-            max_tokens: aiConfig.max_tokens,
-            stream: false
-          }),
-          signal: controller.signal
-        })
-        clearTimeout(timeoutId)
-
-        if (!response.ok) {
-          await response.text()
-          console.error("DeepSeek API请求失败 (" + response.status + ")")
-          throw new Error("DeepSeek API请求失败: " + response.status)
-        }
-
-        const data = await response.json()
-        generatedPrompt = data.choices?.[0]?.message?.content || ""
-      } else {
-        headers["Authorization"] = "Bearer " + apiKey
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-        const requestBody: Record<string, unknown> = {
+      try {
+        const requestBody = buildAIChatCompletionBody({
+          provider: effectiveProvider,
           model: aiConfig.model,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: userMessage }
+            { role: "user", content: userMessage },
           ],
           temperature: aiConfig.temperature,
-        }
-        requestBody[effectiveProvider === 'minimax' || effectiveProvider === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens'] = aiConfig.max_tokens
-        if (effectiveProvider === 'xiaomi') {
-          requestBody.thinking = { type: 'disabled' }
-        }
+          topP: 0.9,
+          maxTokens: aiConfig.max_tokens,
+          fixedTemperature: aiConfig.fixedTemperature,
+        })
 
+        reservation.markProviderCallStarted()
         const response = await fetch(aiConfig.baseURL + "/chat/completions", {
           method: "POST",
           redirect: "error",
-          headers,
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + apiKey,
+          },
           body: JSON.stringify(requestBody),
-          signal: controller.signal
+          signal: controller.signal,
         })
-        clearTimeout(timeoutId)
 
         if (!response.ok) {
-          await response.text()
+          await response.body?.cancel().catch(() => undefined)
           console.error(effectiveProvider + " API请求失败 (" + response.status + ")")
           throw new Error(effectiveProvider + " API请求失败: " + response.status)
         }
 
-        const data = await response.json()
-        generatedPrompt = data.choices?.[0]?.message?.content || ""
+        const data = await readLimitedAIProviderJSON<{
+          choices?: Array<{ finish_reason?: unknown; message?: { content?: string } }>
+        }>(response)
+        const choice = data.choices?.[0]
+        if (!isCompleteAIFinishReason(choice?.finish_reason)) {
+          console.error(effectiveProvider + " API returned incomplete output")
+          return NextResponse.json(
+            { success: false, ...createAIIncompleteResponse({ provider: effectiveProvider, model }) },
+            { status: 502 },
+          )
+        }
+        generatedPrompt = choice?.message?.content || ""
+      } finally {
+        clearTimeout(timeoutId)
       }
 
       processingTime = (Date.now() - startTime) / 1000

@@ -6,7 +6,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER, getAIProviderModels, getAvailableAIProviders } from '@/config/ai-models';
+import { DEFAULT_PUBLIC_AI_MODEL, DEFAULT_PUBLIC_AI_PROVIDER, getAIProviderModels, getAvailableAIProviders, getDefaultAIModel } from '@/config/ai-models';
 import { optimizePromptStream } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Brain, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
@@ -30,6 +30,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
 
   const thinkingRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const requestInFlightRef = useRef(false);
 
   // 获取可用的AI提供商
   const providers = getAvailableAIProviders();
@@ -40,10 +41,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
   // 当提供商改变时，重置模型选择
   const handleProviderChange = (provider: string) => {
     setSelectedProvider(provider);
-    const providerModels = getAIProviderModels(provider);
-    if (providerModels.length > 0) {
-      setSelectedModel(providerModels[0].key);
-    }
+    setSelectedModel(getDefaultAIModel(provider));
   };
 
   // 自动滚动思考区域到底部
@@ -61,46 +59,54 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
   }, [optimizedPrompt]);
 
   const handleOptimize = useCallback(async () => {
+    if (requestInFlightRef.current) return;
     if (!originalPrompt.trim()) {
       toast({ title: '错误', description: '请输入需要优化的提示词', variant: 'destructive' });
       return;
     }
 
+    requestInFlightRef.current = true;
     setIsLoading(true);
     setOptimizedPrompt('');
     setThinkingContent('');
     setStreamingPhase('idle');
 
-    await optimizePromptStream(
-      { prompt: originalPrompt, provider: selectedProvider, model: selectedModel },
-      {
-        onThinking: (chunk) => {
-          setStreamingPhase('thinking');
-          setThinkingContent((prev) => prev + chunk);
-        },
-        onContent: (chunk) => {
-          setStreamingPhase('generating');
-          setOptimizedPrompt((prev) => prev + chunk);
-        },
-        onDone: (result) => {
-          setStreamingPhase('done');
-          setIsLoading(false);
-          // 使用后处理后的完整内容替换流式内容
-          if (result.optimized) {
-            setOptimizedPrompt(result.optimized);
-          }
-          toast({
-            title: '优化成功',
-            description: `耗时 ${result.processing_time}s · ${result.provider}/${result.model}`,
-          });
-        },
-        onError: (message) => {
-          setStreamingPhase('idle');
-          setIsLoading(false);
-          toast({ title: '优化失败', description: message, variant: 'destructive' });
-        },
-      }
-    );
+    try {
+      await optimizePromptStream(
+        { prompt: originalPrompt, provider: selectedProvider, model: selectedModel },
+        {
+          onThinking: (chunk) => {
+            setStreamingPhase('thinking');
+            setThinkingContent((prev) => prev + chunk);
+          },
+          onContent: (chunk) => {
+            setStreamingPhase('generating');
+            setOptimizedPrompt((prev) => prev + chunk);
+          },
+          onDone: (result) => {
+            setStreamingPhase('done');
+            setIsLoading(false);
+            // 使用后处理后的完整内容替换流式内容
+            if (result.optimized) {
+              setOptimizedPrompt(result.optimized);
+            }
+            toast({
+              title: '优化成功',
+              description: `耗时 ${result.processing_time}s · ${result.provider}/${result.model}`,
+            });
+          },
+          onError: (message) => {
+            setStreamingPhase('idle');
+            setIsLoading(false);
+            setOptimizedPrompt('');
+            toast({ title: '优化失败', description: message, variant: 'destructive' });
+          },
+        }
+      );
+    } finally {
+      requestInFlightRef.current = false;
+      setIsLoading(false);
+    }
   }, [originalPrompt, selectedProvider, selectedModel, toast]);
 
   const handleApply = () => {
@@ -122,7 +128,9 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
         : '';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!isLoading) onOpenChange(nextOpen);
+    }}>
       <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>AI提示词优化</DialogTitle>
@@ -144,7 +152,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="provider-select">AI提供商</Label>
-              <Select value={selectedProvider} onValueChange={handleProviderChange}>
+              <Select value={selectedProvider} onValueChange={handleProviderChange} disabled={isLoading}>
                 <SelectTrigger id="provider-select">
                   <SelectValue placeholder="选择AI提供商" />
                 </SelectTrigger>
@@ -159,7 +167,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
             </div>
             <div className="space-y-2">
               <Label htmlFor="model-select">具体模型</Label>
-              <Select value={selectedModel} onValueChange={setSelectedModel}>
+              <Select value={selectedModel} onValueChange={setSelectedModel} disabled={isLoading}>
                 <SelectTrigger id="model-select">
                   <SelectValue placeholder="选择具体模型" />
                 </SelectTrigger>
@@ -239,7 +247,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
             取消
           </Button>
           <Button onClick={handleApply} disabled={!optimizedPrompt.trim() || isLoading}>

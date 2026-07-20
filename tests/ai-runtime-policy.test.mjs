@@ -4,6 +4,7 @@ import {
   MAX_AI_ATTACHMENTS,
   MAX_AI_JSON_BODY_BYTES,
   normalizeProviderBaseURL,
+  parseAIOptimizationPreferences,
   parseAIRequestAttachments,
   parseConversationHistory,
   readLimitedJson,
@@ -25,6 +26,21 @@ test('provider base URLs are restricted to the provider HTTPS host', () => {
   ]) {
     assert.throws(
       () => normalizeProviderBaseURL('deepseek', candidate),
+      RequestPolicyError,
+    )
+  }
+
+  assert.equal(
+    normalizeProviderBaseURL('xiaomi', 'https://api.xiaomimimo.com/v1/'),
+    'https://api.xiaomimimo.com/v1',
+  )
+  for (const tokenPlanHost of [
+    'https://token-plan-cn.xiaomimimo.com/v1',
+    'https://token-plan-sgp.xiaomimimo.com/v1',
+    'https://token-plan-ams.xiaomimimo.com/v1',
+  ]) {
+    assert.throws(
+      () => normalizeProviderBaseURL('xiaomi', tokenPlanHost),
       RequestPolicyError,
     )
   }
@@ -63,4 +79,24 @@ test('attachment and conversation limits reject oversized context', () => {
     () => parseConversationHistory([{ role: 'user', content: 'x'.repeat(10_001) }]),
     RequestPolicyError,
   )
+})
+
+test('optimization preferences are strict bounded enums', () => {
+  assert.deepEqual(parseAIOptimizationPreferences({
+    mode: 'professional',
+    style: 'structured',
+    tone: 'professional',
+    outputFormat: 'markdown',
+    constraints: ['保留所有事实'],
+  }), {
+    mode: 'professional',
+    style: 'structured',
+    tone: 'professional',
+    outputFormat: 'markdown',
+    constraints: ['保留所有事实'],
+  })
+
+  assert.throws(() => parseAIOptimizationPreferences({ style: 'x'.repeat(200_000) }), RequestPolicyError)
+  assert.throws(() => parseAIOptimizationPreferences({ constraints: Array.from({ length: 13 }, () => 'x') }), RequestPolicyError)
+  assert.throws(() => parseAIOptimizationPreferences({ constraints: ['x'.repeat(501)] }), RequestPolicyError)
 })

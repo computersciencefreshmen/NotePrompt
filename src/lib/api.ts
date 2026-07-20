@@ -30,7 +30,7 @@ import {
   PromptAttachmentDraft,
   PromptOptimizerMode
 } from '@/types'
-import type { UserPreferencesDto } from '@/lib/user-preferences'
+import type { UserPreferencesDto, UserPreferencesUpdate } from '@/lib/user-preferences'
 
 // 通用API请求函数
 async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeoutMs?: number): Promise<T> {
@@ -117,6 +117,13 @@ export const user = {
   // 获取跨设备用户偏好
   getPreferences: async (): Promise<ApiResponse<UserPreferencesDto>> => {
     return apiRequest<ApiResponse<UserPreferencesDto>>('/user/preferences')
+  },
+
+  updatePreferences: async (preferences: UserPreferencesUpdate): Promise<ApiResponse<UserPreferencesDto>> => {
+    return apiRequest<ApiResponse<UserPreferencesDto>>('/user/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(preferences),
+    })
   },
 
   // 更新用户资料

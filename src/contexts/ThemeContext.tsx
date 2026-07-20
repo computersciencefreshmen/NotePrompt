@@ -2,79 +2,64 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 
-type Theme = 'light' | 'dark' | 'system'
+export type Theme = 'light' | 'dark'
 
 interface ThemeContextType {
   theme: Theme
-  resolvedTheme: 'light' | 'dark'
+  resolvedTheme: Theme
   setTheme: (theme: Theme) => void
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-  theme: 'system',
+  theme: 'light',
   resolvedTheme: 'light',
   setTheme: () => {},
 })
+
+const THEME_STORAGE_KEY = 'note-prompt-theme'
 
 export function useTheme() {
   return useContext(ThemeContext)
 }
 
-function getSystemTheme(): 'light' | 'dark' {
+function getSystemTheme(): Theme {
   if (typeof window === 'undefined') return 'light'
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('system')
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light')
-  const [mounted, setMounted] = useState(false)
+export function resolveThemePreference(preference: Theme | 'system'): Theme {
+  return preference === 'system' ? getSystemTheme() : preference
+}
 
-  // 初始化：从 localStorage 读取
+function applyTheme(theme: Theme) {
+  const root = document.documentElement
+  root.classList.remove('light', 'dark')
+  root.classList.add(theme)
+  root.style.colorScheme = theme
+}
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setThemeState] = useState<Theme>('light')
+
   useEffect(() => {
-    const stored = localStorage.getItem('note-prompt-theme') as Theme | null
-    const initial = stored || 'system'
+    const stored = localStorage.getItem(THEME_STORAGE_KEY)
+    const initial = resolveThemePreference(
+      stored === 'dark' || stored === 'system' ? stored : 'light',
+    )
+
     setThemeState(initial)
-    setMounted(true)
+    localStorage.setItem(THEME_STORAGE_KEY, initial)
+    applyTheme(initial)
   }, [])
 
-  // 计算实际主题并应用到 <html>
-  useEffect(() => {
-    if (!mounted) return
-
-    const resolved = theme === 'system' ? getSystemTheme() : theme
-    setResolvedTheme(resolved)
-
-    const root = document.documentElement
-    root.classList.remove('light', 'dark')
-    root.classList.add(resolved)
-  }, [theme, mounted])
-
-  // 监听系统主题变化
-  useEffect(() => {
-    if (!mounted) return
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handleChange = () => {
-      if (theme === 'system') {
-        const resolved = getSystemTheme()
-        setResolvedTheme(resolved)
-        document.documentElement.classList.remove('light', 'dark')
-        document.documentElement.classList.add(resolved)
-      }
-    }
-
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
-  }, [theme, mounted])
-
-  const setTheme = useCallback((newTheme: Theme) => {
-    setThemeState(newTheme)
-    localStorage.setItem('note-prompt-theme', newTheme)
+  const setTheme = useCallback((nextTheme: Theme) => {
+    setThemeState(nextTheme)
+    localStorage.setItem(THEME_STORAGE_KEY, nextTheme)
+    applyTheme(nextTheme)
   }, [])
 
   return (
-    <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, resolvedTheme: theme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   )

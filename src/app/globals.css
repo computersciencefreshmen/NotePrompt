@@ -187,220 +187,113 @@ html.dark {
   color-scheme: dark;
 }
 
-html[data-visual-style='workbench'] {
-  --background: 48 30% 96%;
-  --foreground: 222 47% 11%;
-  --card: 48 45% 99%;
-  --card-foreground: 222 47% 11%;
-  --popover: 48 45% 99%;
-  --popover-foreground: 222 47% 11%;
-  --primary: 222 47% 11%;
-  --primary-foreground: 48 45% 99%;
-  --secondary: 45 22% 91%;
-  --secondary-foreground: 222 47% 11%;
-  --muted: 45 22% 91%;
-  --muted-foreground: 215 16% 38%;
-  --accent: 45 22% 91%;
-  --accent-foreground: 222 47% 11%;
-  --border: 40 16% 78%;
-  --input: 40 16% 78%;
-  --ring: 222 47% 11%;
-  --np-page-bg: #f7f6f1;
-  --np-surface: #fffefa;
-  --np-surface-soft: #f1efe7;
-  --np-border: #d8d3c6;
-  --np-accent: #111827;
-  --np-accent-soft: #e8e4da;
-  --np-text: #111827;
-  --np-muted: #57534e;
+/* Authenticated product theme -------------------------------------------------
+ * The marketing homepage keeps the global baseline above. Product routes are
+ * deliberately scoped by AppShell so their paper/ink system cannot leak into
+ * public or authentication pages. Radix portals and toasts opt in separately.
+ */
+.np-product-surface,
+body:has(.np-product-surface) .np-product-portal {
+  --background: 48 26% 95%;
+  --foreground: 60 2% 8%;
+  --card: 48 100% 99%;
+  --card-foreground: 60 2% 8%;
+  --popover: 48 100% 99%;
+  --popover-foreground: 60 2% 8%;
+  --primary: 15 64% 60%;
+  --primary-foreground: 60 2% 8%;
+  --secondary: 44 18% 90%;
+  --secondary-foreground: 60 2% 8%;
+  --muted: 44 18% 90%;
+  --muted-foreground: 38 7% 37%;
+  --accent: 17 45% 89%;
+  --accent-foreground: 15 45% 35%;
+  --border: 42 13% 83%;
+  --input: 42 13% 83%;
+  --ring: 15 45% 42%;
+  --np-canvas: #efede6;
+  --np-surface: #f5f4ee;
+  --np-surface-raised: #fffdf8;
+  --np-surface-soft: #ebe8df;
+  --np-ink: #141413;
+  --np-ink-muted: #666159;
+  --np-rule: #d9d5cc;
+  --np-accent: #da7756;
+  --np-accent-hover: #cd6c4d;
+  --np-accent-soft: #f2ddd4;
+  --np-accent-strong: #9b523a;
+  --np-font-ui: ui-serif, Georgia, Cambria, "Times New Roman", Times, "Noto Serif SC", serif;
+  --np-font-code: "JetBrainsMono NFM", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--np-ink);
+  font-family: var(--np-font-ui);
 }
 
-html[data-visual-style='editorial'] {
-  --background: 0 0% 100%;
-  --foreground: 0 0% 0%;
-  --card: 0 0% 100%;
-  --card-foreground: 0 0% 0%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 0%;
-  --primary: 0 0% 0%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 0 0% 94%;
-  --secondary-foreground: 0 0% 0%;
-  --muted: 0 0% 94%;
-  --muted-foreground: 0 0% 28%;
-  --accent: 0 0% 91%;
-  --accent-foreground: 0 0% 0%;
-  --border: 0 0% 0%;
-  --input: 0 0% 0%;
-  --ring: 0 0% 0%;
-  --np-page-bg: #ffffff;
-  --np-surface: #ffffff;
-  --np-surface-soft: #f4f4f4;
-  --np-border: #111111;
-  --np-accent: #000000;
-  --np-accent-soft: #eeeeee;
-  --np-text: #000000;
-  --np-muted: #3f3f46;
+.dark .np-product-surface,
+.dark body:has(.np-product-surface) .np-product-portal {
+  --background: 40 7% 13%;
+  --foreground: 45 26% 90%;
+  --card: 38 9% 16%;
+  --card-foreground: 45 26% 90%;
+  --popover: 38 9% 18%;
+  --popover-foreground: 45 26% 90%;
+  --primary: 18 64% 66%;
+  --primary-foreground: 40 7% 10%;
+  --secondary: 39 8% 20%;
+  --secondary-foreground: 45 26% 90%;
+  --muted: 39 8% 20%;
+  --muted-foreground: 38 11% 68%;
+  --accent: 18 25% 24%;
+  --accent-foreground: 18 74% 75%;
+  --border: 42 8% 22%;
+  --input: 42 8% 22%;
+  --ring: 18 74% 75%;
+  --np-canvas: #1c1b19;
+  --np-surface: #25231f;
+  --np-surface-raised: #2f2c27;
+  --np-surface-soft: #211f1c;
+  --np-ink: #ece9df;
+  --np-ink-muted: #b7b0a4;
+  --np-rule: #3c3932;
+  --np-accent: #e09272;
+  --np-accent-hover: #e9a083;
+  --np-accent-soft: #4a3027;
+  --np-accent-strong: #f0ad90;
 }
 
-html[data-visual-style='dashboard'] {
-  --background: 210 40% 96%;
-  --foreground: 222 47% 11%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
-  --primary: 192 82% 31%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 210 40% 92%;
-  --secondary-foreground: 222 47% 11%;
-  --muted: 210 40% 92%;
-  --muted-foreground: 215 16% 38%;
-  --accent: 189 94% 43%;
-  --accent-foreground: 222 47% 11%;
-  --border: 214 32% 88%;
-  --input: 214 32% 88%;
-  --ring: 192 82% 31%;
-  --np-page-bg: #f1f5f9;
-  --np-surface: #ffffff;
-  --np-surface-soft: #eaf2f8;
-  --np-border: #cbd5e1;
-  --np-accent: #0e7490;
-  --np-accent-soft: #cffafe;
-  --np-text: #0f172a;
-  --np-muted: #475569;
+.np-product-surface {
+  min-height: 100vh;
+  background: var(--np-canvas);
 }
 
-html[data-visual-style='lightweight'] {
-  --background: 42 45% 98%;
-  --foreground: 24 10% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 24 10% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 24 10% 10%;
-  --primary: 158 64% 28%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 38 40% 93%;
-  --secondary-foreground: 24 10% 10%;
-  --muted: 38 40% 93%;
-  --muted-foreground: 25 8% 40%;
-  --accent: 152 60% 92%;
-  --accent-foreground: 158 64% 20%;
-  --border: 35 22% 84%;
-  --input: 35 22% 84%;
-  --ring: 158 64% 28%;
-  --np-page-bg: #fbfaf7;
-  --np-surface: #ffffff;
-  --np-surface-soft: #fff7e8;
-  --np-border: #e1d9ca;
-  --np-accent: #047857;
-  --np-accent-soft: #d1fae5;
-  --np-text: #1c1917;
-  --np-muted: #57534e;
+.np-product-surface .skip-link {
+  background: var(--np-accent);
+  color: var(--np-ink);
+  box-shadow: none;
 }
 
-html.dark[data-visual-style] {
-  --np-page-bg: #06110f;
-  --np-surface: #0b1815;
-  --np-surface-soft: #10221e;
-  --np-border: #1d3b35;
-  --np-accent: #2dd4bf;
-  --np-accent-soft: #123c35;
-  --np-text: #eefcf8;
-  --np-muted: #a5bdb6;
+.np-product-surface .skip-link:focus-visible {
+  outline-color: var(--np-accent-strong);
 }
 
-html.dark[data-visual-style='dashboard'] {
-  --np-accent: #22d3ee;
-  --np-accent-soft: #164e63;
+.np-product-surface code,
+.np-product-surface pre,
+.np-product-surface kbd,
+.np-product-surface .font-mono,
+body:has(.np-product-surface) .np-product-portal code,
+body:has(.np-product-surface) .np-product-portal pre,
+body:has(.np-product-surface) .np-product-portal kbd,
+body:has(.np-product-surface) .np-product-portal .font-mono {
+  font-family: var(--np-font-code);
 }
 
-html.dark[data-visual-style='lightweight'] {
-  --np-accent: #34d399;
-  --np-accent-soft: #064e3b;
+.np-product-surface :focus-visible,
+body:has(.np-product-surface) .np-product-portal :focus-visible {
+  outline: 2px solid var(--np-accent-strong);
+  outline-offset: 2px;
 }
 
-html[data-visual-style] body {
-  background: var(--np-page-bg);
-  color: var(--np-text);
-}
-
-html[data-visual-style] .min-h-screen {
-  background-color: var(--np-page-bg) !important;
-}
-
-html[data-visual-style] header,
-html[data-visual-style] nav.fixed {
-  background-color: color-mix(in srgb, var(--np-surface) 88%, transparent) !important;
-  border-color: var(--np-border) !important;
-}
-
-html[data-visual-style] .bg-white,
-html[data-visual-style] .bg-white\/80,
-html[data-visual-style] .bg-gray-50,
-html[data-visual-style] .bg-gray-100,
-html[data-visual-style] .dark\:bg-gray-900,
-html[data-visual-style] .dark\:bg-gray-950 {
-  background-color: var(--np-surface) !important;
-}
-
-html[data-visual-style] .dark\:bg-gray-800,
-html[data-visual-style] .dark\:bg-white\/5 {
-  background-color: var(--np-surface-soft) !important;
-}
-
-html[data-visual-style] .border-gray-200,
-html[data-visual-style] .border-gray-300,
-html[data-visual-style] .dark\:border-gray-700,
-html[data-visual-style] .dark\:border-gray-800 {
-  border-color: var(--np-border) !important;
-}
-
-html[data-visual-style] .text-blue-600,
-html[data-visual-style] .dark\:text-blue-400,
-html[data-visual-style] .text-teal-600,
-html[data-visual-style] .dark\:text-teal-400 {
-  color: var(--np-accent) !important;
-}
-
-html[data-visual-style] .bg-blue-600,
-html[data-visual-style] .bg-teal-600,
-html[data-visual-style] .from-teal-500 {
-  background-color: var(--np-accent) !important;
-  background-image: none !important;
-}
-
-html[data-visual-style] .hover\:bg-blue-700:hover,
-html[data-visual-style] .hover\:bg-teal-700:hover {
-  background-color: color-mix(in srgb, var(--np-accent) 86%, black) !important;
-}
-
-html[data-visual-style] .hover\:text-blue-600:hover,
-html[data-visual-style] .dark\:hover\:text-blue-400:hover,
-html[data-visual-style] .hover\:text-teal-600:hover,
-html[data-visual-style] .dark\:hover\:text-teal-400:hover {
-  color: var(--np-accent) !important;
-}
-
-html[data-visual-style] .note-prompt-brand,
-html[data-visual-style] .note-prompt-brand:hover {
-  color: #0d9488 !important;
-}
-
-html.dark[data-visual-style] .note-prompt-brand,
-html.dark[data-visual-style] .note-prompt-brand:hover {
-  color: #2dd4bf !important;
-}
-
-html[data-visual-style] .shadow,
-html[data-visual-style] .shadow-lg,
-html[data-visual-style] .shadow-2xl {
-  box-shadow: 0 18px 48px color-mix(in srgb, var(--np-text) 10%, transparent) !important;
-}
-
-html[data-visual-style='editorial'] .rounded-2xl,
-html[data-visual-style='editorial'] .rounded-xl,
-html[data-visual-style='editorial'] .rounded-lg,
-html[data-visual-style='editorial'] .rounded-full {
-  border-radius: 2px !important;
+.np-product-surface ::selection,
+body:has(.np-product-surface) .np-product-portal ::selection {
+  background: var(--np-accent-soft);
+  color: var(--np-ink);
 }

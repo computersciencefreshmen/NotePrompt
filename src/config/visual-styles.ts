@@ -1,4 +1,6 @@
-export type VisualStyle = 'workbench' | 'editorial' | 'dashboard' | 'lightweight'
+export type VisualStyle = 'workbench'
+
+export type LegacyVisualStyle = 'workbench' | 'editorial' | 'dashboard' | 'lightweight'
 
 export type VisualStyleOption = {
   value: VisualStyle
@@ -6,13 +8,23 @@ export type VisualStyleOption = {
   note: string
 }
 
+const LEGACY_VISUAL_STYLES = new Set<LegacyVisualStyle>([
+  'workbench',
+  'editorial',
+  'dashboard',
+  'lightweight',
+])
+
 export const DEFAULT_VISUAL_STYLE: VisualStyle = 'workbench'
 
+// One product system replaces the former selectable skins. Keep the
+// `workbench` wire value for one release so cached clients remain compatible.
 export const visualStyleOptions: VisualStyleOption[] = [
-  { value: 'workbench', label: '精密工作台', note: '克制、密度高，适合长期调参和比对' },
-  { value: 'editorial', label: '黑白编辑器', note: '强对比、少装饰，突出文本本身' },
-  { value: 'dashboard', label: '数据仪表盘', note: '更像 SaaS 工具，便于扫描状态和参数' },
-  { value: 'lightweight', label: '轻量创作台', note: '更明亮、友好，适合普通用户快速使用' },
+  {
+    value: 'workbench',
+    label: 'Claude 风格工作台',
+    note: '温暖纸张、克制陶土色与适合长时间阅读的编辑体验',
+  },
 ]
 
 export const visualStyleClasses: Record<VisualStyle, {
@@ -25,47 +37,29 @@ export const visualStyleClasses: Record<VisualStyle, {
   accent: string
 }> = {
   workbench: {
-    page: 'bg-[#f3eee6] dark:bg-[#06110f]',
-    grid: 'opacity-[0.06] dark:opacity-[0.08]',
-    card: 'border-[#ded6c8] bg-[#fbfaf7]/95 shadow-[0_20px_70px_rgba(67,56,43,0.10)] dark:border-teal-900/60 dark:bg-[#0b1815]/95 dark:shadow-[0_22px_80px_rgba(0,0,0,0.32)]',
-    editor: 'border-[#d8cfbf] bg-[#fffdf8] dark:border-teal-900/60 dark:bg-[#07110f]',
-    softPanel: 'border-[#ded6c8] bg-[#f6f1e9] dark:border-teal-900/60 dark:bg-[#10221e]',
-    primaryButton: 'bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-500 dark:text-zinc-950 dark:hover:bg-teal-400',
-    accent: 'bg-teal-700 text-white hover:bg-teal-700 dark:bg-teal-400 dark:text-zinc-950',
-  },
-  editorial: {
-    page: 'bg-white dark:bg-[#06110f]',
-    grid: 'opacity-[0.03] dark:opacity-[0.08]',
-    card: 'border-gray-950 bg-white shadow-none dark:border-teal-900/70 dark:bg-[#0b1815]',
-    editor: 'border-gray-950 bg-white dark:border-teal-900/70 dark:bg-[#07110f]',
-    softPanel: 'border-gray-950 bg-white dark:border-teal-900/70 dark:bg-[#10221e]',
-    primaryButton: 'bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-400 dark:text-black dark:hover:bg-teal-300',
-    accent: 'bg-teal-700 text-white hover:bg-teal-700 dark:bg-teal-400 dark:text-black',
-  },
-  dashboard: {
-    page: 'bg-slate-50 dark:bg-[#06110f]',
-    grid: 'opacity-[0.04] dark:opacity-[0.06]',
-    card: 'border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)] dark:border-teal-900/60 dark:bg-[#0b1815]/95',
-    editor: 'border-slate-200 bg-white dark:border-teal-900/60 dark:bg-[#07110f]',
-    softPanel: 'border-slate-200 bg-slate-50 dark:border-teal-900/60 dark:bg-[#10221e]',
-    primaryButton: 'bg-cyan-700 text-white hover:bg-cyan-800 dark:bg-cyan-500 dark:text-slate-950 dark:hover:bg-cyan-400',
-    accent: 'bg-cyan-700 text-white hover:bg-cyan-700 dark:bg-cyan-400 dark:text-slate-950',
-  },
-  lightweight: {
-    page: 'bg-[#fbfaf7] dark:bg-[#06110f]',
-    grid: 'opacity-[0.035] dark:opacity-[0.06]',
-    card: 'border-stone-200 bg-white/95 shadow-[0_20px_70px_rgba(68,64,60,0.08)] dark:border-teal-900/60 dark:bg-[#0b1815]/95',
-    editor: 'border-stone-200 bg-white dark:border-teal-900/60 dark:bg-[#07110f]',
-    softPanel: 'border-stone-200 bg-[#fffdf8] dark:border-teal-900/60 dark:bg-[#10221e]',
-    primaryButton: 'bg-emerald-700 text-white hover:bg-emerald-800 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400',
-    accent: 'bg-emerald-700 text-white hover:bg-emerald-700 dark:bg-emerald-400 dark:text-zinc-950',
+    page: 'bg-[var(--np-canvas)]',
+    grid: 'opacity-[0.035] dark:opacity-[0.04]',
+    card: 'border-[var(--np-rule)] bg-[var(--np-surface)] shadow-none',
+    editor: 'border-[var(--np-rule)] bg-[var(--np-surface-raised)]',
+    softPanel: 'border-[var(--np-rule)] bg-[var(--np-surface-soft)]',
+    primaryButton: 'bg-[var(--np-accent)] text-[var(--np-ink)] hover:bg-[var(--np-accent-hover)]',
+    accent: 'bg-[var(--np-accent)] text-[var(--np-ink)] hover:bg-[var(--np-accent-hover)]',
   },
 }
 
 export function isVisualStyle(value: string): value is VisualStyle {
-  return visualStyleOptions.some(option => option.value === value)
+  return value === DEFAULT_VISUAL_STYLE
 }
 
-export function getVisualStyleLabel(value: VisualStyle) {
-  return visualStyleOptions.find(option => option.value === value)?.label || value
+export function normalizeVisualStyle(value: unknown): VisualStyle {
+  void value
+  return DEFAULT_VISUAL_STYLE
+}
+
+export function isLegacyVisualStyle(value: unknown): value is LegacyVisualStyle {
+  return typeof value === 'string' && LEGACY_VISUAL_STYLES.has(value as LegacyVisualStyle)
+}
+
+export function getVisualStyleLabel(_value: VisualStyle) {
+  return visualStyleOptions[0].label
 }

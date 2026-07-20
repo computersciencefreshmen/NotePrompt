@@ -3,7 +3,7 @@
 import React, { createContext, useCallback, useContext, useState, useEffect } from 'react'
 import { User, LoginRequest, RegisterRequest, AuthResponse } from '@/types'
 import { api } from '@/lib/api'
-import { useTheme } from '@/contexts/ThemeContext'
+import { resolveThemePreference, useTheme } from '@/contexts/ThemeContext'
 import { useUISettings } from '@/contexts/UISettingsContext'
 
 interface AuthContextType {
@@ -27,8 +27,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await api.user.getPreferences()
       if (response.success && response.data) {
-        setTheme(response.data.theme)
+        const resolvedTheme = resolveThemePreference(response.data.theme)
+        setTheme(resolvedTheme)
         setVisualStyle(response.data.visualStyle)
+        if (response.data.theme === 'system') {
+          void api.user
+            .updatePreferences({ theme: resolvedTheme, visualStyle: 'workbench' })
+            .catch(error => console.warn('Failed to persist normalized theme preference:', error))
+        }
       }
     } catch (error) {
       // 偏好同步是增强能力，失败不能使有效会话退出。

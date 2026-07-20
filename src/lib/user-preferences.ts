@@ -1,20 +1,15 @@
 import type { EditMode } from '@/types'
 
-export type VisualStylePreference = 'workbench' | 'editorial' | 'dashboard' | 'lightweight'
+export type VisualStylePreference = 'workbench'
+export type ThemePreference = 'light' | 'dark' | 'system'
+export type LocalePreference = 'zh-CN' | 'en-US'
 
-const VISUAL_STYLES = new Set<VisualStylePreference>([
+const LEGACY_VISUAL_STYLES = new Set([
   'workbench',
   'editorial',
   'dashboard',
   'lightweight',
 ])
-
-function isVisualStyle(value: string): value is VisualStylePreference {
-  return VISUAL_STYLES.has(value as VisualStylePreference)
-}
-
-export type ThemePreference = 'light' | 'dark' | 'system'
-export type LocalePreference = 'zh-CN' | 'en-US'
 
 export type UserPreferencesDto = {
   locale: LocalePreference
@@ -27,42 +22,26 @@ export type UserPreferencesUpdate = Partial<UserPreferencesDto>
 
 export const DEFAULT_USER_PREFERENCES: UserPreferencesDto = {
   locale: 'zh-CN',
-  theme: 'system',
+  theme: 'light',
   defaultEditorMode: 'normal',
   visualStyle: 'workbench',
 }
 
 const ALLOWED_KEYS = new Set(['locale', 'theme', 'defaultEditorMode', 'visualStyle'])
 
-function parseJsonObject(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-  if (typeof value !== 'string' || !value.trim()) return {}
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {}
-  } catch {
-    return {}
-  }
-}
-
 export function normalizeUserPreferencesRow(
   row?: Record<string, unknown> | null,
 ): UserPreferencesDto {
-  const extras = parseJsonObject(row?.preferences)
   const locale = row?.locale === 'en-US' ? 'en-US' : 'zh-CN'
-  const theme = ['light', 'dark', 'system'].includes(String(row?.theme))
+  const theme: ThemePreference = ['light', 'dark', 'system'].includes(String(row?.theme))
     ? row?.theme as ThemePreference
     : DEFAULT_USER_PREFERENCES.theme
   const defaultEditorMode = row?.default_editor_mode === 'professional'
     ? 'professional'
     : 'normal'
-  const visualStyle = typeof extras.visualStyle === 'string' && isVisualStyle(extras.visualStyle)
-    ? extras.visualStyle
-    : DEFAULT_USER_PREFERENCES.visualStyle
+  // All historical visual styles now resolve to the single product system.
+  // The wire value intentionally stays `workbench` for cached-client safety.
+  const visualStyle: VisualStylePreference = 'workbench'
 
   return { locale, theme, defaultEditorMode, visualStyle }
 }
@@ -88,6 +67,8 @@ export function parseUserPreferencesUpdate(input: unknown): UserPreferencesUpdat
     if (!['light', 'dark', 'system'].includes(String(source.theme))) {
       throw new TypeError('主题偏好无效')
     }
+    // `system` remains a one-release wire compatibility marker. New clients
+    // resolve it against the device and immediately rewrite light or dark.
     update.theme = source.theme as ThemePreference
   }
   if (source.defaultEditorMode !== undefined) {
@@ -97,10 +78,10 @@ export function parseUserPreferencesUpdate(input: unknown): UserPreferencesUpdat
     update.defaultEditorMode = source.defaultEditorMode
   }
   if (source.visualStyle !== undefined) {
-    if (typeof source.visualStyle !== 'string' || !isVisualStyle(source.visualStyle)) {
+    if (typeof source.visualStyle !== 'string' || !LEGACY_VISUAL_STYLES.has(source.visualStyle)) {
       throw new TypeError('界面风格无效')
     }
-    update.visualStyle = source.visualStyle
+    update.visualStyle = 'workbench'
   }
 
   if (Object.keys(update).length === 0) {

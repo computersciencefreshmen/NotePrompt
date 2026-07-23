@@ -40,6 +40,7 @@ const headerCopy = {
     closeNavigation: '关闭导航菜单',
     accountMenu: '账户菜单',
     language: '语言',
+    theme: '主题',
     chinese: '切换为中文',
     english: 'Switch to English',
     roles: { admin: '管理员', pro: '专业版', free: '免费版' },
@@ -62,6 +63,7 @@ const headerCopy = {
     closeNavigation: 'Close navigation menu',
     accountMenu: 'Account menu',
     language: 'Language',
+    theme: 'Theme',
     chinese: '切换为中文',
     english: 'Switch to English',
     roles: { admin: 'Admin', pro: 'Pro', free: 'Free' },
@@ -150,20 +152,20 @@ export default function Header() {
   return (
     <header className="relative z-40 border-b border-[var(--np-rule)] bg-[color-mix(in_srgb,var(--np-surface)_94%,transparent)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+        <div className="flex h-16 items-center justify-between gap-3">
           {/* Logo and Navigation */}
-          <div className="flex items-center space-x-8">
-            <Link href={href('/')} className="flex items-center">
+          <div className="flex min-w-0 items-center gap-7">
+            <Link href={href('/')} className="flex shrink-0 items-center">
               <span className="note-prompt-brand text-xl font-semibold tracking-[-0.02em] text-[var(--np-ink)]">Note Prompt</span>
             </Link>
 
-            <nav aria-label={copy.primaryNavigation} className="hidden md:flex space-x-6">
+            <nav aria-label={copy.primaryNavigation} className="hidden items-center gap-5 text-sm lg:flex">
               {navigationItems.map(item => (
                 <Link
                   key={item.path}
                   href={href(item.path)}
                   aria-current={isCurrentPath(item.path) ? 'page' : undefined}
-                  className={`${navLinkClass} ${isCurrentPath(item.path) ? 'font-semibold' : ''}`}
+                  className={`${navLinkClass} inline-flex min-h-11 items-center whitespace-nowrap ${isCurrentPath(item.path) ? 'font-semibold' : ''}`}
                 >
                   {item.label}
                 </Link>
@@ -172,11 +174,11 @@ export default function Header() {
           </div>
 
           {/* User Actions */}
-          <div className="flex items-center space-x-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <button
               ref={mobileMenuButtonRef}
               type="button"
-              className="inline-flex h-11 w-11 items-center justify-center rounded-md text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)] md:hidden"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-md text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)] lg:hidden"
               aria-label={mobileMenuOpen ? copy.closeNavigation : copy.openNavigation}
               aria-expanded={mobileMenuOpen}
               aria-controls="mobile-primary-navigation"
@@ -185,9 +187,11 @@ export default function Header() {
               {mobileMenuOpen ? <X className="h-4 w-4" aria-hidden="true" /> : <Menu className="h-4 w-4" aria-hidden="true" />}
             </button>
             <GlobalSearch locale={locale} />
-            <ThemeToggle />
+            <div className="max-[359px]:hidden">
+              <ThemeToggle />
+            </div>
             <div
-              className="hidden items-center rounded-full border border-[var(--np-rule)] bg-[var(--np-surface-soft)] p-0.5 text-xs md:flex"
+              className="hidden items-center rounded-full border border-[var(--np-rule)] bg-[var(--np-surface-soft)] p-0.5 text-xs lg:flex"
               role="group"
               aria-label={copy.language}
             >
@@ -205,13 +209,13 @@ export default function Header() {
               ))}
             </div>
             {loading ? (
-              <div className="h-8 w-8 animate-pulse rounded-full bg-[var(--np-surface-soft)]" aria-hidden="true" />
+              <div className="h-11 w-11 animate-pulse rounded-full bg-[var(--np-surface-soft)] motion-reduce:animate-none" aria-hidden="true" />
             ) : user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="relative h-8 w-8 rounded-full"
+                    className="relative h-11 w-11 rounded-full p-0"
                     aria-label={`${copy.accountMenu}: ${getUserDisplayName()}`}
                   >
                     <Avatar className="h-8 w-8">
@@ -308,11 +312,11 @@ export default function Header() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="hidden items-center space-x-3 md:flex">
-                <Button variant="ghost" asChild>
+              <div className="hidden items-center gap-2 lg:flex">
+                <Button variant="ghost" className="min-h-11" asChild>
                   <Link href={href('/login')}>{copy.login}</Link>
                 </Button>
-                <Button asChild>
+                <Button className="min-h-11 bg-[var(--np-accent)] text-[var(--np-ink)] hover:bg-[var(--np-accent-hover)]" asChild>
                   <Link href={href('/register')}>{copy.register}</Link>
                 </Button>
               </div>
@@ -323,9 +327,13 @@ export default function Header() {
       <div
         ref={mobileMenuRef}
         id="mobile-primary-navigation"
-        className={`${mobileMenuOpen ? 'block' : 'hidden'} border-t border-[var(--np-rule)] bg-[var(--np-surface)] px-4 py-4 md:hidden`}
+        className={`${mobileMenuOpen ? 'block' : 'hidden'} border-t border-[var(--np-rule)] bg-[var(--np-surface)] px-4 py-4 lg:hidden`}
       >
         <nav aria-label={copy.primaryNavigation} className="mx-auto max-w-7xl space-y-1">
+          <div className="mb-3 flex min-h-11 items-center justify-between border-b border-[var(--np-rule)] px-3 pb-3 min-[360px]:hidden">
+            <span className="text-xs font-medium text-[var(--np-ink-muted)]">{copy.theme}</span>
+            <ThemeToggle />
+          </div>
           {navigationItems.map(item => (
             <Link
               key={item.path}

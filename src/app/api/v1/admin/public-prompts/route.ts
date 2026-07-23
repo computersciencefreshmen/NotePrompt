@@ -40,11 +40,11 @@ export async function GET(request: NextRequest) {
     }
     const { limit, offset } = paginationResult.value
     const queryParams: Array<string | number> = []
-    let whereClause = ''
+    let whereClause = "WHERE pp.publication_state = 'published'"
     if (searchResult.value) {
-      whereClause = `WHERE pp.title LIKE ?
+      whereClause += ` AND (pp.title LIKE ?
         OR pp.description LIKE ?
-        OR u.username LIKE ?`
+        OR u.username LIKE ?)`
       const pattern = `%${searchResult.value}%`
       queryParams.push(pattern, pattern, pattern)
     }

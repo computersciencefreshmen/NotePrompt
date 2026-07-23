@@ -1,6 +1,7 @@
 // === 编辑模式相关类型 ===
 export type EditMode = 'normal' | 'professional'
 export type PromptOptimizerMode = 'simple' | 'pro'
+export type PublicationState = 'published' | 'withdrawn'
 
 export interface PromptAttachmentDraft {
   id: string
@@ -179,6 +180,7 @@ export interface PublicPrompt {
   views_count: number
   favorites_count: number
   is_featured: boolean
+  publication_state?: PublicationState
   created_at: string
   updated_at: string
   is_favorited?: boolean
@@ -516,6 +518,7 @@ export interface AdminPrompt {
   category_id?: number
   category?: string
   is_featured: boolean
+  publication_state?: PublicationState
   tags?: string[]
   created_at: string
   updated_at: string

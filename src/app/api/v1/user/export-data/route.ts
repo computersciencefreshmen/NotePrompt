@@ -66,7 +66,12 @@ export async function GET(request: NextRequest) {
         `SELECT
            (SELECT COUNT(*) FROM user_prompts WHERE user_id = ?) AS total_prompts,
            (SELECT COUNT(*) FROM folders WHERE user_id = ?) AS total_folders,
-           (SELECT COUNT(*) FROM user_favorites WHERE user_id = ?) AS published_favorites,
+           (SELECT COUNT(*)
+              FROM user_favorites favorite
+              JOIN public_prompts public_prompt
+                ON public_prompt.id = favorite.public_prompt_id
+               AND public_prompt.publication_state = 'published'
+             WHERE favorite.user_id = ?) AS published_favorites,
            (SELECT COUNT(*) FROM curated_prompt_favorites WHERE user_id = ?) AS curated_favorites,
            (SELECT COUNT(*) FROM user_imported_folders WHERE user_id = ?) AS total_imported_folders,
            (SELECT COUNT(*)
@@ -90,7 +95,8 @@ export async function GET(request: NextRequest) {
              )
              FROM user_favorites favorite
              JOIN public_prompts public_prompt ON public_prompt.id = favorite.public_prompt_id
-             WHERE favorite.user_id = ?
+              WHERE favorite.user_id = ?
+                AND public_prompt.publication_state = 'published'
            ), 0) AS source_bytes`,
         [userId, userId, userId, userId, userId, userId, userId, userId],
       )
@@ -146,6 +152,7 @@ export async function GET(request: NextRequest) {
            FROM user_favorites favorite
            JOIN public_prompts public_prompt ON favorite.public_prompt_id = public_prompt.id
           WHERE favorite.user_id = ?
+            AND public_prompt.publication_state = 'published'
           ORDER BY favorite.created_at DESC
           LIMIT ${EXPORT_QUERY_ROW_LIMIT}`,
         [userId],

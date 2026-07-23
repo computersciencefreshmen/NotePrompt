@@ -68,9 +68,9 @@ test('normal prompt writes keep tag replacement inside the prompt transaction', 
 })
 
 test('admin public prompt content and tags update atomically', async () => {
-  const updatePublicPrompt = methodSource('updatePublicPromptWithTags', 'deletePublicPrompt')
+  const updatePublicPrompt = methodSource('updatePublicPromptWithTags', 'createFolder')
   assert.match(updatePublicPrompt, /beginTransaction\(\)/)
-  assert.match(updatePublicPrompt, /SELECT id FROM public_prompts WHERE id = \? FOR UPDATE/)
+  assert.match(updatePublicPrompt, /SELECT id FROM public_prompts WHERE id = \? AND publication_state = 'published' FOR UPDATE/)
   assert.match(updatePublicPrompt, /replacePublicPromptTags\(connection, id, updates\.tags\)/)
   assert.match(updatePublicPrompt, /commit\(\)/)
 

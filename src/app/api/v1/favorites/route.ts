@@ -71,6 +71,9 @@ export async function GET(request: NextRequest) {
                     favorite.public_prompt_id AS prompt_id,
                     favorite.created_at AS favorited_at
                FROM user_favorites favorite
+               JOIN public_prompts publication
+                 ON publication.id = favorite.public_prompt_id
+                AND publication.publication_state = 'published'
               WHERE favorite.user_id = ?
              UNION ALL
              SELECT 'curated' AS source,
@@ -85,7 +88,12 @@ export async function GET(request: NextRequest) {
       ),
       db.query(
         `SELECT
-           (SELECT COUNT(*) FROM user_favorites WHERE user_id = ?)
+           (SELECT COUNT(*)
+              FROM user_favorites favorite
+              JOIN public_prompts publication
+                ON publication.id = favorite.public_prompt_id
+               AND publication.publication_state = 'published'
+             WHERE favorite.user_id = ?)
            + (SELECT COUNT(*) FROM curated_prompt_favorites WHERE user_id = ?) AS total`,
         [auth.user.id, auth.user.id],
       ),
@@ -129,7 +137,8 @@ export async function GET(request: NextRequest) {
              FROM public_prompts publication
              JOIN users author ON author.id = publication.author_id
              LEFT JOIN categories category ON category.id = publication.category_id
-             WHERE publication.id IN (${publishedIds.map(() => '?').join(',')})`,
+             WHERE publication.publication_state = 'published'
+               AND publication.id IN (${publishedIds.map(() => '?').join(',')})`,
             publishedIds,
           )
         : Promise.resolve({ rows: [] }),
@@ -228,7 +237,7 @@ export async function POST(request: NextRequest) {
       added = await addCuratedPromptFavorite(auth.user.id, prompt)
     } else {
       const promptResult = await db.query(
-        'SELECT id FROM public_prompts WHERE id = ? LIMIT 1',
+        "SELECT id FROM public_prompts WHERE id = ? AND publication_state = 'published' LIMIT 1",
         [promptId],
       )
       if ((promptResult.rows as unknown[]).length === 0) {
@@ -238,10 +247,29 @@ export async function POST(request: NextRequest) {
         )
       }
       const result = await db.query(
-        'INSERT IGNORE INTO user_favorites (user_id, public_prompt_id) VALUES (?, ?)',
+        `INSERT IGNORE INTO user_favorites (user_id, public_prompt_id)
+         SELECT ?, publication.id
+           FROM public_prompts publication
+          WHERE publication.id = ?
+            AND publication.publication_state = 'published'`,
         [auth.user.id, promptId],
       )
       added = Number((result.rows as MutationResult).affectedRows) === 1
+      if (!added) {
+        const publishedResult = await db.query(
+          `SELECT id
+             FROM public_prompts
+            WHERE id = ? AND publication_state = 'published'
+            LIMIT 1`,
+          [promptId],
+        )
+        if ((publishedResult.rows as unknown[]).length === 0) {
+          return NextResponse.json(
+            { success: false, error: '公共提示词不存在' },
+            { status: 404 },
+          )
+        }
+      }
     }
 
     if (!added) {

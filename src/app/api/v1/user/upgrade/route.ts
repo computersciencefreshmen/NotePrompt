@@ -16,13 +16,20 @@ function readCount(rows: unknown) {
 
 async function getContributionCounts(userId: number): Promise<ContributionCounts> {
   const [publicPromptsResult, totalPromptsResult, externalFavoritersResult] = await Promise.all([
-    db.query('SELECT COUNT(*) AS count FROM public_prompts WHERE author_id = ?', [userId]),
+    db.query(
+      `SELECT COUNT(*) AS count
+         FROM public_prompts
+        WHERE author_id = ? AND publication_state = 'published'`,
+      [userId],
+    ),
     db.query('SELECT COUNT(*) AS count FROM user_prompts WHERE user_id = ?', [userId]),
     db.query(
       `SELECT COUNT(DISTINCT uf.user_id) AS count
          FROM user_favorites uf
          JOIN public_prompts pp ON uf.public_prompt_id = pp.id
-        WHERE pp.author_id = ? AND uf.user_id <> ?`,
+        WHERE pp.author_id = ?
+          AND pp.publication_state = 'published'
+          AND uf.user_id <> ?`,
       [userId, userId],
     ),
   ])

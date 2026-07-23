@@ -55,10 +55,21 @@ export async function GET(request: NextRequest) {
       )
     }
     const { page, limit, offset } = paginationResult.value
+    const state = searchParams.get('state') || 'published'
+    if (!['published', 'withdrawn', 'all'].includes(state)) {
+      return NextResponse.json(
+        { success: false, error: 'state must be published, withdrawn, or all' },
+        { status: 400 },
+      )
+    }
     const search = searchResult.value
 
     const conditions = ['pp.author_id = ?']
     const queryParams: Array<string | number> = [auth.user.id]
+    if (state !== 'all') {
+      conditions.push('pp.publication_state = ?')
+      queryParams.push(state)
+    }
     if (search) {
       conditions.push('(pp.title LIKE ? OR pp.content LIKE ? OR pp.description LIKE ?)')
       const pattern = `%${search}%`
@@ -83,6 +94,7 @@ export async function GET(request: NextRequest) {
          pp.category_id,
          pp.views_count,
          pp.is_featured,
+         pp.publication_state,
          pp.created_at,
          pp.updated_at,
          u.username AS author,

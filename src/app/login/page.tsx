@@ -189,7 +189,7 @@ function LoginContent() {
               </TabsList>
             </Tabs>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form method="post" onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
                   {copy.username}
@@ -198,6 +198,7 @@ function LoginContent() {
                   id="username"
                   name="username"
                   type="text"
+                  autoComplete="username"
                   value={formData.username}
                   onChange={handleChange}
                   placeholder={copy.usernamePlaceholder}
@@ -214,6 +215,7 @@ function LoginContent() {
                   id="password"
                   name="password"
                   type="password"
+                  autoComplete="current-password"
                   value={formData.password}
                   onChange={handleChange}
                   placeholder={copy.passwordPlaceholder}

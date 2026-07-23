@@ -9,8 +9,11 @@ interface SearchInputProps {
   placeholder?: string
   className?: string
   debounceMs?: number
+  resetSignal?: number
   showClearButton?: boolean
   onClear?: () => void
+  ariaLabel?: string
+  clearLabel?: string
 }
 
 export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
@@ -20,8 +23,11 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
     placeholder = "搜索...", 
     className,
     debounceMs = 500,
+    resetSignal = 0,
     showClearButton = true,
-    onClear
+    onClear,
+    ariaLabel,
+    clearLabel = '清除搜索',
   }, ref) => {
     const [inputValue, setInputValue] = useState(value)
     const [isComposing, setIsComposing] = useState(false)
@@ -65,6 +71,9 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 
     // 处理清除按钮
     const handleClear = useCallback(() => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
       setInputValue('')
       onChange('')
       onClear?.()
@@ -74,8 +83,11 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 
     // 同步外部value变化
     useEffect(() => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
       setInputValue(value)
-    }, [value])
+    }, [resetSignal, value])
 
     // 清理定时器
     useEffect(() => {
@@ -88,7 +100,10 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 
     return (
       <div className={cn("relative", className)}>
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4 pointer-events-none" />
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--np-ink-muted)]"
+          aria-hidden="true"
+        />
         <Input
           ref={(node) => {
             // 同时设置两个ref
@@ -100,20 +115,21 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
             inputRef.current = node
           }}
           value={inputValue}
+          aria-label={ariaLabel || placeholder}
           onChange={handleInputChange}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
           placeholder={placeholder}
-          className="pl-10 pr-10"
+          className="h-11 rounded-[8px] border-[var(--np-rule)] bg-[var(--np-surface)] pl-10 pr-12 text-[var(--np-ink)] placeholder:text-[var(--np-ink-muted)]"
         />
         {showClearButton && inputValue && (
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-            aria-label="清除搜索"
+            className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-[8px] text-[var(--np-ink-muted)] transition-colors hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)]"
+            aria-label={clearLabel}
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
       </div>
@@ -121,4 +137,4 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
   }
 )
 
-SearchInput.displayName = "SearchInput" 
+SearchInput.displayName = "SearchInput"

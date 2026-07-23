@@ -17,7 +17,7 @@ interface PromptCardProps {
   prompt: PublicPrompt | Prompt
   type: 'public' | 'user'
   onEdit?: (id: number) => void
-  onDelete?: (id: number, source?: PublicPrompt['source']) => void
+  onDelete?: (id: number, source?: PublicPrompt['source']) => void | Promise<void>
   onFavoriteChange?: () => void
   onClick?: (prompt: PublicPrompt | Prompt) => void
   onTagClick?: (tag: string) => void
@@ -338,7 +338,7 @@ export default function PromptCard({
     setLoading(true)
     try {
       // 调用父组件的删除回调，让父组件处理具体的删除逻辑
-      onDelete?.(prompt.id, isPublicPrompt ? publicPrompt.source : undefined)
+      await onDelete?.(prompt.id, isPublicPrompt ? publicPrompt.source : undefined)
       setShowDeleteDialog(false)
     } catch (error) {
       toast({

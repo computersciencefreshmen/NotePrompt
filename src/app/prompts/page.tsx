@@ -3,56 +3,47 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Loader2, Plus, FileText, ArrowUp } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Loader2, Plus, FileText, PanelLeft, RotateCcw } from 'lucide-react'
 import { SearchInput } from '@/components/ui/search-input'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { useToast } from '@/hooks/use-toast'
-import { Prompt, Folder, ImportedFolder, PublicPrompt } from '@/types'
-import PromptCard, { PromptCardSkeleton } from '@/components/PromptCard'
-import { Card, CardContent } from '@/components/ui/card'
-import StatsCards from '@/components/StatsCards'
-import FolderSection from '@/components/FolderSection'
+import { Prompt, Folder, ImportedFolder } from '@/types'
+import PromptAssetRow, { PromptAssetRowSkeleton } from '@/components/PromptAssetRow'
+import PromptCollectionRail from '@/components/PromptCollectionRail'
 import { NewFolderDialog, FolderSelectDialog } from '@/components/FolderDialogs'
 import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
 
-const DEFAULT_USER_STATS = {
-  total_prompts: 0,
-  total_folders: 0,
-  monthly_usage: 0,
-  total_favorites: 0,
-  ai_optimize_count: 0,
-}
-
 const promptsPageCopy = {
   zh: {
-    title: '我的提示词',
-    subtitle: '管理和优化您的AI提示词库',
+    eyebrow: 'PROMPT LIBRARY',
+    title: '提示词资产库',
+    subtitle: '在一个安静、可检索的工作台中组织、审阅和演进您的提示词。',
     fetchFailedTitle: '获取失败',
     fetchFailedDesc: '获取提示词失败',
     createFolderSuccessTitle: '创建成功',
-    createFolderSuccessDesc: '文件夹创建成功',
+    createFolderSuccessDesc: '收藏集已创建',
     createFolderFailedTitle: '创建失败',
-    createFolderFailedDesc: '创建文件夹失败',
+    createFolderFailedDesc: '创建收藏集失败',
     addSuccessTitle: '添加成功',
-    addSuccessDesc: '提示词已添加到文件夹',
+    addSuccessDesc: '提示词已添加到收藏集',
     addFailedTitle: '添加失败',
-    addFailedDesc: '添加到文件夹失败',
-    duplicateAddDesc: '提示词已在该文件夹中，请勿重复添加',
+    addFailedDesc: '添加到收藏集失败',
+    duplicateAddDesc: '提示词已在该收藏集中，请勿重复添加',
     retryLater: '请稍后重试',
     deleteSuccessTitle: '删除成功',
     deleteSuccessDesc: '提示词已删除',
     deleteFailedTitle: '删除失败',
     deleteFailedDesc: '删除提示词失败',
     publishSuccessTitle: '发布成功',
-    publishPromptSuccessDesc: '提示词已发布到公共库',
-    publishFolderSuccessDesc: '文件夹已发布到公共库',
+    publishPromptSuccessDesc: '发布请求已完成，请在发现页核对公开内容',
+    publishFolderSuccessDesc: '已创建收藏集的公开快照',
     publishFailedTitle: '发布失败',
     publishPromptFailedDesc: '发布提示词失败',
-    publishFolderFailedDesc: '发布文件夹失败',
-    sectionTitle: '我的提示词',
+    publishFolderFailedDesc: '发布收藏集快照失败',
+    sectionTitle: '全部提示词',
     newPrompt: '新建提示词',
     searchPlaceholder: '搜索提示词...',
     folderPlaceholder: '选择文件夹',
@@ -64,32 +55,45 @@ const promptsPageCopy = {
     empty: '暂无提示词',
     firstPrompt: '创建第一个提示词',
     loadingMore: '加载更多...',
+    loadMore: '加载更多',
+    resultCount: (count: number) => `${count} 项资产`,
+    openCollections: '打开收藏集',
+    collectionsTitle: '收藏集',
+    collectionsLoading: '正在加载收藏集…',
+    collectionsLoadError: '收藏集暂时无法刷新。',
+    retry: '重试',
+    resetFilters: '重置筛选',
+    loadError: '提示词暂时无法刷新，已保留可用内容。',
+    listLabel: '提示词资产列表',
+    searchLabel: '搜索提示词资产',
+    clearSearchLabel: '清除提示词搜索',
   },
   en: {
-    title: 'My Prompts',
-    subtitle: 'Manage, organize, and improve your reusable AI prompt library.',
+    eyebrow: 'PROMPT LIBRARY',
+    title: 'Prompt assets',
+    subtitle: 'Organize, review, and evolve your prompts in one calm, searchable workbench.',
     fetchFailedTitle: 'Unable to load',
     fetchFailedDesc: 'Could not load prompts.',
-    createFolderSuccessTitle: 'Folder created',
-    createFolderSuccessDesc: 'Your folder is ready.',
+    createFolderSuccessTitle: 'Collection created',
+    createFolderSuccessDesc: 'Your collection is ready.',
     createFolderFailedTitle: 'Create failed',
-    createFolderFailedDesc: 'Could not create the folder.',
+    createFolderFailedDesc: 'Could not create the collection.',
     addSuccessTitle: 'Added',
-    addSuccessDesc: 'The prompt was added to the folder.',
+    addSuccessDesc: 'The prompt was added to the collection.',
     addFailedTitle: 'Add failed',
-    addFailedDesc: 'Could not add the prompt to the folder.',
-    duplicateAddDesc: 'This prompt is already in that folder.',
+    addFailedDesc: 'Could not add the prompt to the collection.',
+    duplicateAddDesc: 'This prompt is already in that collection.',
     retryLater: 'Please try again later.',
     deleteSuccessTitle: 'Deleted',
     deleteSuccessDesc: 'The prompt has been deleted.',
     deleteFailedTitle: 'Delete failed',
     deleteFailedDesc: 'Could not delete the prompt.',
     publishSuccessTitle: 'Published',
-    publishPromptSuccessDesc: 'The prompt has been published to the public library.',
-    publishFolderSuccessDesc: 'The folder has been published to the public library.',
+    publishPromptSuccessDesc: 'Publishing completed. Review the public content in Discover.',
+    publishFolderSuccessDesc: 'A public snapshot of the collection has been created.',
     publishFailedTitle: 'Publish failed',
     publishPromptFailedDesc: 'Could not publish the prompt.',
-    publishFolderFailedDesc: 'Could not publish the folder.',
+    publishFolderFailedDesc: 'Could not publish the collection snapshot.',
     sectionTitle: 'My prompts',
     newPrompt: 'New prompt',
     searchPlaceholder: 'Search prompts...',
@@ -102,6 +106,18 @@ const promptsPageCopy = {
     empty: 'No prompts yet',
     firstPrompt: 'Create first prompt',
     loadingMore: 'Loading more...',
+    loadMore: 'Load more',
+    resultCount: (count: number) => `${count} assets`,
+    openCollections: 'Open collections',
+    collectionsTitle: 'Collections',
+    collectionsLoading: 'Loading collections…',
+    collectionsLoadError: 'Collections could not be refreshed.',
+    retry: 'Retry',
+    resetFilters: 'Reset filters',
+    loadError: 'Prompts could not be refreshed. Safe existing content has been preserved.',
+    listLabel: 'Prompt asset list',
+    searchLabel: 'Search prompt assets',
+    clearSearchLabel: 'Clear prompt search',
   },
 }
 
@@ -120,18 +136,17 @@ export default function PromptsPage() {
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [folders, setFolders] = useState<Folder[]>([])
   const [importedFolders, setImportedFolders] = useState<ImportedFolder[]>([])
-  const [userStats, setUserStats] = useState<{
-    total_prompts: number;
-    total_folders: number;
-    monthly_usage: number;
-    total_favorites: number;
-    ai_optimize_count: number;
-  } | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [collectionsLoading, setCollectionsLoading] = useState(true)
+  const [collectionsError, setCollectionsError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
+  const [searchResetSignal, setSearchResetSignal] = useState(0)
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
   const [hasMore, setHasMore] = useState(true)
 
   // 对话框状态
@@ -140,52 +155,59 @@ export default function PromptsPage() {
   const [newFolderLoading, setNewFolderLoading] = useState(false)
   const [showFolderSelectDialog, setShowFolderSelectDialog] = useState(false)
   const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
-  const [showBackToTop, setShowBackToTop] = useState(false)
-  const loadingMoreRef = useRef(false)
+  const [showCollectionsDialog, setShowCollectionsDialog] = useState(false)
+  const requestSequenceRef = useRef(0)
+  const listHeadingRef = useRef<HTMLHeadingElement>(null)
   const userId = user?.id
 
-  // 获取用户统计
-  const fetchUserStats = useCallback(async () => {
-    try {
-      const response = await api.user.getStats()
-      if (response.success && response.data) {
-        setUserStats(response.data)
-      }
-    } catch (error) {
-      console.warn('Failed to fetch user stats, using fallback stats:', error)
-      setUserStats(DEFAULT_USER_STATS)
-    }
-  }, [])
-
   // 获取文件夹列表
-  const fetchFolders = useCallback(async () => {
-    try {
-      const response = await api.folders.list()
-      
-      if (response.success && response.data) {
-        setFolders(response.data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch folders:', error)
-    }
+  const loadFolders = useCallback(async () => {
+    const response = await api.folders.list()
+    if (!response.success || !response.data) throw new Error(response.error || 'Failed to load collections')
+    return response.data
   }, [])
 
-  // 获取导入文件夹列表
-  const fetchImportedFolders = useCallback(async () => {
-    try {
-      const response = await api.user.getImportedFolders()
-      
-      if (response.success && response.data) {
-        setImportedFolders(response.data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch imported folders:', error)
-    }
+  const loadImportedFolders = useCallback(async () => {
+    const response = await api.user.getImportedFolders()
+    if (!response.success || !response.data) throw new Error(response.error || 'Failed to load imported collections')
+    return response.data
   }, [])
+
+  const fetchFolders = useCallback(async () => {
+    setFolders(await loadFolders())
+  }, [loadFolders])
+
+  const refreshOwnedCollections = useCallback(async () => {
+    try {
+      await fetchFolders()
+      setCollectionsError('')
+    } catch (error) {
+      console.error('Failed to refresh owned collections:', error)
+      setCollectionsError(copy.collectionsLoadError)
+    }
+  }, [copy.collectionsLoadError, fetchFolders])
+
+  const fetchCollections = useCallback(async () => {
+    setCollectionsLoading(true)
+    setCollectionsError('')
+    try {
+      const [nextFolders, nextImportedFolders] = await Promise.all([
+        loadFolders(),
+        loadImportedFolders(),
+      ])
+      setFolders(nextFolders)
+      setImportedFolders(nextImportedFolders)
+    } catch (error) {
+      console.error('Failed to load collections:', error)
+      setCollectionsError(locale === 'en' ? 'Collections could not be refreshed.' : '收藏集暂时无法刷新。')
+    } finally {
+      setCollectionsLoading(false)
+    }
+  }, [loadFolders, loadImportedFolders, locale])
 
   // 处理查看导入文件夹
   const handleViewImportedFolder = (folder: ImportedFolder) => {
-    router.push(`/imported-folders/${folder.id}`)
+    router.push(withLocaleHref(`/imported-folders/${folder.id}`, locale))
   }
 
   // 获取提示词列表
@@ -196,7 +218,10 @@ export default function PromptsPage() {
     limit?: number;
   } = {}) => {
     const requestedPage = params.page ?? 1
-    setLoading(true)
+    const requestSequence = ++requestSequenceRef.current
+    if (requestedPage === 1) setLoading(true)
+    else setLoadingMore(true)
+    setLoadError('')
     try {
       const response = await api.prompts.list({
         search: searchTerm || undefined,
@@ -206,27 +231,41 @@ export default function PromptsPage() {
         ...params
       })
 
+      if (requestSequence !== requestSequenceRef.current) return
       if (response.success && response.data) {
         if (requestedPage === 1) {
           setPrompts(response.data.items)
         } else {
           setPrompts(prev => [...prev, ...response.data!.items])
         }
+        setPage(response.data.page)
         setTotalPages(response.data.totalPages)
+        setTotalCount(response.data.total)
         setHasMore(response.data.page < response.data.totalPages)
+      } else {
+        throw new Error(response.error || copy.fetchFailedDesc)
       }
     } catch (error) {
+      if (requestSequence !== requestSequenceRef.current) return
       console.error('Failed to fetch prompts:', error)
+      setLoadError(copy.loadError)
       toast({
         title: copy.fetchFailedTitle,
         description: copy.fetchFailedDesc,
         variant: 'destructive',
       })
     } finally {
-      loadingMoreRef.current = false
-      setLoading(false)
+      if (requestSequence === requestSequenceRef.current) {
+        setLoading(false)
+        setLoadingMore(false)
+      }
     }
-  }, [copy.fetchFailedDesc, copy.fetchFailedTitle, searchTerm, selectedFolderId, toast])
+  }, [copy.fetchFailedDesc, copy.fetchFailedTitle, copy.loadError, searchTerm, selectedFolderId, toast])
+
+  const reloadFromFirstPage = useCallback(async () => {
+    setPage(1)
+    await fetchPrompts({ page: 1 })
+  }, [fetchPrompts])
 
   // 创建新文件夹
   const handleCreateFolder = async () => {
@@ -237,16 +276,15 @@ export default function PromptsPage() {
         name: newFolderName.trim(),
         parent_id: null
       })
-      if (response.success) {
-        toast({
-          title: copy.createFolderSuccessTitle,
-          description: copy.createFolderSuccessDesc,
-          variant: 'success',
-        })
-        setNewFolderName('')
-        setShowNewFolderDialog(false)
-        fetchFolders()
-      }
+      if (!response.success) throw new Error(response.error || copy.createFolderFailedDesc)
+      toast({
+        title: copy.createFolderSuccessTitle,
+        description: copy.createFolderSuccessDesc,
+        variant: 'success',
+      })
+      setNewFolderName('')
+      setShowNewFolderDialog(false)
+      await refreshOwnedCollections()
     } catch (error) {
       console.error('Failed to create folder:', error)
       toast({
@@ -259,22 +297,35 @@ export default function PromptsPage() {
     }
   }
 
-  // 处理文件夹编辑
-  const handleEditFolder = (updatedFolder: Folder) => {
-    setFolders(prev => prev.map(f => f.id === updatedFolder.id ? updatedFolder : f))
+  const handleRenameOwnedCollection = async (folderId: number, name: string) => {
+    const response = await api.folders.update(folderId, { name })
+    if (!response.success) throw new Error(response.error || copy.createFolderFailedDesc)
+    setFolders(current => current.map(folder => folder.id === folderId ? { ...folder, name } : folder))
   }
 
-  // 处理文件夹删除
-  const handleDeleteFolder = (folderId: number) => {
-    setFolders(prev => prev.filter(f => f.id !== folderId))
-    setImportedFolders(prev => prev.filter(f => f.id !== folderId))
+  const handleDeleteCollection = async (kind: 'owned' | 'imported', folderId: number) => {
+    if (kind === 'owned') {
+      const response = await api.folders.delete(folderId)
+      if (!response.success) throw new Error(response.error || copy.deleteFailedDesc)
+      setFolders(current => current.filter(folder => folder.id !== folderId))
+      if (selectedFolderId === folderId) {
+        setSelectedFolderId(null)
+      } else {
+        await reloadFromFirstPage()
+      }
+      return
+    }
+
+    const response = await api.user.deleteImportedFolder(folderId)
+    if (!response.success) throw new Error(response.error || copy.deleteFailedDesc)
+    setImportedFolders(current => current.filter(folder => folder.id !== folderId))
   }
 
   // 拖拽相关状态
   const [dragOverFolder, setDragOverFolder] = useState<number | null>(null)
 
   // 处理拖拽开始
-  const handleDragStart = (e: React.DragEvent, prompt: Prompt | PublicPrompt) => {
+  const handleDragStart = (e: React.DragEvent, prompt: Prompt) => {
     e.dataTransfer.setData('application/json', JSON.stringify({
       type: 'prompt',
       id: prompt.id,
@@ -299,29 +350,19 @@ export default function PromptsPage() {
     setDragOverFolder(null)
     
     try {
-      const data = JSON.parse(e.dataTransfer.getData('application/json'))
+      const data = JSON.parse(e.dataTransfer.getData('application/json')) as Record<string, unknown>
       
-      if (data.type === 'prompt') {
-        const response = await api.folders.addPromptToFolder(folderId, data.id)
+      if (data.type === 'prompt' && Number.isInteger(data.id) && Number(data.id) > 0) {
+        const response = await api.folders.addPromptToFolder(folderId, Number(data.id))
         
-        if (response.success) {
-          toast({
-            title: copy.addSuccessTitle,
-            description: locale === 'en' ? `Added "${data.title}" to the folder.` : `已将"${data.title}"添加到文件夹`,
-            variant: 'success',
-          })
-          // 刷新提示词列表和文件夹数据
-          fetchPrompts({ page: 1 })
-          fetchFolders()
-          fetchImportedFolders()
-          fetchUserStats() // 刷新用户统计
-        } else {
-          toast({
-            title: '添加失败',
-            description: response.error || copy.addFailedDesc,
-            variant: 'destructive',
-          })
-        }
+        if (!response.success) throw new Error(response.error || copy.addFailedDesc)
+        const title = typeof data.title === 'string' ? data.title : ''
+        toast({
+          title: copy.addSuccessTitle,
+          description: locale === 'en' ? `Added "${title}" to the collection.` : `已将“${title}”添加到收藏集`,
+          variant: 'success',
+        })
+        await Promise.all([reloadFromFirstPage(), refreshOwnedCollections()])
       }
     } catch (error) {
       toast({
@@ -345,24 +386,15 @@ export default function PromptsPage() {
     try {
       const response = await api.folders.addPromptToFolder(folderId, selectedPromptId)
       
-      if (response.success) {
-        toast({
-          title: copy.addSuccessTitle,
-          description: copy.addSuccessDesc,
-          variant: 'success',
-        })
-        // 刷新数据
-        fetchPrompts({ page: 1 })
-        fetchFolders()
-        fetchImportedFolders()
-        fetchUserStats() // 刷新用户统计
-      } else {
-        toast({
-          title: copy.addFailedTitle,
-          description: response.error || copy.addFailedDesc,
-          variant: 'destructive',
-        })
-      }
+      if (!response.success) throw new Error(response.error || copy.addFailedDesc)
+      toast({
+        title: copy.addSuccessTitle,
+        description: copy.addSuccessDesc,
+        variant: 'success',
+      })
+      await Promise.all([reloadFromFirstPage(), refreshOwnedCollections()])
+      setShowFolderSelectDialog(false)
+      setSelectedPromptId(null)
     } catch (error) {
       // 检查是否是重复添加的错误
       const errorMessage = error instanceof Error ? error.message : copy.addFailedDesc
@@ -379,9 +411,6 @@ export default function PromptsPage() {
           variant: 'destructive',
         })
       }
-    } finally {
-      setShowFolderSelectDialog(false)
-      setSelectedPromptId(null)
     }
   }
 
@@ -389,29 +418,21 @@ export default function PromptsPage() {
   const handleDeletePrompt = async (promptId: number) => {
     try {
       const response = await api.prompts.delete(promptId)
-      if (response.success) {
-        toast({
-          title: copy.deleteSuccessTitle,
-          description: copy.deleteSuccessDesc,
-          variant: 'success',
-        })
-        // 刷新提示词列表
-        fetchPrompts({ page: 1 })
-        // 刷新用户统计
-        fetchUserStats()
-      } else {
-        toast({
-          title: '删除失败',
-          description: response.error || copy.deleteFailedDesc,
-          variant: 'destructive',
-        })
-      }
+      if (!response.success) throw new Error(response.error || copy.deleteFailedDesc)
+      toast({
+        title: copy.deleteSuccessTitle,
+        description: copy.deleteSuccessDesc,
+        variant: 'success',
+      })
+      await Promise.all([reloadFromFirstPage(), refreshOwnedCollections()])
+      window.requestAnimationFrame(() => listHeadingRef.current?.focus())
     } catch (error) {
       toast({
         title: copy.deleteFailedTitle,
         description: `${copy.deleteFailedDesc}. ${copy.retryLater}`,
         variant: 'destructive',
       })
+      throw error
     }
   }
 
@@ -419,27 +440,19 @@ export default function PromptsPage() {
   const handlePublishPrompt = async (prompt: Prompt) => {
     try {
       const response = await api.prompts.publish(prompt.id)
-      if (response.success) {
-        toast({
-          title: copy.publishSuccessTitle,
-          description: copy.publishPromptSuccessDesc,
-          variant: 'success',
-        })
-        // 刷新提示词列表
-        fetchPrompts({ page: 1 })
-      } else {
-        toast({
-          title: copy.publishFailedTitle,
-          description: response.error || copy.publishPromptFailedDesc,
-          variant: 'destructive',
-        })
-      }
+      if (!response.success) throw new Error(response.error || copy.publishPromptFailedDesc)
+      toast({
+        title: copy.publishSuccessTitle,
+        description: copy.publishPromptSuccessDesc,
+        variant: 'success',
+      })
     } catch (error) {
       toast({
         title: copy.publishFailedTitle,
         description: `${copy.publishPromptFailedDesc}. ${copy.retryLater}`,
         variant: 'destructive',
       })
+      throw error
     }
   }
 
@@ -447,75 +460,32 @@ export default function PromptsPage() {
   const handlePublishFolder = async (folderId: number) => {
     try {
       const response = await api.folders.publish(folderId)
-      if (response.success) {
-        toast({
-          title: copy.publishSuccessTitle,
-          description: copy.publishFolderSuccessDesc,
-          variant: 'success',
-        })
-        // 刷新文件夹列表
-        fetchFolders()
-      } else {
-        toast({
-          title: copy.publishFailedTitle,
-          description: response.error || copy.publishFolderFailedDesc,
-          variant: 'destructive',
-        })
-      }
+      if (!response.success) throw new Error(response.error || copy.publishFolderFailedDesc)
+      toast({
+        title: copy.publishSuccessTitle,
+        description: copy.publishFolderSuccessDesc,
+        variant: 'success',
+      })
     } catch (error) {
       toast({
         title: copy.publishFailedTitle,
         description: `${copy.publishFolderFailedDesc}. ${copy.retryLater}`,
         variant: 'destructive',
       })
+      throw error
     }
   }
 
   // 初始加载
   useEffect(() => {
     if (userId) {
-      void Promise.all([
-        fetchUserStats(),
-        fetchFolders(),
-        fetchImportedFolders()
-      ])
+      void fetchCollections()
     }
-  }, [fetchFolders, fetchImportedFolders, fetchUserStats, userId])
+  }, [fetchCollections, userId])
 
-  // 监听滚动事件，显示/隐藏回到顶部按钮
-  useEffect(() => {
-    const handleScroll = () => {
-      setShowBackToTop(window.scrollY > 300)
-    }
-
-    window.addEventListener('scroll', handleScroll)
-    return () => window.removeEventListener('scroll', handleScroll)
-  }, [])
-
-  // 下拉加载更多
-  const handleScroll = useCallback(() => {
-    if (loading || loadingMoreRef.current || !hasMore) return
-
-    const scrollTop = window.scrollY
-    const windowHeight = window.innerHeight
-    const documentHeight = document.documentElement.scrollHeight
-
-    if (scrollTop + windowHeight >= documentHeight - 100) {
-      const nextPage = page + 1
-      loadingMoreRef.current = true
-      setPage(nextPage)
-      void fetchPrompts({ page: nextPage })
-    }
-  }, [fetchPrompts, hasMore, loading, page])
-
-  useEffect(() => {
-    window.addEventListener('scroll', handleScroll)
-    return () => window.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
-
-  // 回到顶部
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+  const handleLoadMore = () => {
+    if (loading || loadingMore || !hasMore) return
+    void fetchPrompts({ page: page + 1 })
   }
 
   // 处理搜索变化
@@ -526,189 +496,324 @@ export default function PromptsPage() {
   // 搜索和筛选变化时重新加载
   useEffect(() => {
     if (userId) {
-      setPage(1)
-      void fetchPrompts({ page: 1 })
+      void reloadFromFirstPage()
     }
-  }, [fetchPrompts, userId])
+  }, [reloadFromFirstPage, userId])
+
+  const handleResetFilters = () => {
+    setSearchTerm('')
+    setSelectedFolderId(null)
+    setSearchResetSignal(current => current + 1)
+  }
+
+  const selectedCollectionName = selectedFolderId == null
+    ? copy.sectionTitle
+    : folders.find(folder => folder.id === selectedFolderId)?.name || copy.sectionTitle
+
+  const hasCollectionData = folders.length > 0 || importedFolders.length > 0
+  const hasActiveFilters = Boolean(searchTerm || selectedFolderId)
+
+  const renderCollections = () => {
+    if (collectionsLoading && !hasCollectionData) {
+      return (
+        <div
+          role="status"
+          className="flex h-full min-h-64 items-center justify-center gap-2 bg-[var(--np-surface)] px-6 text-sm text-[var(--np-ink-muted)]"
+        >
+          <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          {copy.collectionsLoading}
+        </div>
+      )
+    }
+
+    if (collectionsError && !hasCollectionData) {
+      return (
+        <div
+          role="alert"
+          className="flex h-full min-h-64 flex-col items-start justify-center gap-4 bg-[var(--np-surface)] px-6 text-sm text-[var(--np-ink-muted)]"
+        >
+          <p>{copy.collectionsLoadError}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 border-[var(--np-rule)] bg-transparent text-[var(--np-ink)]"
+            onClick={() => void fetchCollections()}
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            {copy.retry}
+          </Button>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {collectionsError ? (
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 border-b border-[var(--np-rule)] bg-[var(--np-accent-soft)] px-3 py-2 text-xs text-[var(--np-ink)]"
+          >
+            <span>{copy.collectionsLoadError}</span>
+            <button
+              type="button"
+              className="min-h-11 shrink-0 rounded-[6px] px-3 font-semibold text-[var(--np-accent-strong)] hover:bg-[var(--np-surface-raised)] lg:min-h-9"
+              onClick={() => void fetchCollections()}
+            >
+              {copy.retry}
+            </button>
+          </div>
+        ) : null}
+        <PromptCollectionRail
+          folders={folders}
+          importedFolders={importedFolders}
+          selectedFolderId={selectedFolderId}
+          locale={locale}
+          dragOverFolder={dragOverFolder}
+          onSelectFolder={(folderId) => {
+            setSelectedFolderId(folderId)
+            setShowCollectionsDialog(false)
+          }}
+          onCreateCollection={() => setShowNewFolderDialog(true)}
+          onRenameOwned={handleRenameOwnedCollection}
+          onDeleteCollection={handleDeleteCollection}
+          onPublishFolder={handlePublishFolder}
+          onViewImported={(folder) => {
+            setShowCollectionsDialog(false)
+            handleViewImportedFolder(folder)
+          }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        />
+      </div>
+    )
+  }
 
   return (
     <ProtectedRoute locale={locale}>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* 页面标题 */}
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">{copy.title}</h1>
-              <p className="text-gray-600 dark:text-gray-400 mt-2">{copy.subtitle}</p>
+      <div className="min-h-screen bg-[var(--np-canvas)] text-[var(--np-ink)]">
+        <main className="mx-auto w-full max-w-[1480px] px-3 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <header className="mb-6 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-3xl">
+              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--np-accent-strong)]">
+                {copy.eyebrow}
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-[var(--np-ink)] sm:text-4xl">
+                {copy.title}
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--np-ink-muted)] sm:text-base">
+                {copy.subtitle}
+              </p>
             </div>
-          </div>
+            <Button
+              type="button"
+              className="min-h-11 w-full rounded-[8px] bg-[var(--np-accent)] px-4 font-semibold text-[var(--np-ink)] shadow-none hover:bg-[var(--np-accent-hover)] sm:w-auto"
+              onClick={() => router.push(withLocaleHref('/prompts/new', locale))}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {copy.newPrompt}
+            </Button>
+          </header>
 
-          {/* 统计卡片 */}
-          <StatsCards stats={userStats} locale={locale} />
+          <div className="min-h-[36rem] overflow-hidden rounded-[10px] border border-[var(--np-rule)] bg-[var(--np-surface)] shadow-[0_18px_50px_rgb(20_20_19_/_0.055)] lg:grid lg:grid-cols-[272px_minmax(0,1fr)]">
+            <div className="hidden min-h-0 lg:block">
+              {renderCollections()}
+            </div>
 
-          <div className="space-y-8">
-            {/* 文件夹区域 */}
-            <div id="folders-section" />
-            <FolderSection
-              folders={folders}
-              importedFolders={importedFolders}
-              onCreateFolder={() => setShowNewFolderDialog(true)}
-              onEditFolder={handleEditFolder}
-              onDeleteFolder={handleDeleteFolder}
-              onPublishFolder={handlePublishFolder}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              dragOverFolder={dragOverFolder}
-              locale={locale}
-            />
-
-            {/* 提示词列表 */}
-            <div id="prompts-section">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-semibold">{copy.sectionTitle}</h2>
-                <div className="flex items-center space-x-2">
-                  <Button 
-                    onClick={() => router.push(withLocaleHref('/prompts/new', locale))} 
-                    className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2"
+            <section className="min-w-0" aria-labelledby="prompt-assets-heading">
+              <div className="border-b border-[var(--np-rule)] bg-[var(--np-surface-raised)] px-4 py-4 sm:px-5">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-11 w-11 shrink-0 border-[var(--np-rule)] bg-[var(--np-surface)] text-[var(--np-ink)] lg:hidden"
+                    onClick={() => setShowCollectionsDialog(true)}
+                    aria-label={copy.openCollections}
                   >
-                    <Plus className="h-4 w-4 mr-2" />
-                    {copy.newPrompt}
+                    <PanelLeft className="h-4 w-4" aria-hidden="true" />
                   </Button>
+                  <SearchInput
+                    value={searchTerm}
+                    onChange={handleSearchChange}
+                    resetSignal={searchResetSignal}
+                    placeholder={copy.searchPlaceholder}
+                    debounceMs={350}
+                    onClear={() => setSearchTerm('')}
+                    ariaLabel={copy.searchLabel}
+                    clearLabel={copy.clearSearchLabel}
+                    className="min-w-0 flex-1"
+                  />
+                  {hasActiveFilters ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="hidden min-h-11 shrink-0 text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)] sm:inline-flex"
+                      onClick={handleResetFilters}
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                      {copy.resetFilters}
+                    </Button>
+                  ) : null}
                 </div>
-              </div>
 
-              {/* 搜索和筛选 */}
-              <Card className="mb-6">
-                <CardContent className="p-4">
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <div className="flex-1">
-                      <SearchInput
-                        value={searchTerm}
-                        onChange={handleSearchChange}
-                        placeholder={copy.searchPlaceholder}
-                        debounceMs={500}
-                        onClear={() => setSearchTerm('')}
-                      />
-                    </div>
-                    <Select value={selectedFolderId?.toString() || 'all'} onValueChange={(value) => setSelectedFolderId(value === 'all' ? null : parseInt(value))}>
-                      <SelectTrigger className="w-full md:w-48">
-                        <SelectValue placeholder={copy.folderPlaceholder} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">{copy.allFolders}</SelectItem>
-                        {folders.map((folder) => (
-                          <SelectItem key={folder.id} value={folder.id.toString()}>
-                            {folder.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="mt-4 flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <h2
+                      id="prompt-assets-heading"
+                      ref={listHeadingRef}
+                      tabIndex={-1}
+                      className="text-lg font-semibold tracking-[-0.018em] text-[var(--np-ink)] outline-none"
+                    >
+                      {selectedCollectionName}
+                    </h2>
+                    {searchTerm ? (
+                      <p className="mt-1 text-xs text-[var(--np-ink-muted)]">
+                        {copy.searchResults(searchTerm)}
+                      </p>
+                    ) : null}
                   </div>
-                </CardContent>
-              </Card>
-
-              {/* 搜索状态指示器 */}
-              {searchTerm && (
-                <div className="mb-4">
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {copy.searchResults(searchTerm)}
+                  <p className="font-mono text-xs tabular-nums text-[var(--np-ink-muted)]" aria-live="polite">
+                    {loading ? '—' : copy.resultCount(totalCount)}
                   </p>
                 </div>
-              )}
 
-              {/* 提示词网格 */}
-              {loading && prompts.length === 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" aria-label={copy.loadingLabel}>
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <PromptCardSkeleton key={index} />
-                  ))}
+                {hasActiveFilters ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="mt-3 min-h-11 w-full justify-center text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)] sm:hidden"
+                    onClick={handleResetFilters}
+                  >
+                    <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                    {copy.resetFilters}
+                  </Button>
+                ) : null}
+              </div>
+
+              {loadError && prompts.length > 0 ? (
+                <div
+                  role="alert"
+                  className="flex flex-col gap-3 border-b border-[var(--np-rule)] bg-[var(--np-accent-soft)] px-4 py-3 text-sm text-[var(--np-ink)] sm:flex-row sm:items-center sm:justify-between sm:px-5"
+                >
+                  <span>{loadError}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 self-start text-[var(--np-accent-strong)] hover:bg-[var(--np-surface-raised)] sm:min-h-9 sm:self-auto"
+                    onClick={() => void reloadFromFirstPage()}
+                  >
+                    <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                    {copy.retry}
+                  </Button>
                 </div>
-              ) : prompts.length === 0 ? (
-                <Card>
-                  <CardContent className="py-8">
-                    <div className="text-center text-gray-500 dark:text-gray-400">
-                      <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300 dark:text-gray-600" />
-                      {searchTerm ? (
-                        <>
-                          <p>{copy.emptySearch(searchTerm)}</p>
-                          <Button 
-                            variant="outline" 
-                            className="mt-4"
-                            onClick={() => {
-                              setSearchTerm('')
-                            }}
-                          >
-                            {copy.clearSearch}
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <p>{copy.empty}</p>
-                          <Button 
-                            variant="outline" 
-                            className="mt-4"
-                            onClick={() => router.push(withLocaleHref('/prompts/new', locale))}
-                          >
-                            {copy.firstPrompt}
-                          </Button>
-                        </>
-                      )}
+              ) : null}
+
+              <div
+                role="region"
+                aria-label={copy.listLabel}
+                aria-busy={loading || loadingMore}
+                className="min-h-[28rem]"
+              >
+                {loading ? (
+                  <div role="status" aria-label={copy.loadingLabel}>
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <PromptAssetRowSkeleton key={index} />
+                    ))}
+                  </div>
+                ) : loadError && prompts.length === 0 ? (
+                  <div
+                    role="alert"
+                    className="flex min-h-[28rem] flex-col items-center justify-center px-6 py-16 text-center"
+                  >
+                    <FileText className="h-8 w-8 text-[var(--np-accent-strong)]" aria-hidden="true" />
+                    <p className="mt-4 max-w-md text-sm leading-6 text-[var(--np-ink-muted)]">{loadError}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-5 min-h-11 border-[var(--np-rule)] bg-transparent text-[var(--np-ink)]"
+                      onClick={() => void reloadFromFirstPage()}
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                      {copy.retry}
+                    </Button>
+                  </div>
+                ) : prompts.length === 0 ? (
+                  <div className="flex min-h-[28rem] flex-col items-center justify-center px-6 py-16 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--np-accent-soft)] text-[var(--np-accent-strong)]">
+                      <FileText className="h-5 w-5" aria-hidden="true" />
                     </div>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {prompts.map((prompt) => (
-                    <PromptCard
-                      key={prompt.id}
-                      prompt={prompt}
-                      type="user"
-                      draggable={true}
-                      onDragStart={handleDragStart}
-                      onClick={() => router.push(withLocaleHref(`/prompts/edit/${prompt.id}`, locale))}
-                      onEdit={() => {
-                        const currentPath = window.location.pathname
-                        const returnPath = currentPath.startsWith('/folders/') ? currentPath : '/prompts'
-                        router.push(withLocaleHref(`/prompts/edit/${prompt.id}?return=${encodeURIComponent(returnPath)}`, locale))
-                      }}
-                      onDelete={handleDeletePrompt}
-                      onPublish={handlePublishPrompt}
-                      onFavoriteChange={() => {}}
-                      onAddToFolder={handleAddToFolder}
-                      showAddToFolder={true}
-                      locale={locale}
-                    />
-                  ))}
-                </div>
-              )}
+                    <p className="mt-4 text-base font-semibold text-[var(--np-ink)]">
+                      {searchTerm ? copy.emptySearch(searchTerm) : copy.empty}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-5 min-h-11 border-[var(--np-rule)] bg-transparent text-[var(--np-ink)] hover:bg-[var(--np-surface-soft)]"
+                      onClick={hasActiveFilters
+                        ? handleResetFilters
+                        : () => router.push(withLocaleHref('/prompts/new', locale))}
+                    >
+                      {hasActiveFilters ? copy.resetFilters : copy.firstPrompt}
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="divide-y divide-[var(--np-rule)]">
+                      {prompts.map((prompt) => (
+                        <PromptAssetRow
+                          key={prompt.id}
+                          prompt={prompt}
+                          locale={locale}
+                          draggable
+                          onDragStart={handleDragStart}
+                          onOpen={() => router.push(withLocaleHref(`/prompts/edit/${prompt.id}`, locale))}
+                          onEdit={() => {
+                            const returnPath = withLocaleHref('/prompts', locale)
+                            router.push(withLocaleHref(`/prompts/edit/${prompt.id}?return=${encodeURIComponent(returnPath)}`, locale))
+                          }}
+                          onDelete={handleDeletePrompt}
+                          onPublish={handlePublishPrompt}
+                          onAddToCollection={handleAddToFolder}
+                        />
+                      ))}
+                    </div>
 
-              {/* 加载状态 */}
-              {loading && prompts.length > 0 && (
-                <div className="text-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-blue-600 mx-auto" />
-                  <span className="ml-2 text-gray-600 dark:text-gray-400">{copy.loadingMore}</span>
-                </div>
-              )}
-            </div>
+                    <div className="flex flex-col items-center gap-3 border-t border-[var(--np-rule)] px-4 py-6">
+                      {hasMore ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11 min-w-40 border-[var(--np-rule)] bg-[var(--np-surface-raised)] text-[var(--np-ink)] hover:bg-[var(--np-surface-soft)]"
+                          onClick={handleLoadMore}
+                          disabled={loading || loadingMore}
+                        >
+                          {loadingMore ? (
+                            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                          ) : null}
+                          {loadingMore ? copy.loadingMore : copy.loadMore}
+                        </Button>
+                      ) : null}
+                      <span className="font-mono text-[11px] tabular-nums text-[var(--np-ink-muted)]" aria-live="polite">
+                        {page} / {Math.max(totalPages, 1)}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
           </div>
         </main>
 
-        {/* 回到顶部按钮 */}
-        {showBackToTop && (
-          <Button
-            type="button"
-            onClick={scrollToTop}
-            className="fixed bottom-8 right-8 z-50 rounded-full w-12 h-12 shadow-lg bg-blue-600 hover:bg-blue-700 text-white"
-            size="sm"
-            aria-label={locale === 'en' ? 'Back to top' : '返回顶部'}
-          >
-            <ArrowUp className="h-5 w-5" aria-hidden="true" />
-          </Button>
-        )}
+        <Dialog open={showCollectionsDialog} onOpenChange={setShowCollectionsDialog}>
+          <DialogContent className="h-[min(82vh,44rem)] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-[10px] border-[var(--np-rule)] bg-[var(--np-surface)] p-0 text-[var(--np-ink)] [&>button]:right-[4.25rem] [&>button]:top-2.5 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center">
+            <DialogHeader className="sr-only">
+              <DialogTitle>{copy.collectionsTitle}</DialogTitle>
+            </DialogHeader>
+            {renderCollections()}
+          </DialogContent>
+        </Dialog>
 
-        {/* 新建文件夹对话框 */}
         <NewFolderDialog
           open={showNewFolderDialog}
           onOpenChange={setShowNewFolderDialog}
@@ -719,7 +824,6 @@ export default function PromptsPage() {
           locale={locale}
         />
 
-        {/* 选择文件夹对话框 */}
         <FolderSelectDialog
           open={showFolderSelectDialog}
           onOpenChange={setShowFolderSelectDialog}

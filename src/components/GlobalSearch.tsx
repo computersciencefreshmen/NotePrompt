@@ -214,11 +214,11 @@ export default function GlobalSearch({ locale = 'zh' }: { locale?: Locale }) {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="global-search-dialog"
-        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors border border-gray-200 dark:border-gray-700"
+        className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-[var(--np-rule)] bg-[var(--np-surface-soft)] text-sm text-[var(--np-ink-muted)] transition-colors hover:bg-[var(--np-surface-raised)] hover:text-[var(--np-ink)] lg:w-auto lg:gap-2 lg:px-3"
       >
-        <Search className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{copy.trigger}</span>
-        <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-600">
+        <Search className="h-4 w-4" aria-hidden="true" />
+        <span className="hidden lg:inline">{copy.trigger}</span>
+        <kbd className="hidden items-center gap-0.5 rounded border border-[var(--np-rule)] bg-[var(--np-surface-raised)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--np-ink-muted)] xl:inline-flex">
           <Command className="h-2.5 w-2.5" />K
         </kbd>
       </button>

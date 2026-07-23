@@ -89,10 +89,16 @@ export async function GET(
 
     await db.incrementPromptViews(id)
     const viewedPrompt = await db.getPublicPromptById(id)
+    if (!viewedPrompt) {
+      return NextResponse.json(
+        { success: false, error: '提示词不存在' },
+        { status: 404 },
+      )
+    }
 
     return NextResponse.json({
       success: true,
-      data: { ...(viewedPrompt || prompt), source: 'published' }
+      data: { ...viewedPrompt, source: 'published' }
     })
   } catch (error) {
     console.error('Get public prompt error:', error)
@@ -156,14 +162,16 @@ export async function PUT(
     const result = await db.query(
       `UPDATE public_prompts
        SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND author_id = ?`,
+       WHERE id = ? AND author_id = ? AND publication_state = 'published'`,
       [...values, id, userId],
     )
     const affectedRows = Number((result.rows as MutationResult).affectedRows)
     if (affectedRows > 1) throw new Error('Public prompt update affected more than one row')
     if (affectedRows === 0) {
       const existingResult = await db.query(
-        'SELECT id FROM public_prompts WHERE id = ? AND author_id = ? LIMIT 1',
+        `SELECT id FROM public_prompts
+          WHERE id = ? AND author_id = ? AND publication_state = 'published'
+          LIMIT 1`,
         [id, userId],
       )
       if ((existingResult.rows as Record<string, unknown>[]).length === 0) {
@@ -171,11 +179,17 @@ export async function PUT(
       }
     }
 
-    const updatedPrompt = await db.getPublicPromptById(id)
+    const updatedPrompt = await db.getOwnedPublicPromptById(userId, id)
+    if (!updatedPrompt || updatedPrompt.publication_state !== 'published') {
+      return NextResponse.json(
+        { success: false, error: '公共提示词不存在' },
+        { status: 404 },
+      )
+    }
 
     return NextResponse.json({
       success: true,
-      data: updatedPrompt ? { ...updatedPrompt, source: 'published' as const } : null,
+      data: { ...updatedPrompt, source: 'published' as const },
       message: '公共提示词更新成功'
     })
   } catch (error) {

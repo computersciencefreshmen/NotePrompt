@@ -10,6 +10,7 @@ const projectRoot = path.resolve(__dirname, '..')
 const requirements = require('../database/schema-requirements.json')
 const {
   applyMigrations,
+  createMigrationContext,
   inspectStatus,
   loadMigrations,
   validateAppliedMigrations,
@@ -40,6 +41,7 @@ test('offline plan does not require database configuration', () => {
   assert.match(output, /007\s+pending/)
   assert.match(output, /008\s+pending/)
   assert.match(output, /009\s+pending/)
+  assert.match(output, /010\s+pending/)
   assert.match(output, /no database connection was opened/i)
 })
 
@@ -71,6 +73,12 @@ test('canonical requirements cover the known schema gaps and exclude plaintext A
     ['editor_mode', 'payload', 'schema_version'].filter(column => requirements.tables.user_prompts.includes(column)),
     ['editor_mode', 'payload', 'schema_version']
   )
+  assert.deepEqual(
+    ['source_prompt_id', 'editor_mode', 'payload', 'schema_version', 'publication_state']
+      .filter(column => requirements.tables.public_prompts.includes(column)),
+    ['source_prompt_id', 'editor_mode', 'payload', 'schema_version', 'publication_state']
+  )
+  assert.equal(requirements.schemaVersion, 10)
   for (const tableName of [
     'user_preferences',
     'user_prompt_folders',
@@ -128,6 +136,66 @@ test('user tier migration converts premium before narrowing the enum', async () 
   assert.match(events[1], /premium/)
   assert.doesNotMatch(events[2], /premium/)
   assert.match(events[2], /'free', 'pro', 'admin'/)
+})
+
+test('publication identity migration is additive, byte-strict, and one-to-one', () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, 'database/migrations/010_stabilize_prompt_publications.cjs'),
+    'utf8'
+  )
+
+  for (const column of [
+    'source_prompt_id',
+    'publication_state',
+    'editor_mode',
+    'payload',
+    'schema_version',
+  ]) {
+    assert.match(source, new RegExp(`ensureColumn\\(\\s*'public_prompts',\\s*'${column}'`))
+  }
+  assert.match(source, /uq_public_prompts_source[\s\S]*\['source_prompt_id'\][\s\S]*unique: true/)
+  assert.match(source, /FOREIGN KEY \(source_prompt_id\) REFERENCES user_prompts\(id\) ON DELETE SET NULL/)
+  assert.match(source, /ENUM\('published', 'withdrawn'\) NOT NULL DEFAULT 'published'/)
+  assert.match(source, /ENUM\('normal', 'professional'\) NOT NULL DEFAULT 'normal'/)
+  assert.match(source, /BINARY source\.title = BINARY publication\.title/)
+  assert.match(source, /BINARY source\.content = BINARY publication\.content/)
+  assert.match(source, /BINARY source\.description = BINARY publication\.description/)
+  assert.match(source, /source\.category_id <=> publication\.category_id/)
+  assert.match(source, /PARTITION BY candidate\.public_prompt_id/)
+  assert.match(source, /PARTITION BY candidate\.source_prompt_id/)
+  assert.match(source, /source_candidate_count = 1[\s\S]*publication_candidate_count = 1/)
+  assert.match(source, /publication\.source_prompt_id IS NULL[\s\S]*claimed\.id IS NULL/)
+  assert.doesNotMatch(source, /console\.(?:log|info|warn|error)/)
+})
+
+test('publication identity migration fails closed on abnormal existing provenance', async () => {
+  const migration = require('../database/migrations/010_stabilize_prompt_publications.cjs')
+  const assertSafe = migration._test.assertExistingProvenanceIsSafe
+  const contextFor = violation => ({
+    query: async sql => [[{
+      violation_count: violation === 'dangling' && sql.includes('LEFT JOIN user_prompts')
+        ? 1
+        : violation === 'ownership' && sql.includes('publication.author_id <> source.user_id')
+          ? 1
+          : violation === 'duplicate' && sql.includes('duplicate_sources')
+            ? 1
+            : 0,
+    }]],
+  })
+
+  await assert.doesNotReject(assertSafe(contextFor(null)))
+  await assert.rejects(
+    assertSafe(contextFor('dangling')),
+    /without a private source/
+  )
+  await assert.rejects(
+    assertSafe(contextFor('ownership')),
+    /ownership mismatch/
+  )
+  await assert.rejects(
+    assertSafe(contextFor('duplicate')),
+    /linked to multiple publications/
+  )
 })
 
 test('migration sources contain no database bootstrap or default privileged account', () => {
@@ -210,6 +278,200 @@ test('empty MySQL schema applies twice and satisfies the runtime contract', {
         assert.ok(actual.has(`${tableName}.${columnName}`), `missing ${tableName}.${columnName}`)
       }
     }
+    const migration010 = require('../database/migrations/010_stabilize_prompt_publications.cjs')
+    const migrationContext = createMigrationContext(validationConnection)
+    // Simulate a process interruption after additive columns committed but before
+    // secondary indexes and the provenance foreign key were installed.
+    await validationConnection.execute(
+      'ALTER TABLE public_prompts DROP FOREIGN KEY fk_public_prompts_source'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_prompts DROP INDEX uq_public_prompts_source'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_prompts DROP INDEX idx_public_prompts_state_created'
+    )
+
+    const insertUser = async suffix => {
+      const [result] = await validationConnection.execute(
+        `INSERT INTO users
+           (username, email, password_hash, email_verified, is_active)
+         VALUES (?, ?, ?, 1, 1)`,
+        [`migration010_${suffix}`, `migration010_${suffix}@example.test`, 'fixture-hash']
+      )
+      return Number(result.insertId)
+    }
+    const insertPrivatePrompt = async (userId, title, content, description = null) => {
+      const [result] = await validationConnection.execute(
+        `INSERT INTO user_prompts
+           (title, content, description, user_id, category_id)
+         VALUES (?, ?, ?, ?, NULL)`,
+        [title, content, description, userId]
+      )
+      return Number(result.insertId)
+    }
+    const insertPublication = async (
+      userId,
+      title,
+      content,
+      description = null,
+      sourcePromptId = null
+    ) => {
+      const [result] = await validationConnection.execute(
+        `INSERT INTO public_prompts
+           (source_prompt_id, title, content, description, author_id, category_id)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+        [sourcePromptId, title, content, description, userId]
+      )
+      return Number(result.insertId)
+    }
+
+    const firstUserId = await insertUser('first')
+    const secondUserId = await insertUser('second')
+    const exactSourceId = await insertPrivatePrompt(
+      firstUserId,
+      'Exact publication',
+      'Exact byte content',
+      'Exact description'
+    )
+    const exactPublicationId = await insertPublication(
+      firstUserId,
+      'Exact publication',
+      'Exact byte content',
+      'Exact description'
+    )
+    await insertPrivatePrompt(firstUserId, 'Byte Strict', 'same content')
+    const caseDifferentPublicationId = await insertPublication(
+      firstUserId,
+      'byte strict',
+      'same content'
+    )
+    await insertPrivatePrompt(firstUserId, 'Null differs', 'same content', null)
+    const nullDifferentPublicationId = await insertPublication(
+      firstUserId,
+      'Null differs',
+      'same content',
+      ''
+    )
+    await insertPrivatePrompt(firstUserId, 'Two sources', 'ambiguous content')
+    await insertPrivatePrompt(firstUserId, 'Two sources', 'ambiguous content')
+    const twoSourcesPublicationId = await insertPublication(
+      firstUserId,
+      'Two sources',
+      'ambiguous content'
+    )
+    await insertPrivatePrompt(firstUserId, 'Two publications', 'ambiguous content')
+    const firstDuplicatePublicationId = await insertPublication(
+      firstUserId,
+      'Two publications',
+      'ambiguous content'
+    )
+    const secondDuplicatePublicationId = await insertPublication(
+      firstUserId,
+      'Two publications',
+      'ambiguous content'
+    )
+    await insertPrivatePrompt(firstUserId, 'Owner boundary', 'same content')
+    const crossOwnerPublicationId = await insertPublication(
+      secondUserId,
+      'Owner boundary',
+      'same content'
+    )
+
+    await migration010.up(migrationContext)
+    await migration010.up(migrationContext)
+
+    const fixturePublicationIds = [
+      exactPublicationId,
+      caseDifferentPublicationId,
+      nullDifferentPublicationId,
+      twoSourcesPublicationId,
+      firstDuplicatePublicationId,
+      secondDuplicatePublicationId,
+      crossOwnerPublicationId,
+    ]
+    const [publicationRows] = await validationConnection.execute(
+      `SELECT id, source_prompt_id, publication_state, editor_mode, payload, schema_version
+         FROM public_prompts
+        WHERE id IN (${fixturePublicationIds.map(() => '?').join(', ')})
+        ORDER BY id`,
+      fixturePublicationIds
+    )
+    const publicationsById = new Map(
+      publicationRows.map(row => [Number(row.id), row])
+    )
+    assert.equal(Number(publicationsById.get(exactPublicationId).source_prompt_id), exactSourceId)
+    for (const detachedId of fixturePublicationIds.filter(id => id !== exactPublicationId)) {
+      assert.equal(publicationsById.get(detachedId).source_prompt_id, null)
+    }
+    assert.equal(publicationsById.get(exactPublicationId).publication_state, 'published')
+    assert.equal(publicationsById.get(exactPublicationId).editor_mode, 'normal')
+    assert.equal(publicationsById.get(exactPublicationId).payload, null)
+    assert.equal(Number(publicationsById.get(exactPublicationId).schema_version), 1)
+
+    const [foreignKeyRows] = await validationConnection.execute(
+      `SELECT DELETE_RULE
+         FROM information_schema.REFERENTIAL_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'public_prompts'
+          AND CONSTRAINT_NAME = 'fk_public_prompts_source'`
+    )
+    assert.deepEqual(foreignKeyRows.map(row => row.DELETE_RULE), ['SET NULL'])
+
+    await validationConnection.execute(
+      'DELETE FROM user_prompts WHERE id = ?',
+      [exactSourceId]
+    )
+    const [detachedRows] = await validationConnection.execute(
+      'SELECT source_prompt_id FROM public_prompts WHERE id = ?',
+      [exactPublicationId]
+    )
+    assert.equal(detachedRows.length, 1)
+    assert.equal(detachedRows[0].source_prompt_id, null)
+
+    const uniqueSourceId = await insertPrivatePrompt(
+      firstUserId,
+      'Unique source',
+      'Unique content'
+    )
+    await insertPublication(
+      firstUserId,
+      'Unique source snapshot',
+      'Unique content snapshot',
+      null,
+      uniqueSourceId
+    )
+    await assert.rejects(
+      insertPublication(
+        firstUserId,
+        'Duplicate source snapshot',
+        'Duplicate source content',
+        null,
+        uniqueSourceId
+      ),
+      error => error?.code === 'ER_DUP_ENTRY'
+    )
+
+    const invalidSourceId = await insertPrivatePrompt(
+      firstUserId,
+      'Invalid ownership',
+      'Invalid ownership content'
+    )
+    const invalidPublicationId = await insertPublication(
+      secondUserId,
+      'Detached title',
+      'Detached content',
+      null,
+      invalidSourceId
+    )
+    await assert.rejects(
+      migration010.up(migrationContext),
+      /ownership mismatch/
+    )
+    await validationConnection.execute(
+      'DELETE FROM public_prompts WHERE id = ?',
+      [invalidPublicationId]
+    )
   } finally {
     await validationConnection.end()
   }

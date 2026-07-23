@@ -3,9 +3,7 @@ import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
 import { parsePositiveResourceId } from '@/lib/resource-authorization'
 
-type MutationResult = { affectedRows?: number }
-
-// DELETE - 用户删除自己发布的公共提示词
+// DELETE - 用户撤回自己发布的公共提示词
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -26,11 +24,8 @@ export async function DELETE(
       )
     }
 
-    const result = await db.query(
-      'DELETE FROM public_prompts WHERE id = ? AND author_id = ?',
-      [id, userId],
-    )
-    if (Number((result.rows as MutationResult).affectedRows) === 0) {
+    const withdrawn = await db.withdrawOwnedPublicPrompt(userId, id)
+    if (!withdrawn) {
       return NextResponse.json(
         { success: false, error: '公共提示词不存在' },
         { status: 404 }
@@ -39,12 +34,12 @@ export async function DELETE(
 
     return NextResponse.json({
       success: true,
-      message: '公共提示词删除成功'
+      message: '公共提示词已撤回'
     })
   } catch (error) {
-    console.error('Delete public prompt error')
+    console.error('Withdraw public prompt error')
     return NextResponse.json(
-      { success: false, error: '删除公共提示词失败' },
+      { success: false, error: '撤回公共提示词失败' },
       { status: 500 }
     )
   }

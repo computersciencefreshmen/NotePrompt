@@ -29,7 +29,7 @@ type PromptVersionRow = DbRow & { title?: string; content?: string };
 type SchemaColumnRow = { TABLE_NAME: string; COLUMN_NAME: string };
 type MySQLParameter = string | number | bigint | boolean | Date | null | Buffer | Uint8Array;
 type SnapshotQuery = (sql: string, params?: unknown[]) => Promise<{ rows: unknown }>;
-const MYSQL_DB_INSTANCE_VERSION = 7;
+const MYSQL_DB_INSTANCE_VERSION = 8;
 
 function normalizeMySQLParameter(value: unknown): MySQLParameter {
   if (value === undefined || value === null) return null;
@@ -714,35 +714,6 @@ class MySQLDB {
   }
 
   // 公共提示词相关方法
-  async createPublicPrompt(promptData: {
-    title: string;
-    content: string;
-    description?: string | null;
-    author_id: number;
-    category_id?: number | null;
-  }) {
-    const { title, content, description, author_id, category_id } = promptData;
-    
-    // 检查是否已经存在相同的提示词（基于标题和作者）
-    const existingPrompt = await this.query(
-      'SELECT id FROM public_prompts WHERE title = ? AND author_id = ?',
-      [title, author_id]
-    );
-    
-    if ((existingPrompt.rows as DbRow[]).length > 0) {
-      return (existingPrompt.rows as DbRow[])[0];
-    }
-    
-    const result = await this.query(
-      'INSERT INTO public_prompts (title, content, description, author_id, category_id) VALUES (?, ?, ?, ?, ?)',
-      [title, content, description, author_id, category_id]
-    );
-
-    const insertId = requireInsertId(result.rows as MutationResult, '公共提示词创建失败：无法获取插入ID');
-    const newPrompt = await this.getPublicPromptById(insertId);
-    return newPrompt;
-  }
-
   async createExternalPublicPrompt(
     promptData: {
       title: string;
@@ -771,6 +742,8 @@ class MySQLDB {
         return { status: 'author_not_found' as const };
       }
 
+      // Withdrawn detached publications still consume the account cap so an API
+      // client cannot evade the bounded resource limit by cycling visibility.
       const [countRows] = await connection.execute(
         'SELECT COUNT(*) AS publication_count FROM public_prompts WHERE author_id = ?',
         [promptData.author_id],
@@ -786,8 +759,9 @@ class MySQLDB {
 
       const [insertResult] = await connection.execute(
         `INSERT INTO public_prompts
-          (title, content, description, category_id, author_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+          (source_prompt_id, publication_state, title, content, description,
+           category_id, author_id, created_at, updated_at)
+         VALUES (NULL, 'published', ?, ?, ?, ?, ?, NOW(), NOW())`,
         [
           promptData.title,
           promptData.content,
@@ -809,6 +783,7 @@ class MySQLDB {
            pp.category_id,
            pp.views_count,
            pp.is_featured,
+           pp.publication_state,
            pp.created_at,
            pp.updated_at,
            u.username AS author_name,
@@ -831,78 +806,142 @@ class MySQLDB {
 
   async publishOwnedUserPrompts(userId: number, promptIds: number[]): Promise<DbRow[] | null> {
     if (promptIds.length === 0) return [];
+    if (
+      promptIds.some(id => !Number.isSafeInteger(id) || id <= 0)
+      || new Set(promptIds).size !== promptIds.length
+    ) {
+      throw new RangeError('Prompt IDs must be unique positive safe integers');
+    }
 
     await this.assertSchemaReady();
     const connection = await this.pool.getConnection();
     try {
       await connection.beginTransaction();
 
-      const placeholders = promptIds.map(() => '?').join(', ');
+      // Lock private sources and their publications in a deterministic order so
+      // overlapping batch requests cannot acquire the same rows in reverse order.
+      const orderedPromptIds = [...promptIds].sort((left, right) => left - right);
+      const placeholders = orderedPromptIds.map(() => '?').join(', ');
       const [promptRowsResult] = await connection.execute(
-        `SELECT id, title, content, description, user_id, category_id
+        `SELECT id, user_id
          FROM user_prompts
          WHERE user_id = ? AND id IN (${placeholders})
+         ORDER BY id
          FOR UPDATE`,
-        [userId, ...promptIds]
+        [userId, ...orderedPromptIds]
       );
       const prompts = promptRowsResult as OwnedDbRow[];
 
-      if (!hasCompleteOwnership(prompts, promptIds, userId)) {
+      if (!hasCompleteOwnership(prompts, orderedPromptIds, userId)) {
         await connection.rollback();
         return null;
       }
 
-      const promptsById = new Map(prompts.map(prompt => [Number(prompt.id), prompt]));
       const publishedPrompts: DbRow[] = [];
 
-      for (const promptId of promptIds) {
-        const prompt = promptsById.get(promptId);
-        if (!prompt) {
-          throw new Error('事务中的提示词所有权校验结果不一致');
-        }
-
+      for (const promptId of orderedPromptIds) {
         const [existingRowsResult] = await connection.execute(
-          `SELECT id
+          `SELECT id, author_id
            FROM public_prompts
-           WHERE title = ? AND author_id = ?
-           LIMIT 1
+           WHERE source_prompt_id = ?
            FOR UPDATE`,
-          [String(prompt.title || ''), userId]
+          [promptId]
         );
         const existingPublicPrompt = (existingRowsResult as DbRow[])[0];
         let publicPromptId = existingPublicPrompt ? Number(existingPublicPrompt.id) : null;
 
-        if (!publicPromptId) {
-          const [insertResult] = await connection.execute(
-            `INSERT INTO public_prompts (title, content, description, author_id, category_id)
-             VALUES (?, ?, ?, ?, ?)`,
-            [
-              String(prompt.title || ''),
-              String(prompt.content || ''),
-              prompt.description == null ? null : String(prompt.description),
-              userId,
-              prompt.category_id == null ? null : Number(prompt.category_id),
-            ]
+        if (existingPublicPrompt) {
+          if (Number(existingPublicPrompt.author_id) !== userId) {
+            throw new Error('Publication source ownership invariant is violated');
+          }
+          await connection.execute(
+            `UPDATE public_prompts publication
+             JOIN user_prompts source
+               ON source.id = publication.source_prompt_id
+              AND source.id = ?
+              AND source.user_id = ?
+             SET publication.title = source.title,
+                 publication.content = source.content,
+                 publication.description = source.description,
+                 publication.author_id = source.user_id,
+                 publication.category_id = source.category_id,
+                 publication.editor_mode = source.editor_mode,
+                 publication.payload = source.payload,
+                 publication.schema_version = source.schema_version,
+                 publication.publication_state = 'published',
+                 publication.updated_at = CURRENT_TIMESTAMP
+             WHERE publication.id = ?`,
+            [promptId, userId, publicPromptId]
           );
-          publicPromptId = Number((insertResult as { insertId?: number }).insertId);
+        } else {
+          const [insertResult] = await connection.execute(
+            `INSERT INTO public_prompts
+               (source_prompt_id, publication_state, title, content, description,
+                author_id, category_id, editor_mode, payload, schema_version,
+                created_at, updated_at)
+             SELECT source.id,
+                    'published',
+                    source.title,
+                    source.content,
+                    source.description,
+                    source.user_id,
+                    source.category_id,
+                    source.editor_mode,
+                    source.payload,
+                    source.schema_version,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+               FROM user_prompts source
+              WHERE source.id = ? AND source.user_id = ?`,
+            [promptId, userId]
+          );
+          publicPromptId = requireInsertId(
+            insertResult as MutationResult,
+            '公共提示词创建失败：无法获取有效 ID',
+          );
         }
 
-        if (!Number.isSafeInteger(publicPromptId) || publicPromptId <= 0) {
+        if (
+          typeof publicPromptId !== 'number'
+          || !Number.isSafeInteger(publicPromptId)
+          || publicPromptId <= 0
+        ) {
           throw new Error('公共提示词创建失败：无法获取有效 ID');
         }
 
+        // Tags are part of the publication snapshot. Replace the set instead of
+        // appending so removed private tags never survive a later publication.
         await connection.execute(
-          `INSERT IGNORE INTO public_prompt_tags (public_prompt_id, tag_id)
+          'DELETE FROM public_prompt_tags WHERE public_prompt_id = ?',
+          [publicPromptId]
+        );
+        await connection.execute(
+          `INSERT INTO public_prompt_tags (public_prompt_id, tag_id)
            SELECT ?, tag_id FROM user_prompt_tags WHERE user_prompt_id = ?`,
           [publicPromptId, promptId]
         );
 
         const [publishedRowsResult] = await connection.execute(
-          `SELECT pp.*, u.username, u.avatar_url
+          `SELECT pp.id,
+                  pp.title,
+                  pp.content,
+                  pp.description,
+                  pp.author_id,
+                  pp.category_id,
+                  pp.views_count,
+                  pp.is_featured,
+                  pp.editor_mode,
+                  pp.payload,
+                  pp.schema_version,
+                  pp.publication_state,
+                  pp.created_at,
+                  pp.updated_at,
+                  u.username,
+                  u.avatar_url
            FROM public_prompts pp
            JOIN users u ON pp.author_id = u.id
-           WHERE pp.id = ?`,
-          [publicPromptId]
+           WHERE pp.id = ? AND pp.author_id = ?`,
+          [publicPromptId, userId]
         );
         const publishedPrompt = (publishedRowsResult as DbRow[])[0];
         if (!publishedPrompt) {
@@ -923,37 +962,115 @@ class MySQLDB {
 
   async getPublicPromptById(id: number) {
     const result = await this.query(
-      'SELECT pp.*, u.username, u.avatar_url FROM public_prompts pp JOIN users u ON pp.author_id = u.id WHERE pp.id = ?',
+      `SELECT pp.id,
+              pp.title,
+              pp.content,
+              pp.description,
+              pp.author_id,
+              pp.category_id,
+              pp.views_count,
+              pp.is_featured,
+              pp.editor_mode,
+              pp.payload,
+              pp.schema_version,
+              pp.created_at,
+              pp.updated_at,
+              u.username,
+              u.avatar_url
+         FROM public_prompts pp
+         JOIN users u ON pp.author_id = u.id
+        WHERE pp.id = ? AND pp.publication_state = 'published'`,
       [id]
+    );
+    return (result.rows as DbRow[])[0];
+  }
+
+  async getOwnedPublicPromptById(userId: number, id: number) {
+    const result = await this.query(
+      `SELECT pp.id,
+              pp.title,
+              pp.content,
+              pp.description,
+              pp.author_id,
+              pp.category_id,
+              pp.views_count,
+              pp.is_featured,
+              pp.editor_mode,
+              pp.payload,
+              pp.schema_version,
+              pp.publication_state,
+              pp.created_at,
+              pp.updated_at,
+              u.username,
+              u.avatar_url
+         FROM public_prompts pp
+         JOIN users u ON pp.author_id = u.id
+        WHERE pp.id = ? AND pp.author_id = ?`,
+      [id, userId]
     );
     return (result.rows as DbRow[])[0];
   }
 
   async getPublicPrompts(limit = 50, offset = 0) {
     const result = await this.query(
-      'SELECT pp.*, u.username, u.avatar_url FROM public_prompts pp JOIN users u ON pp.author_id = u.id ORDER BY pp.created_at DESC LIMIT ?, ?',
+      `SELECT pp.id,
+              pp.title,
+              pp.content,
+              pp.description,
+              pp.author_id,
+              pp.category_id,
+              pp.views_count,
+              pp.is_featured,
+              pp.editor_mode,
+              pp.payload,
+              pp.schema_version,
+              pp.created_at,
+              pp.updated_at,
+              u.username,
+              u.avatar_url
+         FROM public_prompts pp
+         JOIN users u ON pp.author_id = u.id
+        WHERE pp.publication_state = 'published'
+        ORDER BY pp.created_at DESC
+        LIMIT ?, ?`,
       [offset, limit]
     );
     return result.rows as DbRow[];
   }
 
-  async updatePublicPrompt(id: number, updates: Partial<{
-    title: string;
-    content: string;
-    description: string;
-    category_id: number | null;
-  }>) {
-    const updateFields = Object.keys(updates)
-      .filter(key => updates[key as keyof typeof updates] !== undefined)
-      .map(key => `${key} = ?`);
-    
-    const updateValues = Object.values(updates).filter(value => value !== undefined);
-    updateValues.push(id);
-
-    const query = `UPDATE public_prompts SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
-    await this.query(query, updateValues);
-
-    return await this.getPublicPromptById(id);
+  async withdrawOwnedPublicPrompt(userId: number, id: number): Promise<boolean> {
+    await this.assertSchemaReady();
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute(
+        `SELECT id, publication_state
+           FROM public_prompts
+          WHERE id = ? AND author_id = ?
+          FOR UPDATE`,
+        [id, userId]
+      );
+      const publication = (rows as DbRow[])[0];
+      if (!publication) {
+        await connection.rollback();
+        return false;
+      }
+      if (publication.publication_state !== 'withdrawn') {
+        await connection.execute(
+          `UPDATE public_prompts
+              SET publication_state = 'withdrawn', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND author_id = ?`,
+          [id, userId]
+        );
+      }
+      await connection.commit();
+      return true;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async updatePublicPromptWithTags(
@@ -971,7 +1088,7 @@ class MySQLDB {
     try {
       await connection.beginTransaction();
       const [existingRows] = await connection.execute(
-        'SELECT id FROM public_prompts WHERE id = ? FOR UPDATE',
+        `SELECT id FROM public_prompts WHERE id = ? AND publication_state = 'published' FOR UPDATE`,
         [id],
       );
       if ((existingRows as DbRow[]).length === 0) {
@@ -1015,11 +1132,6 @@ class MySQLDB {
     } finally {
       connection.release();
     }
-  }
-
-  async deletePublicPrompt(id: number) {
-    await this.query('DELETE FROM public_prompts WHERE id = ?', [id]);
-    return true;
   }
 
   // 文件夹相关方法
@@ -1149,25 +1261,6 @@ class MySQLDB {
       [userId, publicPromptId]
     );
     return true;
-  }
-
-  async getFavoritesByUserId(userId: number) {
-    try {
-      const result = await this.query(
-        `SELECT pp.*, u.username, u.avatar_url, uf.created_at as favorited_at, uf.public_prompt_id,
-                (SELECT COUNT(*) FROM user_favorites uf2 WHERE uf2.public_prompt_id = pp.id) as favorites_count
-         FROM user_favorites uf 
-         JOIN public_prompts pp ON uf.public_prompt_id = pp.id 
-         JOIN users u ON pp.author_id = u.id 
-         WHERE uf.user_id = ? 
-         ORDER BY uf.created_at DESC`,
-        [userId]
-      );
-      return result.rows as DbRow[];
-    } catch (error) {
-      console.error('收藏查询失败', mysqlErrorMetadata(error))
-      throw error;
-    }
   }
 
   // 用户统计相关方法
@@ -1473,7 +1566,7 @@ class MySQLDB {
   // 浏览统计
   async incrementPromptViews(id: number) {
     await this.query(
-      'UPDATE public_prompts SET views_count = views_count + 1 WHERE id = ?',
+      `UPDATE public_prompts SET views_count = views_count + 1 WHERE id = ? AND publication_state = 'published'`,
       [id]
     );
   }
@@ -2214,14 +2307,14 @@ class MySQLDB {
               pp.author_id, u.username as author, pp.created_at, pp.updated_at, 'public_prompt' as source_type
        FROM public_prompts pp
        LEFT JOIN users u ON pp.author_id = u.id
-       WHERE pp.title LIKE ? OR pp.content LIKE ?
+       WHERE pp.publication_state = 'published' AND (pp.title LIKE ? OR pp.content LIKE ?)
        ORDER BY pp.updated_at DESC
        LIMIT ? OFFSET ?`,
       [searchTerm, searchTerm, limit, offset]
     );
 
     const publicPromptsCountResult = await this.query(
-      'SELECT COUNT(*) as total FROM public_prompts WHERE title LIKE ? OR content LIKE ?',
+      `SELECT COUNT(*) as total FROM public_prompts WHERE publication_state = 'published' AND (title LIKE ? OR content LIKE ?)`,
       [searchTerm, searchTerm]
     );
 

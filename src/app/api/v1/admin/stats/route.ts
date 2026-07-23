@@ -38,10 +38,11 @@ export async function GET(request: NextRequest) {
         COUNT(*) AS total,
         SUM(CASE WHEN is_featured = 1 THEN 1 ELSE 0 END) AS featured,
         (SELECT COUNT(*) FROM curated_catalog_entries) AS curated
-        FROM public_prompts`),
+        FROM public_prompts
+        WHERE publication_state = 'published'`),
       db.query('SELECT COUNT(*) as total FROM public_folders'),
       db.query(`SELECT
-        (SELECT COUNT(*) FROM user_favorites)
+        (SELECT COUNT(*) FROM user_favorites favorite JOIN public_prompts publication ON publication.id = favorite.public_prompt_id WHERE publication.publication_state = 'published')
         + (SELECT COUNT(*) FROM curated_prompt_favorites) AS total`),
       db.query(`
         SELECT
@@ -72,6 +73,7 @@ export async function GET(request: NextRequest) {
           u.username as author
         FROM public_prompts pp
         LEFT JOIN users u ON pp.author_id = u.id
+        WHERE pp.publication_state = 'published'
         ORDER BY pp.created_at DESC
         LIMIT 10
       `)

@@ -145,7 +145,9 @@ export async function GET(request: NextRequest) {
 
     // Curated catalog IDs live in their own table. Business publications may legitimately
     // have any positive AUTO_INCREMENT value, including values above the old 900000 range.
-    const whereConditions: string[] = []
+    // The public catalog is a consumer surface. Withdrawn snapshots keep their
+    // stable database identity but must not affect either rows or pagination.
+    const whereConditions: string[] = ["pp.publication_state = 'published'"]
     const queryParams: (string | number)[] = []
     
     if (search) {
@@ -159,7 +161,7 @@ export async function GET(request: NextRequest) {
       queryParams.push(tag)
     }
     
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : ''
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`
     
     const countResult = await db.query(
       `SELECT COUNT(*) AS total FROM public_prompts pp ${whereClause}`,

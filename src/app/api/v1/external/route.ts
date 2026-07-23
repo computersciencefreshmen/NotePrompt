@@ -121,7 +121,9 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const conditions: string[] = []
+    // API-key consumers have the same visibility boundary as the public catalog.
+    // Detached publications created by POST enter the published state normally.
+    const conditions: string[] = ["pp.publication_state = 'published'"]
     const queryParams: Array<string | number> = []
     if (search) {
       conditions.push('(pp.title LIKE ? OR pp.content LIKE ?)')
@@ -131,7 +133,7 @@ export async function GET(request: NextRequest) {
       conditions.push('pp.category_id = ?')
       queryParams.push(categoryId)
     }
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const whereClause = `WHERE ${conditions.join(' AND ')}`
 
     const [countRows] = await db.execute(
       `SELECT COUNT(*) AS total FROM public_prompts pp ${whereClause}`,

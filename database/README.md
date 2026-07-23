@@ -32,17 +32,20 @@ The runner:
 - migrates legacy public-folder live pointers into durable prompt snapshots; explicitly publishing again is the only operation that refreshes a published folder from its private source.
 - keeps curated catalog IDs, view counters, and favorites outside the business `public_prompts` AUTO_INCREMENT domain; migration `008` moves only legacy rows proven by an integrity-checked catalog manifest and retains an audit record.
 - keeps administrative suspension distinct from pending email verification; migration `009` treats ambiguous legacy inactive rows as suspended so verification cannot silently undo an administrator action.
+- gives user publications nullable, unique private-source provenance plus complete structured snapshot fields; migration `010` backfills only strict byte-identical one-to-one history, leaves ambiguous rows detached, and rejects unsafe existing provenance without printing user content.
 
 The manifest used by migration `008` is part of the migration checksum. Changing either the migration source or `008_curated_catalog_manifest.json` after deployment is rejected by `status`/`up`. Add a new migration for catalog-storage changes; never edit the applied manifest, reset `public_prompts` AUTO_INCREMENT, or classify rows by an ID range.
 
 Run migrations as a separate release step, verify `status` shows every migration as `applied`, and only then start the application. Compose enforces this ordering with a one-shot `note-prompt-migrate` service and `service_completed_successfully` dependency.
 
 Before every production migration, take and verify a restorable database backup, record the currently deployed image/SHA, and run `status`. Do not edit an applied migration; add a new numbered migration instead.
+Migration `010` compares historical private and public content before installing its uniqueness and provenance constraints. Keep private-prompt and publication writes stopped for the entire migration; the migration advisory lock coordinates migration runners, not application requests.
+
 
 MySQL DDL can commit implicitly. There is intentionally no automatic `down` command: an automatic code rollback cannot prove that a partially applied schema is reversible. If `up` fails, keep the application stopped, preserve the error and database state, fix only the identified cause, and rerun the idempotent migration. Restore the verified backup only through the separately rehearsed recovery procedure when the failed change is not safely resumable.
 
 ## Empty-schema smoke test
 
-`tests/mysql-migrations.test.cjs` always runs the offline structural checks. A real empty-schema smoke test is enabled only when `MYSQL_MIGRATION_TEST_DATABASE` is explicitly set together with the normal MySQL connection variables. The test refuses any database that already contains application tables, applies the migration set twice, and leaves the test database in place for inspection.
+`tests/mysql-migrations.test.cjs` always runs the offline structural and fail-closed provenance checks. A real empty-schema smoke test is enabled only when `MYSQL_MIGRATION_TEST_DATABASE` is explicitly set together with the normal MySQL connection variables. The test refuses any database that already contains application tables, applies the migration set twice, exercises Migration 010's conservative backfill and `ON DELETE SET NULL` behavior, and leaves the test database in place for inspection.
 
 See [SCHEMA_DEPENDENCIES.md](./SCHEMA_DEPENDENCIES.md) for the code-to-schema inventory and known application-level mismatches.

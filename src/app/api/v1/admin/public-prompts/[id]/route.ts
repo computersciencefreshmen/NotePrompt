@@ -34,10 +34,10 @@ export async function GET(
 
     // 获取公共提示词详情
     const result = await db.query(`
-      SELECT pp.*, u.username as author
+      SELECT pp.id, pp.title, pp.content, pp.description, pp.author_id, pp.category_id, pp.is_featured, pp.created_at, pp.updated_at, u.username AS author
       FROM public_prompts pp
       JOIN users u ON pp.author_id = u.id
-      WHERE pp.id = ?
+      WHERE pp.id = ? AND pp.publication_state = 'published'
     `, [id])
 
     if (!result.rows || (result.rows as DatabaseRow[]).length === 0) {
@@ -221,7 +221,10 @@ export async function DELETE(
     }
 
     // 删除公共提示词
-    const deleteResult = await db.query('DELETE FROM public_prompts WHERE id = ?', [id])
+    const deleteResult = await db.query(
+      `DELETE FROM public_prompts WHERE id = ? AND publication_state = 'published'`,
+      [id],
+    )
     if (Number((deleteResult.rows as { affectedRows?: number }).affectedRows) !== 1) {
       return NextResponse.json(
         { success: false, error: '公共提示词不存在' },

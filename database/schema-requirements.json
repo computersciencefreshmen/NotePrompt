@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 9,
-  "requiredMigrations": ["001", "002", "003", "004", "005", "006", "007", "008", "009"],
+  "schemaVersion": 10,
+  "requiredMigrations": ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"],
   "tables": {
     "schema_migrations": ["version", "name", "checksum", "applied_at", "execution_ms"],
     "users": ["id", "username", "email", "password_hash", "avatar_url", "user_type", "is_admin", "permissions", "is_active", "admin_disabled_at", "email_verified", "verification_code", "verification_expires", "verification_attempts", "email_verify_sent_at", "session_version", "created_at", "updated_at"],
@@ -12,7 +12,7 @@
     "user_prompts": ["id", "title", "content", "description", "user_id", "folder_id", "category_id", "mode", "editor_mode", "payload", "schema_version", "is_public", "created_at", "updated_at"],
     "user_prompt_folders": ["user_prompt_id", "folder_id", "created_at"],
     "prompt_versions": ["id", "prompt_id", "user_id", "title", "content", "version_number", "change_summary", "editor_mode", "payload", "schema_version", "created_at"],
-    "public_prompts": ["id", "title", "content", "description", "author_id", "category_id", "views_count", "is_featured", "created_at", "updated_at"],
+    "public_prompts": ["id", "source_prompt_id", "title", "content", "description", "author_id", "category_id", "editor_mode", "payload", "schema_version", "publication_state", "views_count", "is_featured", "created_at", "updated_at"],
     "curated_catalog_entries": ["catalog_id", "content_sha256", "legacy_published_at", "views_count", "created_at", "updated_at"],
     "curated_prompt_favorites": ["id", "user_id", "catalog_id", "created_at"],
     "curated_prompt_legacy_rows": ["catalog_id", "legacy_public_prompt_id", "legacy_author_id", "content_sha256", "original_views_count", "original_created_at", "migrated_at"],

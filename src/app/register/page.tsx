@@ -179,7 +179,7 @@ export default function RegisterPage() {
             </p>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form method="post" onSubmit={handleSubmit} className="space-y-4">
               {error && (
                 <div className="border-red-200 bg-red-50 rounded-lg p-4">
                   <p className="text-red-800">{error}</p>
@@ -194,6 +194,7 @@ export default function RegisterPage() {
                   id="username"
                   name="username"
                   type="text"
+                  autoComplete="username"
                   value={formData.username}
                   onChange={handleChange}
                   placeholder={copy.usernamePlaceholder}
@@ -210,6 +211,7 @@ export default function RegisterPage() {
                   id="email"
                   name="email"
                   type="email"
+                  autoComplete="email"
                   value={formData.email}
                   onChange={handleChange}
                   placeholder={copy.emailPlaceholder}
@@ -226,6 +228,7 @@ export default function RegisterPage() {
                   id="password"
                   name="password"
                   type="password"
+                  autoComplete="new-password"
                   value={formData.password}
                   onChange={handleChange}
                   placeholder={copy.passwordPlaceholder}
@@ -245,6 +248,7 @@ export default function RegisterPage() {
                   id="confirmPassword"
                   name="confirmPassword"
                   type="password"
+                  autoComplete="new-password"
                   value={confirmPassword}
                   onChange={handleChange}
                   placeholder={copy.confirmPasswordPlaceholder}

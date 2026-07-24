@@ -89,8 +89,8 @@ Route adapters only parse HTTP, authenticate, validate with Zod, call an applica
 | 1B | `ci: enforce release quality and security gates` | Complete at `f1c417f`; CI follow-ups through `49aa2a8` | Node 24 lint/test/build, real MySQL migration, Docker build, audit, Compose, Gitleaks, and both Trivy scans enforced; only the intentional Stage 1C history gate is red |
 | 1C | Credential rotation and full-history rewrite | [Runbook complete](../operations/credential-exposure-recovery.md); external security window required | All affected credentials revoked, all-history Gitleaks clean, coordinated force-push and derived-store cleanup complete |
 | 2A | `core: give publications stable source identity` | Complete at `36f09c3` | Migration 010 passes empty, legacy, and replay tests; same-source publish is atomic and idempotent |
-| 2B1 | `core: attest public folder snapshot origins` | Complete in this schema batch | Migration 011 is replay-safe, historical rows remain unverified, and exact indexes plus the public-source foreign key pass |
-| 2B2 | `security: separate moderation from private content` | Pending | Cross-user and administrator privacy tests pass |
+| 2B1 | `core: attest public folder snapshot origins` | Complete at `a85841c` | Migration 011 is replay-safe, historical rows remain unverified, and exact indexes plus the public-source foreign key pass |
+| 2B2 | `security: separate moderation from private content` | Complete in this runtime batch | Cross-user and administrator privacy tests pass |
 | 2C | `core: canonicalize prompt collections` | Pending | Canonical relation is active, legacy projection containment and same-tenant integrity stay clean, and no supported code depends on `folder_id` |
 | 3 | Alibaba Cloud deployment baseline | External maintenance window | Backup restore proven, SHA identity matches, 3306 closed, 72-hour observation complete |
 | 4A | `core: materialize imported collection snapshots` | Pending | Source changes and deletion cannot affect an imported copy |

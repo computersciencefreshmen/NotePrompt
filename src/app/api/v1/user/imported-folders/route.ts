@@ -12,16 +12,22 @@ export async function GET(request: NextRequest) {
 
     const importedFolders = await db.getUserImportedFolders(userId)
     
-    // 为每个导入文件夹获取提示词数目
-    const foldersWithCount = await Promise.all(
-      (importedFolders as Record<string, unknown>[]).map(async (folder) => {
-        const promptCount = await db.getImportedFolderPromptCount(folder.id as number)
-        return {
-          ...folder,
-          prompt_count: promptCount
-        }
-      })
-    )
+    const foldersWithCount = (importedFolders as Record<string, unknown>[]).map(folder => ({
+      id: Number(folder.id),
+      user_id: Number(folder.user_id),
+      public_folder_id: Number(folder.public_folder_id),
+      name: String(folder.name ?? ''),
+      description: typeof folder.description === 'string' ? folder.description : null,
+      created_at: String(folder.created_at ?? ''),
+      updated_at: String(folder.updated_at ?? ''),
+      original_name: String(folder.original_name ?? ''),
+      original_description: typeof folder.original_description === 'string'
+        ? folder.original_description
+        : null,
+      author: String(folder.author ?? ''),
+      original_created_at: String(folder.original_created_at ?? ''),
+      prompt_count: Number(folder.prompt_count) || 0,
+    }))
 
     return NextResponse.json({
       success: true,

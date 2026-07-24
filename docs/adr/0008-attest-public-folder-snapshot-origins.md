@@ -17,9 +17,9 @@ The former administrator path could copy any private prompt into any public fold
 - No historical row is reclassified. Ownership, matching bytes, timestamps, position, and current private membership are not evidence of past consent.
 - A pending Migration 011 accepts only rows with `snapshot_origin = legacy_unverified` and `source_public_prompt_id = NULL`; any pre-attested value stops the migration for manual review instead of blessing unknown history.
 - Only the ownership-checked folder publication transaction may write `folder_publication`; those rows keep `source_public_prompt_id = NULL`.
-- Only moderation of an already published prompt may write `moderated_publication`; it stores the selected public prompt ID.
+- Only moderation of an already published prompt may write `moderated_publication`; it stores the selected public prompt ID and deliberately keeps private `source_prompt_id = NULL`.
 - A folder-publication row is visible only when its origin is `folder_publication` and its author is the public-folder owner.
-- A moderated row is visible only when its origin is `moderated_publication`, its public reference still exists in the `published` state, and its author, prompt snapshot fields, and complete public tag set still match that publication.
+- A moderated row is visible only when its origin is `moderated_publication`, its private source is null, its public reference still exists in the `published` state, and its author, stable prompt snapshot fields, structured payload, and complete public tag set still match that publication.
 - `legacy_unverified`, a moderated row whose public reference was deleted, and every invalid origin/reference combination are invisible to lists, details, counts, and imports.
 - Private `source_prompt_id`, public `source_public_prompt_id`, and `snapshot_origin` are internal provenance and never enter reader DTOs.
 - Schema 011 and the origin-aware runtime are one security release boundary. Until both are active, the edge must keep public-folder reads and imports blocked; deploying the schema alone does not make legacy readers safe.

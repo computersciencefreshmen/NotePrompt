@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
-import { englishFeaturedFolders } from '@/data/english-featured-folders'
+import { englishFeaturedFolders, type EnglishFeaturedFolder } from '@/data/english-featured-folders'
+import type { PublicFolder } from '@/types'
 import {
   createPaginationMetadata,
   parseBoundedPagination,
@@ -11,7 +12,22 @@ import {
   createRateLimitResponse,
   rateLimitHttpStatus,
 } from '@/lib/rate-limit'
+import { PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL } from '@/lib/public-folder-snapshot-policy'
 
+
+function toPublicFolderReaderDto(folder: EnglishFeaturedFolder): PublicFolder {
+  return {
+    id: folder.id,
+    name: folder.name,
+    description: folder.description,
+    user_id: folder.user_id,
+    is_featured: folder.is_featured,
+    created_at: folder.created_at,
+    updated_at: folder.updated_at,
+    author: folder.author,
+    prompt_count: folder.prompt_count,
+  }
+}
 export async function GET(request: NextRequest) {
   try {
     const rateLimit = await checkIpRateLimit(
@@ -59,7 +75,7 @@ export async function GET(request: NextRequest) {
       const filteredItems = englishFeaturedFolders.filter(folder => {
         if (!normalizedSearch) return true
         return [folder.name, folder.description, folder.author].join(' ').toLowerCase().includes(normalizedSearch)
-      })
+      }).map(toPublicFolderReaderDto)
       const pagedItems = filteredItems.slice(offset, offset + limit)
       const pagination = createPaginationMetadata(filteredItems.length, paginationResult.value)
 
@@ -88,20 +104,26 @@ export async function GET(request: NextRequest) {
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : ''
     
     // 主查询 - 使用正确的字段名，并计算提示词数量
-    const query = `
-      SELECT pf.id, pf.name, pf.description, pf.user_id, pf.original_folder_id, pf.is_featured,
-             pf.created_at, pf.updated_at, u.username as author,
-             COALESCE(prompt_counts.count, 0) as prompt_count
-      FROM public_folders pf
-      JOIN users u ON pf.user_id = u.id
-      LEFT JOIN (
-        SELECT snapshot.public_folder_id, COUNT(*) as count
-        FROM public_folder_prompts snapshot
-        GROUP BY snapshot.public_folder_id
-      ) prompt_counts ON prompt_counts.public_folder_id = pf.id
-      ${whereClause}
-      ORDER BY pf.created_at DESC
-      LIMIT ? OFFSET ?
+    const itemQuery = `
+      SELECT page_folder.id, page_folder.name, page_folder.description,
+             page_folder.user_id, page_folder.is_featured,
+             page_folder.created_at, page_folder.updated_at, page_folder.author,
+             (SELECT COUNT(*)
+                FROM public_folder_prompts snapshot
+                JOIN public_folders published_folder
+                  ON published_folder.id = snapshot.public_folder_id
+               WHERE snapshot.public_folder_id = page_folder.id
+                 AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}) AS prompt_count
+        FROM (
+          SELECT pf.id, pf.name, pf.description, pf.user_id, pf.is_featured,
+                 pf.created_at, pf.updated_at, u.username AS author
+            FROM public_folders pf
+            JOIN users u ON pf.user_id = u.id
+            ${whereClause}
+           ORDER BY pf.created_at DESC, pf.id DESC
+           LIMIT ? OFFSET ?
+        ) page_folder
+       ORDER BY page_folder.created_at DESC, page_folder.id DESC
     `
     
     // 计数查询
@@ -112,10 +134,12 @@ export async function GET(request: NextRequest) {
       ${whereClause}
     `
     
-    const countResult = await db.query(countQuery, queryParams)
-    const total = (countResult.rows as { total: number }[])[0]?.total || 0
-
-    const result = await db.query(query, [...queryParams, limit, offset])
+    const { countResult, result } = await db.withConsistentReadSnapshot(async snapshotQuery => {
+      const countResult = await snapshotQuery(countQuery, queryParams)
+      const result = await snapshotQuery(itemQuery, [...queryParams, limit, offset])
+      return { countResult, result }
+    })
+    const total = Number((countResult.rows as Array<{ total?: number | string }>)[0]?.total) || 0
     const items = result.rows || []
     
     // 处理数据，确保返回正确的字段
@@ -124,23 +148,21 @@ export async function GET(request: NextRequest) {
       name: string;
       description: string;
       user_id: number;
-      original_folder_id: number | null;
       is_featured: boolean;
       created_at: string;
       updated_at: string;
       author: string;
       prompt_count: number;
     }>).map(item => ({
-      id: item.id,
-      name: item.name,
-      description: item.description,
-      user_id: item.user_id,
-      original_folder_id: item.original_folder_id,
-      is_featured: item.is_featured || false,
-      created_at: item.created_at,
-      updated_at: item.updated_at,
-      author: item.author,
-      prompt_count: item.prompt_count || 0
+      id: Number(item.id),
+      name: String(item.name ?? ''),
+      description: String(item.description ?? ''),
+      user_id: Number(item.user_id),
+      is_featured: Boolean(item.is_featured),
+      created_at: String(item.created_at ?? ''),
+      updated_at: String(item.updated_at ?? ''),
+      author: String(item.author ?? ''),
+      prompt_count: Number(item.prompt_count) || 0
     }))
     
     const pagination = createPaginationMetadata(total, paginationResult.value)

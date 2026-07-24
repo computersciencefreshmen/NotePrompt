@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 10,
-  "requiredMigrations": ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"],
+  "schemaVersion": 11,
+  "requiredMigrations": ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"],
   "tables": {
     "schema_migrations": ["version", "name", "checksum", "applied_at", "execution_ms"],
     "users": ["id", "username", "email", "password_hash", "avatar_url", "user_type", "is_admin", "permissions", "is_active", "admin_disabled_at", "email_verified", "verification_code", "verification_expires", "verification_attempts", "email_verify_sent_at", "session_version", "created_at", "updated_at"],
@@ -21,7 +21,7 @@
     "user_prompt_tags": ["id", "user_prompt_id", "tag_id", "created_at"],
     "public_prompt_tags": ["id", "public_prompt_id", "tag_id", "created_at"],
     "public_folders": ["id", "name", "description", "user_id", "original_folder_id", "is_featured", "created_at", "updated_at"],
-    "public_folder_prompts": ["id", "public_folder_id", "source_prompt_id", "title", "content", "description", "author_id", "author_name", "author_avatar_url", "category_id", "category_name", "category_color", "editor_mode", "payload", "schema_version", "tags", "position", "source_created_at", "source_updated_at", "created_at", "updated_at"],
+    "public_folder_prompts": ["id", "public_folder_id", "source_prompt_id", "source_public_prompt_id", "snapshot_origin", "title", "content", "description", "author_id", "author_name", "author_avatar_url", "category_id", "category_name", "category_color", "editor_mode", "payload", "schema_version", "tags", "position", "source_created_at", "source_updated_at", "created_at", "updated_at"],
     "user_imported_folders": ["id", "user_id", "public_folder_id", "name", "description", "created_at", "updated_at"],
     "user_usage_stats": ["id", "user_id", "ai_optimize_count", "ai_generate_count", "total_ai_usage", "monthly_usage", "last_reset_date", "created_at", "updated_at"],
     "ai_usage_daily": ["id", "user_id", "usage_date", "optimize_count", "generate_count", "total_count", "created_at", "updated_at"]

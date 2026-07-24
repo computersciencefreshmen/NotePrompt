@@ -33,6 +33,7 @@ The runner:
 - keeps curated catalog IDs, view counters, and favorites outside the business `public_prompts` AUTO_INCREMENT domain; migration `008` moves only legacy rows proven by an integrity-checked catalog manifest and retains an audit record.
 - keeps administrative suspension distinct from pending email verification; migration `009` treats ambiguous legacy inactive rows as suspended so verification cannot silently undo an administrator action.
 - gives user publications nullable, unique private-source provenance plus complete structured snapshot fields; migration `010` backfills only strict byte-identical one-to-one history, leaves ambiguous rows detached, and rejects unsafe existing provenance without printing user content.
+- gives public-folder snapshot rows an explicit, public-source identity; migration `011` leaves every historical row unverified, and the coordinated runtime cutover keeps those rows invisible until an owner republishes the folder or a moderator deliberately copies a published prompt.
 
 The manifest used by migration `008` is part of the migration checksum. Changing either the migration source or `008_curated_catalog_manifest.json` after deployment is rejected by `status`/`up`. Add a new migration for catalog-storage changes; never edit the applied manifest, reset `public_prompts` AUTO_INCREMENT, or classify rows by an ID range.
 
@@ -40,6 +41,8 @@ Run migrations as a separate release step, verify `status` shows every migration
 
 Before every production migration, take and verify a restorable database backup, record the currently deployed image/SHA, and run `status`. Do not edit an applied migration; add a new numbered migration instead.
 Migration `010` compares historical private and public content before installing its uniqueness and provenance constraints. Keep private-prompt and publication writes stopped for the entire migration; the migration advisory lock coordinates migration runners, not application requests.
+Migration `011` deliberately performs no provenance backfill. Before cutover, report the number of `legacy_unverified` rows and tell owners that existing public folders remain empty until they explicitly republish; never repair that state by inferring intent from author, content, timestamps, or private-folder membership.
+If a pending Migration `011` finds any non-default `snapshot_origin` or non-null `source_public_prompt_id`, it stops for manual review; do not normalize that state automatically because the database cannot prove who created the claim.
 
 
 MySQL DDL can commit implicitly. There is intentionally no automatic `down` command: an automatic code rollback cannot prove that a partially applied schema is reversible. If `up` fails, keep the application stopped, preserve the error and database state, fix only the identified cause, and rerun the idempotent migration. Restore the verified backup only through the separately rehearsed recovery procedure when the failed change is not safely resumable.

@@ -88,12 +88,13 @@ Route adapters only parse HTTP, authenticate, validate with Zod, call an applica
 | 1A | `docs: define SOTA product and architecture baseline` | Complete at `3892108` | Product, design, plan, ADRs reviewed and documentation tests pass |
 | 1B | `ci: enforce release quality and security gates` | Complete at `f1c417f`; CI follow-ups through `49aa2a8` | Node 24 lint/test/build, real MySQL migration, Docker build, audit, Compose, Gitleaks, and both Trivy scans enforced; only the intentional Stage 1C history gate is red |
 | 1C | Credential rotation and full-history rewrite | [Runbook complete](../operations/credential-exposure-recovery.md); external security window required | All affected credentials revoked, all-history Gitleaks clean, coordinated force-push and derived-store cleanup complete |
-| 2A | `core: give publications stable source identity` | Pending | Migration 010 passes empty, legacy, and replay tests; same-source publish is atomic and idempotent |
-| 2B | `security: separate moderation from private content` | Pending | Cross-user and administrator privacy tests pass |
+| 2A | `core: give publications stable source identity` | Complete at `36f09c3` | Migration 010 passes empty, legacy, and replay tests; same-source publish is atomic and idempotent |
+| 2B1 | `core: attest public folder snapshot origins` | Complete in this schema batch | Migration 011 is replay-safe, historical rows remain unverified, and exact indexes plus the public-source foreign key pass |
+| 2B2 | `security: separate moderation from private content` | Pending | Cross-user and administrator privacy tests pass |
 | 2C | `core: canonicalize prompt collections` | Pending | Canonical relation is active, legacy projection containment and same-tenant integrity stay clean, and no supported code depends on `folder_id` |
 | 3 | Alibaba Cloud deployment baseline | External maintenance window | Backup restore proven, SHA identity matches, 3306 closed, 72-hour observation complete |
 | 4A | `core: materialize imported collection snapshots` | Pending | Source changes and deletion cannot affect an imported copy |
-| 4B | `core: separate account plan and role` | Pending | Migration 013 and authorization compatibility tests pass |
+| 4B | `core: separate account plan and role` | Pending | Migration 014 and authorization compatibility tests pass |
 | 4C | `core: persist AI usage reservations` | Pending | Crash, retry, timeout, and reconciliation tests prove idempotent accounting |
 | 4D | `refactor: extract modular application services` | Pending | Route adapters contain no product SQL; module contract tests pass |
 | 5A | `core: add revision-safe prompt drafts` | Pending | Expected-revision autosave returns 409 on conflict and never silently overwrites |
@@ -110,11 +111,12 @@ Every migration uses expand, cutover, and contract. A migration must be safe on 
 | Version | Expand | Cutover | Contract |
 | --- | --- | --- | --- |
 | 010 | Add nullable unique publication `source_prompt_id`, `publication_state=published\|withdrawn`, structured snapshot fields, and `ON DELETE SET NULL` provenance | Conservatively backfill only exact one-to-one rows; lock the source by `id + user_id`; publish the complete snapshot through source identity | Remove title-based source inference after one compatibility release |
-| 011 | Add tenant key and same-tenant integrity to collection membership | Read and write canonical `collection_ids`; keep singular `folder_id` as a documented lossy primary projection and measure containment invariants | Drop legacy `user_prompts.folder_id` only after no legacy-only row or supported code dependency remains |
-| 012 | Add imported collection and prompt snapshot rows plus nullable provenance | Materialize copies transactionally with retry-safe import operation identity | Remove live imported-folder projection after imported data parity is proven |
-| 013 | Add `plan`, `role`, and suspension state independently | Map `free/pro/admin`, `is_admin`, and `admin_disabled_at` conservatively | Remove mixed `user_type` semantics after clients use the new account DTO |
-| 014 | Add durable AI reservation and transition history | Reserve before dispatch, commit after dispatch, refund only before dispatch, reconcile timeouts | Remove aggregate-first compensation paths after ledger parity is proven |
-| 015 | Add current prompt revision, draft compare-and-swap, and checkpoint metadata | Autosave with expected revision; create history only for manual checkpoint or accepted AI result | Redirect legacy editor flows after Studio reaches parity |
+| 011 | Add fail-closed folder snapshot origin and nullable stable public-publication identity | Keep every historical row `legacy_unverified`; only ownership-checked republish or published-content moderation may attest new rows | Remove no historical data; cut over every read, count, and import to the attested-origin policy |
+| 012 | Add tenant key and same-tenant integrity to collection membership | Read and write canonical `collection_ids`; keep singular `folder_id` as a documented lossy primary projection and measure containment invariants | Drop legacy `user_prompts.folder_id` only after no legacy-only row or supported code dependency remains |
+| 013 | Add imported collection and prompt snapshot rows plus nullable provenance | Materialize copies transactionally with retry-safe import operation identity | Remove live imported-folder projection after imported data parity is proven |
+| 014 | Add `plan`, `role`, and suspension state independently | Map `free/pro/admin`, `is_admin`, and `admin_disabled_at` conservatively | Remove mixed `user_type` semantics after clients use the new account DTO |
+| 015 | Add durable AI reservation and transition history | Reserve before dispatch, commit after dispatch, refund only before dispatch, reconcile timeouts | Remove aggregate-first compensation paths after ledger parity is proven |
+| 016 | Add current prompt revision, draft compare-and-swap, and checkpoint metadata | Autosave with expected revision; create history only for manual checkpoint or accepted AI result | Redirect legacy editor flows after Studio reaches parity |
 
 Each migration batch also updates `database/schema-requirements.json`, schema dependency documentation, the offline structural tests, a real MySQL empty-schema test, a legacy fixture test, and replay assertions. Applied migrations and integrity manifests are never edited.
 
@@ -158,7 +160,7 @@ docker compose -f compose.acme.yml --env-file <non-secret-ci-env> config --quiet
 - TypeScript and ESLint with zero warnings.
 - Full Node unit and contract suite.
 - MySQL 8 service test that applies all migrations twice to a fresh schema.
-- Supported legacy-schema fixture migrations for 010 through 015.
+- Supported legacy-schema fixture migrations for 010 through 016.
 - Production Next.js build and standalone-secret sanitization checks.
 - Docker image build with full SHA metadata.
 - `npm audit --omit=dev --audit-level=high` with zero critical or high production advisories.
@@ -230,7 +232,7 @@ The SOTA program is complete only when:
 - Production dependencies have no critical or high advisory.
 - Full Git history contains no active or revoked secret material detectable by the agreed scanner.
 - All public and private ownership boundaries have automated cross-user tests.
-- Migrations 010 through 015 pass empty, legacy, and replay testing.
+- Migrations 010 through 016 pass empty, legacy, and replay testing.
 - Prompt Studio is the coherent create, edit, optimize, compare, checkpoint, publish, and reuse experience.
 - Light and dark use one semantic design system and meet WCAG 2.2 AA.
 - CI enforces the documented release gates.

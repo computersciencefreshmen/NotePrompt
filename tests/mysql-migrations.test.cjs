@@ -42,6 +42,7 @@ test('offline plan does not require database configuration', () => {
   assert.match(output, /008\s+pending/)
   assert.match(output, /009\s+pending/)
   assert.match(output, /010\s+pending/)
+  assert.match(output, /011\s+pending/)
   assert.match(output, /no database connection was opened/i)
 })
 
@@ -78,7 +79,7 @@ test('canonical requirements cover the known schema gaps and exclude plaintext A
       .filter(column => requirements.tables.public_prompts.includes(column)),
     ['source_prompt_id', 'editor_mode', 'payload', 'schema_version', 'publication_state']
   )
-  assert.equal(requirements.schemaVersion, 10)
+  assert.equal(requirements.schemaVersion, 11)
   for (const tableName of [
     'user_preferences',
     'user_prompt_folders',
@@ -471,6 +472,250 @@ test('empty MySQL schema applies twice and satisfies the runtime contract', {
     await validationConnection.execute(
       'DELETE FROM public_prompts WHERE id = ?',
       [invalidPublicationId]
+    )
+
+    const migration011 = require('../database/migrations/011_attest_public_folder_snapshot_origins.cjs')
+    const legacySourceId = await insertPrivatePrompt(
+      firstUserId,
+      'Legacy snapshot origin',
+      'Legacy snapshot content',
+      'Legacy snapshot description'
+    )
+    const sourcePublicationId = await insertPublication(
+      firstUserId,
+      'Legacy snapshot origin',
+      'Legacy snapshot content',
+      'Legacy snapshot description'
+    )
+    const [publicFolderResult] = await validationConnection.execute(
+      `INSERT INTO public_folders
+         (name, description, user_id, original_folder_id)
+       VALUES (?, ?, ?, NULL)`,
+      ['Migration 011 fixture', 'Snapshot attestation fixture', firstUserId]
+    )
+    const publicFolderId = Number(publicFolderResult.insertId)
+
+    // Recreate the exact pre-011 table shape so this row genuinely predates the
+    // origin columns. Matching public content must never be treated as consent.
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP FOREIGN KEY fk_public_folder_prompts_publication'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP INDEX uq_public_folder_prompt_publication'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP INDEX idx_public_folder_prompts_publication'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP COLUMN source_public_prompt_id'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP COLUMN snapshot_origin'
+    )
+
+    const [legacySnapshotResult] = await validationConnection.execute(
+      `INSERT INTO public_folder_prompts
+         (public_folder_id, source_prompt_id, title, content, description,
+          author_id, author_name, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        publicFolderId,
+        legacySourceId,
+        'Legacy snapshot origin',
+        'Legacy snapshot content',
+        'Legacy snapshot description',
+        firstUserId,
+        'migration011_legacy',
+        0,
+      ]
+    )
+    const legacySnapshotId = Number(legacySnapshotResult.insertId)
+
+    await migration011.up(migrationContext)
+
+    const [legacySnapshotRows] = await validationConnection.execute(
+      `SELECT snapshot_origin, source_public_prompt_id
+         FROM public_folder_prompts
+        WHERE id = ?`,
+      [legacySnapshotId]
+    )
+    assert.deepEqual(legacySnapshotRows.map(row => ({
+      snapshotOrigin: row.snapshot_origin,
+      sourcePublicPromptId: row.source_public_prompt_id,
+    })), [{
+      snapshotOrigin: 'legacy_unverified',
+      sourcePublicPromptId: null,
+    }])
+
+    const readMigration011Index = async indexName => {
+      const [rows] = await validationConnection.execute(
+        `SELECT COLUMN_NAME, NON_UNIQUE, INDEX_TYPE, IS_VISIBLE
+           FROM information_schema.STATISTICS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'public_folder_prompts'
+            AND INDEX_NAME = ?
+          ORDER BY SEQ_IN_INDEX`,
+        [indexName]
+      )
+      return rows.map(row => ({
+        columnName: row.COLUMN_NAME,
+        nonUnique: Number(row.NON_UNIQUE),
+        indexType: row.INDEX_TYPE,
+        isVisible: row.IS_VISIBLE,
+      }))
+    }
+    const assertMigration011Constraints = async () => {
+      assert.deepEqual(
+        await readMigration011Index('idx_public_folder_prompts_publication'),
+        [{
+          columnName: 'source_public_prompt_id',
+          nonUnique: 1,
+          indexType: 'BTREE',
+          isVisible: 'YES',
+        }]
+      )
+      assert.deepEqual(
+        await readMigration011Index('uq_public_folder_prompt_publication'),
+        [
+          {
+            columnName: 'public_folder_id',
+            nonUnique: 0,
+            indexType: 'BTREE',
+            isVisible: 'YES',
+          },
+          {
+            columnName: 'source_public_prompt_id',
+            nonUnique: 0,
+            indexType: 'BTREE',
+            isVisible: 'YES',
+          },
+        ]
+      )
+
+      const [rows] = await validationConnection.execute(
+        `SELECT key_usage.COLUMN_NAME,
+                key_usage.REFERENCED_TABLE_NAME,
+                key_usage.REFERENCED_COLUMN_NAME,
+                referential.DELETE_RULE,
+                referential.UPDATE_RULE
+           FROM information_schema.KEY_COLUMN_USAGE key_usage
+           JOIN information_schema.REFERENTIAL_CONSTRAINTS referential
+             ON referential.CONSTRAINT_SCHEMA = key_usage.CONSTRAINT_SCHEMA
+            AND referential.TABLE_NAME = key_usage.TABLE_NAME
+            AND referential.CONSTRAINT_NAME = key_usage.CONSTRAINT_NAME
+          WHERE key_usage.CONSTRAINT_SCHEMA = DATABASE()
+            AND key_usage.TABLE_NAME = 'public_folder_prompts'
+            AND key_usage.CONSTRAINT_NAME = 'fk_public_folder_prompts_publication'`
+      )
+      assert.deepEqual(rows.map(row => ({
+        columnName: row.COLUMN_NAME,
+        referencedTableName: row.REFERENCED_TABLE_NAME,
+        referencedColumnName: row.REFERENCED_COLUMN_NAME,
+        deleteRule: row.DELETE_RULE,
+        updateRule: row.UPDATE_RULE,
+      })), [{
+        columnName: 'source_public_prompt_id',
+        referencedTableName: 'public_prompts',
+        referencedColumnName: 'id',
+        deleteRule: 'SET NULL',
+        updateRule: 'NO ACTION',
+      }])
+    }
+    await assertMigration011Constraints()
+
+    // Simulate DDL interruption after both additive columns committed, but
+    // before the lookup indexes and provenance foreign key were installed.
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP FOREIGN KEY fk_public_folder_prompts_publication'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP INDEX uq_public_folder_prompt_publication'
+    )
+    await validationConnection.execute(
+      'ALTER TABLE public_folder_prompts DROP INDEX idx_public_folder_prompts_publication'
+    )
+    await migration011.up(migrationContext)
+    await migration011.up(migrationContext)
+    await assertMigration011Constraints()
+
+    const insertModeratedSnapshot = async position => validationConnection.execute(
+      `INSERT INTO public_folder_prompts
+         (public_folder_id, source_prompt_id, source_public_prompt_id,
+          snapshot_origin, title, content, description, author_id,
+          author_name, position)
+       VALUES (?, NULL, ?, 'moderated_publication', ?, ?, ?, ?, ?, ?)`,
+      [
+        publicFolderId,
+        sourcePublicationId,
+        'Moderated publication snapshot',
+        'Moderated publication content',
+        null,
+        firstUserId,
+        'migration011_moderator',
+        position,
+      ]
+    )
+    const [moderatedSnapshotResult] = await insertModeratedSnapshot(1)
+    await assert.rejects(
+      insertModeratedSnapshot(2),
+      error => error?.code === 'ER_DUP_ENTRY'
+    )
+
+    await validationConnection.execute(
+      'DELETE FROM public_prompts WHERE id = ?',
+      [sourcePublicationId]
+    )
+    const [detachedSnapshotRows] = await validationConnection.execute(
+      `SELECT snapshot_origin, source_public_prompt_id
+         FROM public_folder_prompts
+        WHERE id = ?`,
+      [Number(moderatedSnapshotResult.insertId)]
+    )
+    assert.deepEqual(detachedSnapshotRows.map(row => ({
+      snapshotOrigin: row.snapshot_origin,
+      sourcePublicPromptId: row.source_public_prompt_id,
+    })), [{
+      snapshotOrigin: 'moderated_publication',
+      sourcePublicPromptId: null,
+    }])
+
+    // A pending 011 migration can only trust additive-column defaults. Any
+    // pre-attested value must fail closed instead of blessing unknown history.
+    await assert.rejects(
+      migration011.up(migrationContext),
+      /snapshot_origin/
+    )
+    await validationConnection.execute(
+      `UPDATE public_folder_prompts
+          SET snapshot_origin = 'legacy_unverified'
+        WHERE id = ?`,
+      [Number(moderatedSnapshotResult.insertId)]
+    )
+
+    const pendingSourcePublicationId = await insertPublication(
+      firstUserId,
+      'Pending migration provenance',
+      'Pending migration content'
+    )
+    await validationConnection.execute(
+      `UPDATE public_folder_prompts
+          SET source_public_prompt_id = ?
+        WHERE id = ?`,
+      [pendingSourcePublicationId, legacySnapshotId]
+    )
+    await assert.rejects(
+      migration011.up(migrationContext),
+      /source_public_prompt_id/
+    )
+    await validationConnection.execute(
+      `UPDATE public_folder_prompts
+          SET source_public_prompt_id = NULL
+        WHERE id = ?`,
+      [legacySnapshotId]
+    )
+    await validationConnection.execute(
+      'DELETE FROM public_prompts WHERE id = ?',
+      [pendingSourcePublicationId]
     )
   } finally {
     await validationConnection.end()

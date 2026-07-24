@@ -4,7 +4,10 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-
+import {
+  MYSQL_UNSIGNED_INT_MAX,
+  planPublicFolderSnapshotPositions,
+} from '../src/lib/public-folder-snapshot-policy.ts'
 const testDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(testDirectory, '..')
 const require = createRequire(import.meta.url)
@@ -50,6 +53,7 @@ test('migration 007 defines the complete durable snapshot contract', async () =>
   const table = events.find(event => event.startsWith('table:public_folder_prompts:')) || ''
   assert.match(table, /ON DELETE CASCADE/)
   assert.match(table, /source_prompt_id[\s\S]*ON DELETE SET NULL/)
+  assert.match(table, /position INT UNSIGNED NOT NULL/)
   assert.match(table, /UNIQUE INDEX uq_public_folder_prompt_position/)
   assert.ok(events.some(event => /INSERT IGNORE INTO public_folder_prompts/.test(event)))
 })
@@ -61,7 +65,7 @@ test('publishing replaces a snapshot inside the same ownership-checked transacti
   assert.match(publish, /beginTransaction\(\)/)
   assert.match(publish, /WHERE id = \? AND user_id = \?[\s\S]*FOR UPDATE/)
   assert.match(publish, /ON DUPLICATE KEY UPDATE/)
-  assert.match(publish, /DELETE FROM public_folder_prompts WHERE public_folder_id = \?/)
+  assert.match(publish, /DELETE FROM public_folder_prompts[\s\S]*snapshot_origin IN \('legacy_unverified', 'folder_publication'\)/)
   assert.match(publish, /INSERT INTO public_folder_prompts/)
   assert.ok(publish.indexOf('DELETE FROM public_folder_prompts') < publish.indexOf('INSERT INTO public_folder_prompts'))
   assert.match(publish, /commit\(\)/)
@@ -95,7 +99,11 @@ test('public, admin, and imported reads cannot follow the live private-folder po
   }
 
   const database = source('src/lib/mysql-database.ts')
-  const publicRead = methodSource(database, 'getPublicFolderPrompts', 'addPublicFolderSnapshotPrompt')
+  const publicRead = methodSource(
+    database,
+    'getPublicFolderPrompts',
+    'addPublishedPromptToPublicFolderSnapshot'
+  )
   const importedRead = methodSource(database, 'getImportedFolderPrompts', 'deleteUserImportedFolder')
   assert.match(publicRead, /FROM public_folder_prompts/)
   assert.match(importedRead, /JOIN public_folder_prompts/)
@@ -128,7 +136,7 @@ test('snapshot administration uses the canonical admin principal check', () => {
   }
   const mutationRoute = source('src/app/api/v1/admin/public-folders/[id]/prompts/route.ts')
   assert.match(mutationRoute, /readLimitedJson<Record<string, unknown>>/)
-  assert.match(mutationRoute, /key !== 'promptId'/)
+  assert.match(mutationRoute, /key !== 'publicPromptId'/)
   assert.match(mutationRoute, /error instanceof RequestPolicyError/)
 })
 
@@ -143,10 +151,183 @@ test('individual imports address the folder snapshot namespace explicitly', () =
     'findUserPromptByTitle'
   )
 
-  assert.match(page, /publicFolders\.importPrompt\(folderId, promptId\)/)
+  assert.match(page, /publicFolders\.importPrompt\(folderId, snapshotId\)/)
   assert.doesNotMatch(page, /publicPrompts\.import\(promptId\)/)
   assert.match(client, /public-folders\/\$\{id\}\/prompts\/\$\{snapshotPromptId\}\/import/)
   assert.match(route, /importPublicFolderSnapshotPrompt/)
   assert.match(importMethod, /FROM public_folder_prompts/)
   assert.doesNotMatch(importMethod, /FROM user_prompts[\s\S]*WHERE prompt\.id = snapshot\.source_prompt_id/)
+})
+test('snapshot visibility is fail-closed for every origin and public lifecycle change', () => {
+  const policySource = source('src/lib/public-folder-snapshot-policy.ts')
+  const sqlSource = policySource.slice(
+    policySource.indexOf('export const PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL')
+  )
+
+  assert.match(
+    sqlSource,
+    /snapshot\.snapshot_origin = 'folder_publication'[\s\S]*snapshot\.source_public_prompt_id IS NULL[\s\S]*snapshot\.author_id = published_folder\.user_id/
+  )
+  assert.match(
+    sqlSource,
+    /snapshot\.snapshot_origin = 'moderated_publication'[\s\S]*snapshot\.source_public_prompt_id IS NOT NULL[\s\S]*snapshot\.source_prompt_id IS NULL[\s\S]*EXISTS/
+  )
+  assert.match(sqlSource, /publication\.id = snapshot\.source_public_prompt_id/)
+  assert.match(sqlSource, /publication\.publication_state = 'published'/)
+  for (const field of [
+    'author_id',
+    'title',
+    'content',
+    'description',
+    'category_id',
+    'editor_mode',
+    'payload',
+    'schema_version',
+  ]) {
+    assert.match(sqlSource, new RegExp(`publication\\.${field}[\\s\\S]*snapshot\\.${field}`))
+  }
+  assert.match(sqlSource, /JSON_LENGTH[\s\S]*public_prompt_tags/)
+  assert.match(sqlSource, /NOT EXISTS[\s\S]*JSON_CONTAINS/)
+  assert.match(sqlSource, /CAST\(publication\.title AS BINARY\)/)
+  assert.doesNotMatch(sqlSource, /\bBINARY\s+publication\./)
+
+  // Legacy rows and mutable/private metadata never establish publication consent.
+  assert.doesNotMatch(sqlSource, /legacy_unverified/)
+  assert.doesNotMatch(sqlSource, /publication\.source_prompt_id/)
+  assert.doesNotMatch(sqlSource, /publication\.(?:created_at|updated_at)/)
+  assert.doesNotMatch(sqlSource, /snapshot\.(?:source_created_at|source_updated_at)/)
+  assert.doesNotMatch(sqlSource, /snapshot\.(?:author_name|author_avatar_url|category_name|category_color)/)
+})
+
+test('position planning is stable across owner republishes and fails closed at INT UNSIGNED bounds', () => {
+  assert.equal(MYSQL_UNSIGNED_INT_MAX, 0xffff_ffff)
+
+  const firstPlan = planPublicFolderSnapshotPositions([
+    { id: 30, position: 8, snapshot_origin: 'moderated_publication' },
+    { id: 10, position: 0, snapshot_origin: 'folder_publication' },
+    { id: 20, position: 4, snapshot_origin: 'moderated_publication' },
+  ], 2)
+  assert.deepEqual(firstPlan, [
+    { id: 20, temporaryPosition: 9, finalPosition: 2 },
+    { id: 30, temporaryPosition: 10, finalPosition: 3 },
+  ])
+
+  const replayPlan = planPublicFolderSnapshotPositions([
+    { id: 101, position: 0, snapshot_origin: 'folder_publication' },
+    { id: 102, position: 1, snapshot_origin: 'folder_publication' },
+    { id: 20, position: 2, snapshot_origin: 'moderated_publication' },
+    { id: 30, position: 3, snapshot_origin: 'moderated_publication' },
+  ], 2)
+  assert.deepEqual(
+    replayPlan.map(snapshot => ({ id: snapshot.id, finalPosition: snapshot.finalPosition })),
+    firstPlan.map(snapshot => ({ id: snapshot.id, finalPosition: snapshot.finalPosition }))
+  )
+
+  assert.throws(
+    () => planPublicFolderSnapshotPositions([
+      { id: 1, position: MYSQL_UNSIGNED_INT_MAX, snapshot_origin: 'moderated_publication' },
+    ], 0),
+    /staging positions exceed/
+  )
+  assert.throws(
+    () => planPublicFolderSnapshotPositions([], MYSQL_UNSIGNED_INT_MAX + 2),
+    /positions exceed/
+  )
+  assert.throws(
+    () => planPublicFolderSnapshotPositions([
+      { id: 1, position: 0, snapshot_origin: 'folder_publication' },
+      { id: 2, position: 0, snapshot_origin: 'moderated_publication' },
+    ], 0),
+    /position is invalid/
+  )
+})
+
+test('owner republish attests only owner rows and preserves moderated rows in stable order', () => {
+  const database = source('src/lib/mysql-database.ts')
+  const publish = methodSource(database, 'publishOwnedFolderSnapshot', 'getPublicFolderById')
+
+  assert.match(publish, /SELECT id, position, snapshot_origin[\s\S]*FOR UPDATE/)
+  assert.match(publish, /planPublicFolderSnapshotPositions/)
+  assert.match(publish, /snapshot\.temporaryPosition/)
+  assert.match(publish, /snapshot\.finalPosition/)
+  assert.match(
+    publish,
+    /public_folder_id, source_prompt_id, source_public_prompt_id, snapshot_origin[\s\S]*prompt\.id,[\s\S]*NULL,[\s\S]*'folder_publication'/
+  )
+  assert.match(
+    publish,
+    /DELETE FROM public_folder_prompts[\s\S]*snapshot_origin IN \('legacy_unverified', 'folder_publication'\)/
+  )
+  assert.doesNotMatch(publish, /DELETE FROM public_folder_prompts WHERE public_folder_id = \?['`]/)
+  assert.match(publish, /ownerCount !== expectedOwnerCount/)
+})
+
+test('moderation copies the current public identity and supports detached publications', () => {
+  const database = source('src/lib/mysql-database.ts')
+  const add = methodSource(
+    database,
+    'addPublishedPromptToPublicFolderSnapshot',
+    'removePublicFolderSnapshotPrompt'
+  )
+
+  assert.match(add, /FROM public_prompts publication/)
+  assert.match(add, /WHERE publication\.id = \?/)
+  assert.match(add, /publication\.publication_state = 'published'/)
+  assert.doesNotMatch(add, /publication\.source_prompt_id IS NOT NULL/)
+  assert.doesNotMatch(add, /FROM user_prompts|FROM user_prompt_tags/)
+  assert.match(add, /WHERE prompt_tag\.public_prompt_id = \?/)
+  assert.match(add, /ORDER BY tag\.name ASC/)
+  assert.match(add, /source_public_prompt_id = \?/)
+  assert.match(add, /snapshot_origin = 'moderated_publication'/)
+  assert.match(add, /SET source_prompt_id = NULL/)
+  assert.match(
+    add,
+    /VALUES \(\?, NULL, \?, 'moderated_publication'/
+  )
+  assert.match(add, /nextPosition > MYSQL_UNSIGNED_INT_MAX/)
+})
+
+test('snapshot readers share one policy, one snapshot id, and owned imported SQL', () => {
+  const database = source('src/lib/mysql-database.ts')
+  const publicRead = methodSource(
+    database,
+    'getPublicFolderPrompts',
+    'addPublishedPromptToPublicFolderSnapshot'
+  )
+  const importOne = methodSource(
+    database,
+    'importPublicFolderSnapshotPrompt',
+    'findUserPromptByTitle'
+  )
+  const importedRead = methodSource(
+    database,
+    'getImportedFolderPrompts',
+    'deleteUserImportedFolder'
+  )
+  const importedCount = methodSource(
+    database,
+    'getImportedFolderPromptCount',
+    'restoreOwnedPromptVersion'
+  )
+  const importedList = methodSource(
+    database,
+    'getUserImportedFolders',
+    'getImportedFolderPrompts'
+  )
+
+  for (const method of [publicRead, importOne, importedRead, importedCount, importedList]) {
+    assert.match(method, /PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL/)
+  }
+  assert.match(publicRead, /withConsistentReadSnapshot/)
+  assert.doesNotMatch(publicRead, /Promise\.all/)
+  assert.match(publicRead, /SELECT snapshot\.id AS snapshot_id/)
+  assert.doesNotMatch(publicRead, /SELECT snapshot\.id,[\s\S]*snapshot\.id AS snapshot_id/)
+  assert.match(importedRead, /getImportedFolderPrompts\(importedFolderId: number, userId: number\)/)
+  assert.match(importedRead, /WHERE imported\.id = \?[\s\S]*imported\.user_id = \?/)
+  assert.match(importedRead, /\[importedFolderId, userId\]/)
+  assert.match(importedCount, /getImportedFolderPromptCount\(importedFolderId: number, userId: number\)/)
+  assert.match(importedCount, /WHERE imported\.id = \?[\s\S]*imported\.user_id = \?/)
+  assert.match(importedList, /AS prompt_count/)
+  assert.doesNotMatch(importedList, /SELECT \w+\.\*/)
+  assert.match(importOne, /\]\.sort\(\)\.slice\(0, 50\)/)
 })

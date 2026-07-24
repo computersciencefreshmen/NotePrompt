@@ -26,6 +26,8 @@ import {
   ImportedFolder,
   AdminPrompt,
   AdminFolder,
+  AdminFolderSnapshotPrompt,
+  PublicFolderSnapshotPrompt,
   PromptVersion,
   PromptAttachmentDraft,
   PromptOptimizerMode
@@ -45,14 +47,27 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
     },
   }
 
-  // 请求超时控制 (默认30秒，AI请求可传入更长时间)
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs ?? 30000)
+  // Compose caller cancellation with the client timeout. The caller signal
+  // must remain observable so debounced search can distinguish cancellation
+  // from a real timeout.
+  const externalSignal = options.signal
+  const requestController = new AbortController()
+  let timedOut = false
+  const abortFromExternal = () => requestController.abort(externalSignal?.reason)
+  if (externalSignal?.aborted) {
+    abortFromExternal()
+  } else {
+    externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
+  }
+  const timeoutId = setTimeout(() => {
+    timedOut = true
+    requestController.abort()
+  }, timeoutMs ?? 30000)
 
   try {
     const response = await fetch(url, {
       ...config,
-      signal: controller.signal
+      signal: requestController.signal,
     })
 
     if (!response.ok) {
@@ -71,8 +86,11 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
     
     return data
   } catch (error) {
+    if (externalSignal?.aborted && !timedOut) {
+      throw error
+    }
     if (error instanceof Error) {
-      if (error.name === 'AbortError') {
+      if (error.name === 'AbortError' && timedOut) {
         throw new Error('请求超时，请稍后重试')
       }
       throw error
@@ -80,6 +98,7 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
     throw new Error('网络请求失败，请检查网络连接')
   } finally {
     clearTimeout(timeoutId)
+    externalSignal?.removeEventListener('abort', abortFromExternal)
   }
 }
 
@@ -153,8 +172,8 @@ export const user = {
   },
 
   // 获取导入文件夹的提示词
-  getImportedFolderPrompts: async (id: number): Promise<ApiResponse<PublicPrompt[]>> => {
-    return apiRequest<ApiResponse<PublicPrompt[]>>(`/user/imported-folders/${id}/prompts`)
+  getImportedFolderPrompts: async (id: number): Promise<ApiResponse<PublicFolderSnapshotPrompt[]>> => {
+    return apiRequest<ApiResponse<PublicFolderSnapshotPrompt[]>>(`/user/imported-folders/${id}/prompts`)
   },
 
   // 删除导入文件夹
@@ -904,30 +923,30 @@ export const admin = {
   },
 
   // 获取公共文件夹内的提示词
-  getPublicFolderPrompts: async (id: number, params?: { page?: number; limit?: number }): Promise<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>> => {
+  getPublicFolderPrompts: async (id: number, params?: { page?: number; limit?: number }): Promise<ApiResponse<{ folder: AdminFolder, prompts: AdminFolderSnapshotPrompt[] }>> => {
     const query = new URLSearchParams()
     if (params?.page) query.set('page', String(params.page))
     if (params?.limit) query.set('limit', String(params.limit))
-    return apiRequest<ApiResponse<{ folder: AdminFolder, prompts: AdminPrompt[] }>>(`/admin/public-folders/${id}/prompts${query.size ? `?${query}` : ''}`)
+    return apiRequest<ApiResponse<{ folder: AdminFolder, prompts: AdminFolderSnapshotPrompt[] }>>(`/admin/public-folders/${id}/prompts${query.size ? `?${query}` : ''}`)
   },
 
-  // 向公共文件夹添加提示词
-  addPromptToPublicFolder: async (folderId: number, promptId: number): Promise<ApiResponse<null>> => {
-    return apiRequest<ApiResponse<null>>(`/admin/public-folders/${folderId}/prompts`, {
+  // 从已发布提示词中向公共文件夹快照添加内容
+  addPublishedPromptToPublicFolder: async (folderId: number, publicPromptId: number): Promise<ApiResponse<AdminFolderSnapshotPrompt>> => {
+    return apiRequest<ApiResponse<AdminFolderSnapshotPrompt>>(`/admin/public-folders/${folderId}/prompts`, {
       method: 'POST',
-      body: JSON.stringify({ promptId }),
+      body: JSON.stringify({ publicPromptId }),
     })
   },
 
   // 从公共文件夹移除提示词
-  removePromptFromPublicFolder: async (folderId: number, promptId: number): Promise<ApiResponse<null>> => {
-    return apiRequest<ApiResponse<null>>(`/admin/public-folders/${folderId}/prompts?promptId=${promptId}`, {
+  removeSnapshotPromptFromPublicFolder: async (folderId: number, snapshotId: number): Promise<ApiResponse<null>> => {
+    return apiRequest<ApiResponse<null>>(`/admin/public-folders/${folderId}/prompts?snapshotId=${snapshotId}`, {
       method: 'DELETE',
     })
   },
 
-  // 获取可选的提示词列表
-  getAvailablePrompts: async (params?: { search?: string; folderId?: number; page?: number; limit?: number }): Promise<ApiResponse<AdminPrompt[]>> => {
+  // 获取可选的已发布提示词列表
+  getAvailablePrompts: async (params?: { search?: string; folderId?: number; page?: number; limit?: number; signal?: AbortSignal }): Promise<ApiResponse<AdminPrompt[]>> => {
     const queryParams = new URLSearchParams()
     if (params?.search) queryParams.append('search', params.search)
     if (params?.folderId) queryParams.append('folderId', params.folderId.toString())
@@ -935,7 +954,9 @@ export const admin = {
     if (params?.limit) queryParams.append('limit', params.limit.toString())
 
     const endpoint = `/admin/available-prompts${queryParams.toString() ? `?${queryParams}` : ''}`
-    return apiRequest<ApiResponse<AdminPrompt[]>>(endpoint)
+    return apiRequest<ApiResponse<AdminPrompt[]>>(endpoint, {
+      signal: params?.signal,
+    })
   }
 }
 
@@ -968,12 +989,12 @@ export const api = {
     },
 
     // 获取公共文件夹的提示词
-    getPrompts: async (id: number, lang?: string, params?: { page?: number; limit?: number }): Promise<ApiResponse<PublicPrompt[]>> => {
+    getPrompts: async (id: number, lang?: string, params?: { page?: number; limit?: number }): Promise<ApiResponse<PublicFolderSnapshotPrompt[]>> => {
       const queryParams = new URLSearchParams()
       if (lang) queryParams.append('lang', lang)
       if (params?.page) queryParams.append('page', params.page.toString())
       if (params?.limit) queryParams.append('limit', params.limit.toString())
-      return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts${queryParams.toString() ? `?${queryParams}` : ''}`)
+      return apiRequest<ApiResponse<PublicFolderSnapshotPrompt[]>>(`/public-folders/${id}/prompts${queryParams.toString() ? `?${queryParams}` : ''}`)
     },
 
     // Import the immutable snapshot row, not an unrelated public-prompts id.

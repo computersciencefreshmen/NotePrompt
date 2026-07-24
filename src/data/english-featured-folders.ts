@@ -1,4 +1,4 @@
-import { PublicFolder } from '@/types'
+import type { PublicFolder, PublicPrompt } from '@/types'
 import { englishFeaturedPrompts } from './english-featured-prompts'
 
 const publishedAt = '2026-05-25T00:00:00.000Z'
@@ -13,7 +13,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Strategy & Executive Workflows',
     description: 'Decision briefs, risk registers, and operator-ready templates for strategy reviews, planning, and leadership communication.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -26,7 +25,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Product & UX Research Kit',
     description: 'Reusable prompts for PRDs, user interviews, product discovery, and research synthesis.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -39,7 +37,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Marketing & Sales Launch Pack',
     description: 'Copywriting, landing page, and sales discovery prompts for turning raw positioning into market-ready messaging.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -52,7 +49,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Engineering & Data Quality Bench',
     description: 'Code review, data analysis planning, and prompt evaluation templates for technical teams.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -65,7 +61,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Learning & Enablement System',
     description: 'Curriculum and learning path prompts for training, onboarding, and capability building.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -78,7 +73,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Growth & Analytics Lab',
     description: 'Experiment design, KPI trees, dashboards, pricing, and onboarding prompts for growth teams.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -91,7 +85,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'People & Customer Operations',
     description: 'Hiring, support, retention, customer communication, and community operations templates.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -104,7 +97,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Security, Legal & Risk Desk',
     description: 'Threat modeling, privacy review, legal clause explanation, risk registers, and incident reviews.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -117,7 +109,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Creator & Brand Studio',
     description: 'Content briefs, social posts, newsletters, video scripts, podcast plans, and brand voice guides.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -130,7 +121,6 @@ export const englishFeaturedFolders: EnglishFeaturedFolder[] = [
     name: 'Documentation & Knowledge Base',
     description: 'API docs, SOPs, ADRs, proposals, literature reviews, and learning assets for reusable knowledge.',
     user_id: 0,
-    original_folder_id: 0,
     is_featured: true,
     created_at: publishedAt,
     updated_at: publishedAt,
@@ -144,10 +134,10 @@ export function findEnglishFeaturedFolder(id: number) {
   return englishFeaturedFolders.find(folder => folder.id === id) || null
 }
 
-export function getEnglishFeaturedFolderPrompts(id: number) {
+export function getEnglishFeaturedFolderPrompts(id: number): PublicPrompt[] | null {
   const folder = findEnglishFeaturedFolder(id)
   if (!folder) return null
   return folder.promptIds
     .map(promptId => englishFeaturedPrompts.find(prompt => prompt.id === promptId))
-    .filter(Boolean)
+    .filter((prompt): prompt is PublicPrompt => prompt != null)
 }

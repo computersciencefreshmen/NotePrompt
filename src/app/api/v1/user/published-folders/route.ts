@@ -6,6 +6,7 @@ import {
   parseBoundedPagination,
   readBoundedSearchParam,
 } from '@/lib/pagination-policy'
+import { PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL } from '@/lib/public-folder-snapshot-policy'
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(request)
@@ -44,38 +45,47 @@ export async function GET(request: NextRequest) {
     }
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    const countResult = await db.query(
-      `SELECT COUNT(*) AS total FROM public_folders pf ${whereClause}`,
-      queryParams,
-    )
-    const total = Number((countResult.rows as Record<string, unknown>[])[0]?.total) || 0
-
-    const result = await db.query(
-      `SELECT
+    const countQuery = `SELECT COUNT(*) AS total FROM public_folders pf ${whereClause}`
+    const itemQuery = `SELECT
          pf.id,
          pf.name,
          pf.description,
          pf.user_id,
-         pf.original_folder_id,
          pf.is_featured,
          pf.created_at,
          pf.updated_at,
          u.username AS author,
          (SELECT COUNT(*) FROM user_imported_folders uif WHERE uif.public_folder_id = pf.id) AS import_count,
-         (SELECT COUNT(*) FROM public_folder_prompts snapshot WHERE snapshot.public_folder_id = pf.id) AS prompt_count
+         (
+           SELECT COUNT(*)
+           FROM public_folder_prompts snapshot
+           JOIN public_folders published_folder ON published_folder.id = snapshot.public_folder_id
+           WHERE snapshot.public_folder_id = pf.id
+             AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}
+         ) AS prompt_count
        FROM public_folders pf
        JOIN users u ON u.id = pf.user_id
        ${whereClause}
-       ORDER BY pf.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...queryParams, limit, offset],
-    )
+       ORDER BY pf.created_at DESC, pf.id DESC
+       LIMIT ? OFFSET ?`
+    const { countResult, result } = await db.withConsistentReadSnapshot(async snapshotQuery => {
+      const countResult = await snapshotQuery(countQuery, queryParams)
+      const result = await snapshotQuery(itemQuery, [...queryParams, limit, offset])
+      return { countResult, result }
+    })
+    const total = Number((countResult.rows as Record<string, unknown>[])[0]?.total) || 0
 
     const items = (result.rows as Record<string, unknown>[]).map((folder) => ({
-      ...folder,
+      id: folder.id,
+      name: folder.name,
+      description: folder.description,
+      user_id: folder.user_id,
+      author: folder.author,
       import_count: Number(folder.import_count) || 0,
       prompt_count: Number(folder.prompt_count) || 0,
       is_featured: Boolean(folder.is_featured),
+      created_at: folder.created_at,
+      updated_at: folder.updated_at,
     }))
     const pagination = createPaginationMetadata(total, paginationResult.value)
 

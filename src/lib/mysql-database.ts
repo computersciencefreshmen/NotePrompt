@@ -21,6 +21,11 @@ import {
 import { normalizePromptTagNames } from './tag-policy';
 import { PROMPT_LIST_PREVIEW_CHARS } from './prompt-list-policy';
 import { MAX_FOLDER_PROMPT_CONTENT_CHARS } from './prompt-list-policy';
+import {
+  MYSQL_UNSIGNED_INT_MAX,
+  planPublicFolderSnapshotPositions,
+  PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL,
+} from './public-folder-snapshot-policy';
 
 type DbRow = Record<string, unknown>;
 type OwnedDbRow = DbRow & { id: unknown; user_id: unknown };
@@ -29,7 +34,7 @@ type PromptVersionRow = DbRow & { title?: string; content?: string };
 type SchemaColumnRow = { TABLE_NAME: string; COLUMN_NAME: string };
 type MySQLParameter = string | number | bigint | boolean | Date | null | Buffer | Uint8Array;
 type SnapshotQuery = (sql: string, params?: unknown[]) => Promise<{ rows: unknown }>;
-const MYSQL_DB_INSTANCE_VERSION = 8;
+const MYSQL_DB_INSTANCE_VERSION = 10;
 
 function normalizeMySQLParameter(value: unknown): MySQLParameter {
   if (value === undefined || value === null) return null;
@@ -1604,7 +1609,7 @@ class MySQLDB {
 
       // Lock the membership range so an explicit publish observes one coherent set. Any
       // private edit after this transaction commits remains private until the next publish.
-      await connection.execute(
+      const [membershipRows] = await connection.execute(
         `SELECT membership.user_prompt_id
            FROM user_prompt_folders membership
            JOIN user_prompts prompt
@@ -1641,19 +1646,51 @@ class MySQLDB {
         throw new Error('Public folder upsert did not return a valid identifier');
       }
 
-      await connection.execute(
-        'DELETE FROM public_folder_prompts WHERE public_folder_id = ?',
+      const [snapshotRows] = await connection.execute(
+        `SELECT id, position, snapshot_origin
+           FROM public_folder_prompts
+          WHERE public_folder_id = ?
+          ORDER BY position ASC, id ASC
+          FOR UPDATE`,
         [publicFolderId]
       );
+      const expectedOwnerCount = (membershipRows as DbRow[]).length;
+      const positionPlan = planPublicFolderSnapshotPositions(
+        snapshotRows as DbRow[],
+        expectedOwnerCount,
+      );
+      for (const snapshot of positionPlan) {
+        const [moveResult] = await connection.execute(
+          `UPDATE public_folder_prompts
+              SET position = ?
+            WHERE id = ?
+              AND public_folder_id = ?
+              AND snapshot_origin = 'moderated_publication'`,
+          [snapshot.temporaryPosition, snapshot.id, publicFolderId]
+        );
+        if (Number((moveResult as MutationResult).affectedRows) !== 1) {
+          throw new Error('Public folder moderated snapshot staging lost its lock');
+        }
+      }
+
       await connection.execute(
+        `DELETE FROM public_folder_prompts
+          WHERE public_folder_id = ?
+            AND snapshot_origin IN ('legacy_unverified', 'folder_publication')`,
+        [publicFolderId]
+      );
+      const [ownerInsertResult] = await connection.execute(
         `INSERT INTO public_folder_prompts
-           (public_folder_id, source_prompt_id, title, content, description,
+           (public_folder_id, source_prompt_id, source_public_prompt_id, snapshot_origin,
+            title, content, description,
             author_id, author_name, author_avatar_url,
             category_id, category_name, category_color,
             editor_mode, payload, schema_version, tags, position,
             source_created_at, source_updated_at)
          SELECT ?,
                 prompt.id,
+                NULL,
+                'folder_publication',
                 prompt.title,
                 prompt.content,
                 prompt.description,
@@ -1686,15 +1723,40 @@ class MySQLDB {
           WHERE membership.folder_id = ?`,
         [publicFolderId, userId, folderId]
       );
+      const ownerCount = Number((ownerInsertResult as MutationResult).affectedRows);
+      if (!Number.isSafeInteger(ownerCount) || ownerCount !== expectedOwnerCount) {
+        throw new Error('Published folder snapshot did not match its locked membership set');
+      }
+      for (const snapshot of positionPlan) {
+        const [moveResult] = await connection.execute(
+          `UPDATE public_folder_prompts
+              SET position = ?
+            WHERE id = ?
+              AND public_folder_id = ?
+              AND snapshot_origin = 'moderated_publication'`,
+          [snapshot.finalPosition, snapshot.id, publicFolderId]
+        );
+        if (Number((moveResult as MutationResult).affectedRows) !== 1) {
+          throw new Error('Public folder moderated snapshot reorder lost its lock');
+        }
+      }
 
       const [publishedRows] = await connection.execute(
-        `SELECT published.*, author.username AS author,
+        `SELECT published_folder.id,
+                published_folder.name,
+                published_folder.description,
+                published_folder.user_id,
+                published_folder.is_featured,
+                published_folder.created_at,
+                published_folder.updated_at,
+                author.username AS author,
                 (SELECT COUNT(*)
                    FROM public_folder_prompts snapshot
-                  WHERE snapshot.public_folder_id = published.id) AS prompt_count
-           FROM public_folders published
-           JOIN users author ON author.id = published.user_id
-          WHERE published.id = ?`,
+                  WHERE snapshot.public_folder_id = published_folder.id
+                    AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}) AS prompt_count
+           FROM public_folders published_folder
+           JOIN users author ON author.id = published_folder.user_id
+          WHERE published_folder.id = ?`,
         [publicFolderId]
       );
       await connection.commit();
@@ -1709,61 +1771,75 @@ class MySQLDB {
 
   async getPublicFolderById(id: number) {
     const result = await this.query(
-      `SELECT published.*, author.username AS author,
+      `SELECT published_folder.id,
+              published_folder.name,
+              published_folder.description,
+              published_folder.user_id,
+              published_folder.is_featured,
+              published_folder.created_at,
+              published_folder.updated_at,
+              author.username AS author,
               (SELECT COUNT(*)
                  FROM public_folder_prompts snapshot
-                WHERE snapshot.public_folder_id = published.id) AS prompt_count
-         FROM public_folders published
-         JOIN users author ON author.id = published.user_id
-        WHERE published.id = ?`,
+                WHERE snapshot.public_folder_id = published_folder.id
+                  AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}) AS prompt_count
+         FROM public_folders published_folder
+         JOIN users author ON author.id = published_folder.user_id
+        WHERE published_folder.id = ?`,
       [id]
     );
     return (result.rows as DbRow[])[0];
   }
 
   async getPublicFolderPrompts(folderId: number, options: { limit: number; offset: number }) {
-    const [result, countResult] = await Promise.all([
-      this.query(
-      `SELECT snapshot.id,
-              snapshot.id AS snapshot_id,
-              snapshot.source_prompt_id,
-              snapshot.title,
-              LEFT(snapshot.content, ${MAX_FOLDER_PROMPT_CONTENT_CHARS}) AS content,
-              (CHAR_LENGTH(snapshot.content) > ${MAX_FOLDER_PROMPT_CONTENT_CHARS}) AS content_is_truncated,
-              snapshot.description,
-              snapshot.author_id,
-              snapshot.author_name AS author,
-              snapshot.author_avatar_url AS avatar_url,
-              snapshot.category_id,
-              snapshot.category_name AS category,
-              snapshot.category_color,
-              snapshot.editor_mode,
-              snapshot.payload,
-              snapshot.schema_version,
-              snapshot.tags,
-              0 AS views_count,
-              0 AS favorites_count,
-              0 AS is_featured,
-              COALESCE(snapshot.source_created_at, snapshot.created_at) AS created_at,
-              COALESCE(snapshot.source_updated_at, snapshot.updated_at) AS updated_at
-        FROM public_folder_prompts snapshot
-        WHERE snapshot.public_folder_id = ?
-        ORDER BY snapshot.position ASC, snapshot.id ASC
-        LIMIT ? OFFSET ?`,
-      [folderId, options.limit, options.offset]
-      ),
-      this.query(
-        'SELECT COUNT(*) AS total FROM public_folder_prompts WHERE public_folder_id = ?',
-        [folderId],
-      ),
-    ]);
-    return {
-      items: result.rows as DbRow[],
-      total: Number((countResult.rows as DbRow[])[0]?.total) || 0,
-    };
+    return this.withConsistentReadSnapshot(async query => {
+      const result = await query(
+        `SELECT snapshot.id AS snapshot_id,
+                snapshot.title,
+                LEFT(snapshot.content, ${MAX_FOLDER_PROMPT_CONTENT_CHARS}) AS content,
+                (CHAR_LENGTH(snapshot.content) > ${MAX_FOLDER_PROMPT_CONTENT_CHARS}) AS content_is_truncated,
+                snapshot.description,
+                snapshot.author_id,
+                snapshot.author_name AS author,
+                snapshot.author_avatar_url AS avatar_url,
+                snapshot.category_id,
+                snapshot.category_name AS category,
+                snapshot.category_color,
+                snapshot.editor_mode,
+                snapshot.payload,
+                snapshot.schema_version,
+                snapshot.tags,
+                0 AS views_count,
+                0 AS favorites_count,
+                0 AS is_featured,
+                COALESCE(snapshot.source_created_at, snapshot.created_at) AS created_at,
+                COALESCE(snapshot.source_updated_at, snapshot.updated_at) AS updated_at
+           FROM public_folder_prompts snapshot
+           JOIN public_folders published_folder
+             ON published_folder.id = snapshot.public_folder_id
+          WHERE snapshot.public_folder_id = ?
+            AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}
+          ORDER BY snapshot.position ASC, snapshot.id ASC
+          LIMIT ? OFFSET ?`,
+        [folderId, options.limit, options.offset]
+      );
+      const countResult = await query(
+        `SELECT COUNT(snapshot.id) AS total
+           FROM public_folder_prompts snapshot
+           JOIN public_folders published_folder
+             ON published_folder.id = snapshot.public_folder_id
+          WHERE snapshot.public_folder_id = ?
+            AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}`,
+        [folderId]
+      );
+      return {
+        items: result.rows as DbRow[],
+        total: Number((countResult.rows as DbRow[])[0]?.total) || 0,
+      };
+    });
   }
 
-  async addPublicFolderSnapshotPrompt(publicFolderId: number, sourcePromptId: number) {
+  async addPublishedPromptToPublicFolderSnapshot(publicFolderId: number, publicPromptId: number) {
     await this.assertSchemaReady();
     const connection = await this.pool.getConnection();
     try {
@@ -1777,92 +1853,237 @@ class MySQLDB {
         return { status: 'folder_not_found' as const };
       }
 
-      const [existingRows] = await connection.execute(
-        `SELECT id
-           FROM public_folder_prompts
-          WHERE public_folder_id = ? AND source_prompt_id = ?
-          FOR UPDATE`,
-        [publicFolderId, sourcePromptId]
-      );
-      if ((existingRows as DbRow[]).length > 0) {
-        await connection.rollback();
-        return { status: 'already_exists' as const };
-      }
-
-      const [promptRows] = await connection.execute(
-        `SELECT prompt.*,
+      const [publicationRows] = await connection.execute(
+        `SELECT publication.id,
+                publication.title,
+                publication.content,
+                publication.description,
+                publication.author_id,
+                publication.category_id,
+                publication.editor_mode,
+                publication.payload,
+                publication.schema_version,
+                publication.created_at,
+                publication.updated_at,
                 author.username AS author_name,
                 author.avatar_url AS author_avatar_url,
                 category.name AS category_name,
                 category.color AS category_color
-           FROM user_prompts prompt
-           JOIN users author ON author.id = prompt.user_id
-           LEFT JOIN categories category ON category.id = prompt.category_id
-          WHERE prompt.id = ?
+           FROM public_prompts publication
+           JOIN users author ON author.id = publication.author_id
+           LEFT JOIN categories category ON category.id = publication.category_id
+          WHERE publication.id = ?
+            AND publication.publication_state = 'published'
           FOR UPDATE`,
-        [sourcePromptId]
+        [publicPromptId]
       );
-      const prompt = (promptRows as DbRow[])[0];
-      if (!prompt) {
+      const publication = (publicationRows as DbRow[])[0];
+      if (!publication) {
         await connection.rollback();
-        return { status: 'prompt_not_found' as const };
+        return { status: 'publication_not_found' as const };
+      }
+      const authorId = Number(publication.author_id);
+      if (!Number.isSafeInteger(authorId) || authorId <= 0) {
+        throw new Error('Published prompt author is invalid');
       }
 
       const [tagRows] = await connection.execute(
         `SELECT tag.name
-           FROM user_prompt_tags prompt_tag
+           FROM public_prompt_tags prompt_tag
            JOIN tags tag ON tag.id = prompt_tag.tag_id
-          WHERE prompt_tag.user_prompt_id = ?
+          WHERE prompt_tag.public_prompt_id = ?
           ORDER BY tag.name ASC`,
-        [sourcePromptId]
+        [publicPromptId]
       );
-      const [positionRows] = await connection.execute(
-        `SELECT COALESCE(MAX(position), -1) + 1 AS next_position
-           FROM public_folder_prompts
-          WHERE public_folder_id = ?`,
-        [publicFolderId]
-      );
-      const payload = prompt.payload == null
+      const payload = publication.payload == null
         ? null
-        : typeof prompt.payload === 'string'
-          ? prompt.payload
-          : JSON.stringify(prompt.payload);
+        : typeof publication.payload === 'string'
+          ? publication.payload
+          : JSON.stringify(publication.payload);
       const tags = JSON.stringify((tagRows as DbRow[]).map(row => String(row.name)));
-      const [insertResult] = await connection.execute(
-        `INSERT INTO public_folder_prompts
-           (public_folder_id, source_prompt_id, title, content, description,
-            author_id, author_name, author_avatar_url,
-            category_id, category_name, category_color,
-            editor_mode, payload, schema_version, tags, position,
-            source_created_at, source_updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      const title = String(publication.title || '');
+      const content = String(publication.content || '');
+      const description = publication.description == null ? null : String(publication.description);
+      const authorName = String(publication.author_name || '');
+      const authorAvatarUrl = publication.author_avatar_url == null
+        ? null
+        : String(publication.author_avatar_url);
+      const categoryId = publication.category_id == null ? null : Number(publication.category_id);
+      const categoryName = publication.category_name == null ? null : String(publication.category_name);
+      const categoryColor = publication.category_color == null ? null : String(publication.category_color);
+      const editorMode = publication.editor_mode === 'professional' ? 'professional' : 'normal';
+      const schemaVersion = Number(publication.schema_version) || 1;
+
+      const [currentRows] = await connection.execute(
+        `SELECT snapshot.id
+           FROM public_folder_prompts snapshot
+          WHERE snapshot.public_folder_id = ?
+            AND snapshot.source_public_prompt_id = ?
+            AND snapshot.snapshot_origin = 'moderated_publication'
+            AND snapshot.source_prompt_id IS NULL
+            AND CAST(snapshot.title AS BINARY) = CAST(? AS BINARY)
+            AND CAST(snapshot.content AS BINARY) = CAST(? AS BINARY)
+            AND CAST(snapshot.description AS BINARY) <=> CAST(? AS BINARY)
+            AND snapshot.author_id = ?
+            AND CAST(snapshot.author_name AS BINARY) = CAST(? AS BINARY)
+            AND CAST(snapshot.author_avatar_url AS BINARY) <=> CAST(? AS BINARY)
+            AND snapshot.category_id <=> ?
+            AND CAST(snapshot.category_name AS BINARY) <=> CAST(? AS BINARY)
+            AND CAST(snapshot.category_color AS BINARY) <=> CAST(? AS BINARY)
+            AND snapshot.editor_mode = ?
+            AND snapshot.payload <=> CAST(? AS JSON)
+            AND snapshot.schema_version = ?
+            AND snapshot.tags <=> CAST(? AS JSON)
+          FOR UPDATE`,
         [
           publicFolderId,
-          sourcePromptId,
-          String(prompt.title || ''),
-          String(prompt.content || ''),
-          prompt.description == null ? null : String(prompt.description),
-          Number(prompt.user_id),
-          String(prompt.author_name || ''),
-          prompt.author_avatar_url == null ? null : String(prompt.author_avatar_url),
-          prompt.category_id == null ? null : Number(prompt.category_id),
-          prompt.category_name == null ? null : String(prompt.category_name),
-          prompt.category_color == null ? null : String(prompt.category_color),
-          prompt.editor_mode === 'professional' ? 'professional' : 'normal',
+          publicPromptId,
+          title,
+          content,
+          description,
+          authorId,
+          authorName,
+          authorAvatarUrl,
+          categoryId,
+          categoryName,
+          categoryColor,
+          editorMode,
           payload,
-          Number(prompt.schema_version) || 1,
+          schemaVersion,
           tags,
-          Number((positionRows as DbRow[])[0]?.next_position) || 0,
-          prompt.created_at as Date | string,
-          prompt.updated_at as Date | string,
         ]
       );
-      const snapshotId = requireInsertId(
-        insertResult as MutationResult,
-        'Snapshot prompt insert did not return a valid identifier'
+      if ((currentRows as DbRow[]).length > 0) {
+        await connection.rollback();
+        return { status: 'already_exists' as const };
+      }
+
+      const [existingRows] = await connection.execute(
+        `SELECT id
+           FROM public_folder_prompts
+          WHERE public_folder_id = ? AND source_public_prompt_id = ?
+          FOR UPDATE`,
+        [publicFolderId, publicPromptId]
       );
+      const existingSnapshotId = Number((existingRows as DbRow[])[0]?.id);
+      let snapshotId: number;
+      if (Number.isSafeInteger(existingSnapshotId) && existingSnapshotId > 0) {
+        snapshotId = existingSnapshotId;
+        await connection.execute(
+          `UPDATE public_folder_prompts
+              SET source_prompt_id = NULL,
+                  snapshot_origin = 'moderated_publication',
+                  title = ?,
+                  content = ?,
+                  description = ?,
+                  author_id = ?,
+                  author_name = ?,
+                  author_avatar_url = ?,
+                  category_id = ?,
+                  category_name = ?,
+                  category_color = ?,
+                  editor_mode = ?,
+                  payload = ?,
+                  schema_version = ?,
+                  tags = ?,
+                  source_created_at = ?,
+                  source_updated_at = ?,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND public_folder_id = ?
+              AND source_public_prompt_id = ?`,
+          [
+            title,
+            content,
+            description,
+            authorId,
+            authorName,
+            authorAvatarUrl,
+            categoryId,
+            categoryName,
+            categoryColor,
+            editorMode,
+            payload,
+            schemaVersion,
+            tags,
+            publication.created_at as Date | string,
+            publication.updated_at as Date | string,
+            snapshotId,
+            publicFolderId,
+            publicPromptId,
+          ]
+        );
+      } else {
+        const [positionRows] = await connection.execute(
+          `SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+             FROM public_folder_prompts
+            WHERE public_folder_id = ?`,
+          [publicFolderId]
+        );
+        const nextPosition = Number((positionRows as DbRow[])[0]?.next_position);
+        if (
+          !Number.isSafeInteger(nextPosition)
+          || nextPosition < 0
+          || nextPosition > MYSQL_UNSIGNED_INT_MAX
+        ) {
+          throw new Error('Public folder snapshot position exceeds the database limit');
+        }
+        const [insertResult] = await connection.execute(
+          `INSERT INTO public_folder_prompts
+             (public_folder_id, source_prompt_id, source_public_prompt_id, snapshot_origin,
+              title, content, description,
+              author_id, author_name, author_avatar_url,
+              category_id, category_name, category_color,
+              editor_mode, payload, schema_version, tags, position,
+              source_created_at, source_updated_at)
+           VALUES (?, NULL, ?, 'moderated_publication', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            publicFolderId,
+            publicPromptId,
+            title,
+            content,
+            description,
+            authorId,
+            authorName,
+            authorAvatarUrl,
+            categoryId,
+            categoryName,
+            categoryColor,
+            editorMode,
+            payload,
+            schemaVersion,
+            tags,
+            nextPosition,
+            publication.created_at as Date | string,
+            publication.updated_at as Date | string,
+          ]
+        );
+        snapshotId = requireInsertId(
+          insertResult as MutationResult,
+          'Snapshot prompt insert did not return a valid identifier'
+        );
+      }
+
       const [snapshotRows] = await connection.execute(
-        'SELECT * FROM public_folder_prompts WHERE id = ? AND public_folder_id = ?',
+        `SELECT snapshot.id AS snapshot_id,
+                snapshot.title,
+                snapshot.content,
+                snapshot.description,
+                snapshot.author_id,
+                snapshot.author_name AS author,
+                snapshot.author_avatar_url AS avatar_url,
+                snapshot.category_id,
+                snapshot.category_name AS category,
+                snapshot.category_color,
+                snapshot.editor_mode,
+                snapshot.payload,
+                snapshot.schema_version,
+                snapshot.tags,
+                snapshot.position,
+                COALESCE(snapshot.source_created_at, snapshot.created_at) AS created_at,
+                COALESCE(snapshot.source_updated_at, snapshot.updated_at) AS updated_at
+           FROM public_folder_prompts snapshot
+          WHERE snapshot.id = ? AND snapshot.public_folder_id = ?`,
         [snapshotId, publicFolderId]
       );
       await connection.commit();
@@ -1911,10 +2132,21 @@ class MySQLDB {
       await connection.beginTransaction();
       await this.enforceResourceCreationLimit(connection, userId, 'prompt');
       const [snapshotRows] = await connection.execute(
-        `SELECT snapshot.*
+        `SELECT snapshot.id,
+                snapshot.title,
+                snapshot.content,
+                snapshot.description,
+                snapshot.category_id,
+                snapshot.editor_mode,
+                snapshot.payload,
+                snapshot.schema_version,
+                snapshot.tags
            FROM public_folder_prompts snapshot
-           JOIN public_folders published ON published.id = snapshot.public_folder_id
-          WHERE snapshot.id = ? AND snapshot.public_folder_id = ?
+           JOIN public_folders published_folder
+             ON published_folder.id = snapshot.public_folder_id
+          WHERE snapshot.id = ?
+            AND snapshot.public_folder_id = ?
+            AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}
           FOR UPDATE`,
         [snapshotId, publicFolderId]
       );
@@ -1993,7 +2225,7 @@ class MySQLDB {
         ? [...new Set(parsedTags
           .filter((tag): tag is string => typeof tag === 'string')
           .map(tag => tag.trim())
-          .filter(tag => tag.length > 0 && tag.length <= 50))].slice(0, 50)
+          .filter(tag => tag.length > 0 && tag.length <= 50))].sort().slice(0, 50)
         : [];
       for (const tagName of tagNames) {
         await connection.execute('INSERT IGNORE INTO tags (name) VALUES (?)', [tagName]);
@@ -2008,7 +2240,22 @@ class MySQLDB {
       }
 
       const [createdRows] = await connection.execute(
-        `SELECT prompt.*, author.username, author.avatar_url
+        `SELECT prompt.id,
+                prompt.title,
+                prompt.content,
+                prompt.description,
+                prompt.user_id,
+                prompt.folder_id,
+                prompt.category_id,
+                prompt.mode,
+                prompt.editor_mode,
+                prompt.payload,
+                prompt.schema_version,
+                prompt.is_public,
+                prompt.created_at,
+                prompt.updated_at,
+                author.username,
+                author.avatar_url
            FROM user_prompts prompt
            JOIN users author ON author.id = prompt.user_id
           WHERE prompt.id = ? AND prompt.user_id = ?`,
@@ -2048,13 +2295,15 @@ class MySQLDB {
     );
 
     const insertId = requireInsertId(result.rows as MutationResult, '导入文件夹创建失败：无法获取插入ID');
-    return await this.getImportedFolderById(insertId);
+    return await this.getImportedFolderById(insertId, user_id);
   }
 
-  async getImportedFolderById(id: number) {
+  async getImportedFolderById(id: number, userId: number) {
     const result = await this.query(
-      'SELECT * FROM user_imported_folders WHERE id = ?',
-      [id]
+      `SELECT id, user_id, public_folder_id, name, description, created_at, updated_at
+         FROM user_imported_folders
+        WHERE id = ? AND user_id = ?`,
+      [id, userId]
     );
     return (result.rows as DbRow[])[0];
   }
@@ -2069,23 +2318,35 @@ class MySQLDB {
 
   async getUserImportedFolders(userId: number) {
     const result = await this.query(
-      `SELECT uif.*, pf.name as original_name, pf.description as original_description,
-              u.username as author, pf.created_at as original_created_at
-       FROM user_imported_folders uif
-       JOIN public_folders pf ON uif.public_folder_id = pf.id
-       JOIN users u ON pf.user_id = u.id
-       WHERE uif.user_id = ?
-       ORDER BY uif.created_at DESC`,
+      `SELECT imported.id,
+              imported.user_id,
+              imported.public_folder_id,
+              imported.name,
+              imported.description,
+              imported.created_at,
+              imported.updated_at,
+              published_folder.name AS original_name,
+              published_folder.description AS original_description,
+              author.username AS author,
+              published_folder.created_at AS original_created_at,
+              (SELECT COUNT(snapshot.id)
+                 FROM public_folder_prompts snapshot
+                WHERE snapshot.public_folder_id = imported.public_folder_id
+                  AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}) AS prompt_count
+         FROM user_imported_folders imported
+         JOIN public_folders published_folder
+           ON imported.public_folder_id = published_folder.id
+         JOIN users author ON published_folder.user_id = author.id
+        WHERE imported.user_id = ?
+        ORDER BY imported.created_at DESC`,
       [userId]
     );
     return result.rows as DbRow[];
   }
 
-  async getImportedFolderPrompts(importedFolderId: number) {
+  async getImportedFolderPrompts(importedFolderId: number, userId: number) {
     const result = await this.query(
-      `SELECT snapshot.id,
-              snapshot.id AS snapshot_id,
-              snapshot.source_prompt_id,
+      `SELECT snapshot.id AS snapshot_id,
               snapshot.title,
               snapshot.content,
               snapshot.description,
@@ -2104,37 +2365,40 @@ class MySQLDB {
          FROM user_imported_folders imported
          JOIN public_folder_prompts snapshot
            ON snapshot.public_folder_id = imported.public_folder_id
+         JOIN public_folders published_folder
+           ON published_folder.id = snapshot.public_folder_id
         WHERE imported.id = ?
+          AND imported.user_id = ?
+          AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}
         ORDER BY snapshot.position ASC, snapshot.id ASC`,
-      [importedFolderId]
+      [importedFolderId, userId]
     );
-    
+
     return result.rows as DbRow[];
   }
 
   async deleteUserImportedFolder(folderId: number, userId: number) {
-    try {
-      const result = await this.query(
-        'DELETE FROM user_imported_folders WHERE id = ? AND user_id = ?',
-        [folderId, userId]
-      );
-      return Number((result.rows as MutationResult).affectedRows) > 0;
-    } catch (error) {
-      console.error('删除用户导入文件夹失败', mysqlErrorMetadata(error));
-      return false;
-    }
+    const result = await this.query(
+      'DELETE FROM user_imported_folders WHERE id = ? AND user_id = ?',
+      [folderId, userId]
+    );
+    return Number((result.rows as MutationResult).affectedRows) > 0;
   }
 
-  async getImportedFolderPromptCount(importedFolderId: number): Promise<number> {
+  async getImportedFolderPromptCount(importedFolderId: number, userId: number): Promise<number> {
     const result = await this.query(
       `SELECT COUNT(snapshot.id) AS count
          FROM user_imported_folders imported
-         LEFT JOIN public_folder_prompts snapshot
+         JOIN public_folder_prompts snapshot
            ON snapshot.public_folder_id = imported.public_folder_id
-        WHERE imported.id = ?`,
-      [importedFolderId]
+         JOIN public_folders published_folder
+           ON published_folder.id = snapshot.public_folder_id
+        WHERE imported.id = ?
+          AND imported.user_id = ?
+          AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}`,
+      [importedFolderId, userId]
     );
-    
+
     return Number((result.rows as DbRow[])[0]?.count) || 0;
   }
 

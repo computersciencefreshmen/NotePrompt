@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
 import { parsePositiveResourceId } from '@/lib/resource-authorization'
+import type { PublicFolderSnapshotPrompt } from '@/types'
 
 function normalizeTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((tag): tag is string => typeof tag === 'string')
@@ -14,6 +15,36 @@ function normalizeTags(value: unknown): string[] {
   }
 }
 
+
+function toImportedSnapshotPrompt(prompt: Record<string, unknown>): PublicFolderSnapshotPrompt {
+  const snapshotId = parsePositiveResourceId(prompt.snapshot_id)
+  if (snapshotId == null) {
+    throw new Error('Imported folder snapshot identifier is invalid')
+  }
+
+  return {
+    snapshot_id: snapshotId,
+    title: String(prompt.title ?? ''),
+    content: String(prompt.content ?? ''),
+    content_is_truncated: Boolean(prompt.content_is_truncated),
+    description: typeof prompt.description === 'string' ? prompt.description : null,
+    author_id: Number(prompt.user_id),
+    author: String(prompt.username ?? ''),
+    avatar_url: typeof prompt.avatar_url === 'string' ? prompt.avatar_url : null,
+    category_id: prompt.category_id == null ? null : Number(prompt.category_id),
+    category: typeof prompt.category_name === 'string' ? prompt.category_name : null,
+    category_color: typeof prompt.category_color === 'string' ? prompt.category_color : null,
+    editor_mode: prompt.editor_mode === 'professional' ? 'professional' : 'normal',
+    payload: prompt.payload as PublicFolderSnapshotPrompt['payload'],
+    schema_version: Number(prompt.schema_version) || 1,
+    tags: normalizeTags(prompt.tags),
+    views_count: 0,
+    favorites_count: 0,
+    is_featured: false,
+    created_at: String(prompt.created_at ?? ''),
+    updated_at: String(prompt.updated_at ?? ''),
+  }
+}
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -31,33 +62,18 @@ export async function GET(
     }
 
     // 检查导入文件夹是否属于当前用户
-    const importedFolder = await db.getImportedFolderById(importedFolderId)
-    if (!importedFolder || (importedFolder as Record<string, unknown>).user_id !== userId) {
+    const importedFolder = await db.getImportedFolderById(importedFolderId, userId)
+    if (!importedFolder) {
       return NextResponse.json(
         { success: false, error: '导入文件夹不存在或无权限访问' },
         { status: 404 }
       )
     }
 
-    const prompts = await db.getImportedFolderPrompts(importedFolderId)
+    const prompts = await db.getImportedFolderPrompts(importedFolderId, userId)
 
     // 转换数据格式，确保作者和收藏数信息正确
-    const formattedPrompts = prompts.map((prompt: Record<string, unknown>) => ({
-      id: prompt.id as number,
-      title: prompt.title as string,
-      content: prompt.content as string,
-      description: prompt.description as string,
-      author: (prompt.username as string) || '未知用户',
-      author_id: prompt.user_id as number,
-      category: (prompt.category_name as string) || '未分类',
-      tags: normalizeTags(prompt.tags),
-      views_count: (prompt.views_count as number) || 0,
-      favorites_count: 0, // 导入的提示词没有收藏数，因为它们是用户提示词
-      is_featured: false,
-      created_at: prompt.created_at as string,
-      updated_at: prompt.updated_at as string,
-      is_favorited: false // 导入的提示词默认不是收藏状态
-    }))
+    const formattedPrompts = prompts.map(prompt => toImportedSnapshotPrompt(prompt))
 
     return NextResponse.json({
       success: true,

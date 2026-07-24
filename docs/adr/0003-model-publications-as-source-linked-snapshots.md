@@ -23,6 +23,11 @@ Curated catalog entries and user publications are separate identity domains unde
 - Deleting the private source preserves the public snapshot and clears only its provenance.
 - Historical backfill claims a source only when one private row and one public row have the same author and exact title, content, description, and category snapshot. Ambiguous candidates remain null and are reported for review. Structured fields take safe normal-mode defaults when the legacy public row has no equivalent data.
 - Publication moderation reads only public snapshot content. Administrator status alone does not grant access to the private source.
+- An administrator may add a prompt to a public-folder snapshot only through a currently `published` `public_prompts` primary key. The public primary key is sufficient moderation identity, so a legitimate source-null or detached publication remains selectable without exposing or reconstructing private provenance.
+- ADR-0008 governs public-folder snapshot attestation. No historical folder snapshot is inferred to be safe: every legacy row remains `legacy_unverified` and is invisible to reads, counts, and imports.
+- An ownership-checked folder republish creates `folder_publication` snapshots and replaces only the owner's former folder-publication rows. It preserves already attested moderated rows and their relative order.
+- A moderator copy creates `moderated_publication`, stores the public publication primary key, and deliberately leaves private `source_prompt_id` null. It remains visible only while the referenced public row is published and its author, stable prompt fields, structured payload, and complete public tag set still match.
+- Mutable display metadata, timestamps, and private source identity are never authorization evidence. Withdrawing or deleting the public publication, changing a stable snapshot field or tag, or producing an invalid origin/reference combination makes the moderated row fail closed.
 
 ## Consequences
 
@@ -40,6 +45,7 @@ Curated catalog entries and user publications are separate identity domains unde
 - A detached publication cannot automatically recover its former source.
 - Conservative backfill leaves some legacy rows without provenance.
 - Author lifecycle and moderation require separate state rather than one overloaded flag.
+- Public-folder visibility needs an explicit origin-aware policy on every list, detail, count, and import path.
 
 ### Neutral
 
@@ -63,6 +69,7 @@ Migration 010 follows expand, conservative backfill, cutover, and later contract
 ## References
 
 - `docs/adr/0001-separate-curated-catalog-identity.md`
+- `docs/adr/0008-attest-public-folder-snapshot-origins.md`
 - `database/migrations/007_snapshot_public_folders.cjs`
 - `database/SCHEMA_DEPENDENCIES.md`
 - `docs/plans/2026-07-16-sota-upgrade-plan.md`

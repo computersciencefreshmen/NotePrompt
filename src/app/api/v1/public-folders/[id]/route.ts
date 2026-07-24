@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
-import { findEnglishFeaturedFolder } from '@/data/english-featured-folders'
+import { findEnglishFeaturedFolder, type EnglishFeaturedFolder } from '@/data/english-featured-folders'
+import type { PublicFolder } from '@/types'
 import { parsePositiveResourceId } from '@/lib/resource-authorization'
 import { readLimitedJson, RequestPolicyError } from '@/lib/ai-runtime-policy'
 
@@ -12,6 +13,20 @@ type FolderUpdate = {
   description?: string | null
 }
 
+
+function toPublicFolderReaderDto(folder: EnglishFeaturedFolder | Record<string, unknown>): PublicFolder {
+  return {
+    id: Number(folder.id),
+    name: String(folder.name ?? ''),
+    description: String(folder.description ?? ''),
+    user_id: Number(folder.user_id),
+    is_featured: Boolean(folder.is_featured),
+    created_at: String(folder.created_at ?? ''),
+    updated_at: String(folder.updated_at ?? ''),
+    author: String(folder.author ?? ''),
+    prompt_count: Number(folder.prompt_count) || 0,
+  }
+}
 type MutationResult = { affectedRows?: number }
 
 // GET - 获取公共文件夹详情
@@ -24,6 +39,12 @@ export async function GET(
     const id = parsePositiveResourceId(idStr)
     const { searchParams } = new URL(request.url)
     const lang = searchParams.get('lang') || 'zh'
+    if (lang !== 'zh' && lang !== 'en') {
+      return NextResponse.json(
+        { success: false, error: 'lang must be zh or en' },
+        { status: 400 },
+      )
+    }
 
     // 验证ID是否为有效数字
     if (id == null) {
@@ -44,7 +65,7 @@ export async function GET(
 
       return NextResponse.json({
         success: true,
-        data: folder,
+        data: toPublicFolderReaderDto(folder),
       })
     }
 
@@ -59,7 +80,7 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      data: folder
+      data: toPublicFolderReaderDto(folder)
     })
   } catch (error) {
     console.error('Get public folder error:', error)

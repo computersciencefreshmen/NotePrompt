@@ -717,6 +717,16 @@ test('empty MySQL schema applies twice and satisfies the runtime contract', {
       'DELETE FROM public_prompts WHERE id = ?',
       [pendingSourcePublicationId]
     )
+
+    const {
+      assertPublicFolderSnapshotVisibilityMatrix,
+    } = await import('./helpers/public-folder-snapshot-mysql-matrix.mjs')
+    await assertPublicFolderSnapshotVisibilityMatrix({
+      connection: validationConnection,
+      firstUserId,
+      secondUserId,
+      insertPrivatePrompt,
+    })
   } finally {
     await validationConnection.end()
   }

@@ -463,7 +463,6 @@ export interface PublicFolder {
   name: string
   description: string
   user_id: number
-  original_folder_id: number | null
   is_featured: boolean
   created_at: string
   updated_at: string
@@ -524,13 +523,42 @@ export interface AdminPrompt {
   updated_at: string
 }
 
+// A materialized row in public_folder_prompts. Its identifier is deliberately
+// not named `id`: snapshot ids and standalone public prompt ids are different
+// resource namespaces and must never be used interchangeably.
+export interface PublicFolderSnapshotPrompt {
+  snapshot_id: number
+  title: string
+  content: string
+  content_is_truncated?: boolean
+  description?: string | null
+  author_id: number
+  author: string
+  avatar_url?: string | null
+  category_id?: number | null
+  category?: string | null
+  category_color?: string | null
+  editor_mode?: EditMode
+  payload?: NormalModeData | ProfessionalModeData | string | null
+  schema_version?: number
+  tags: string[]
+  views_count: number
+  favorites_count: number
+  is_featured: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Admin readers use the same public snapshot payload, but keep a dedicated
+// name so APIs cannot accidentally regress to AdminPrompt.id.
+export type AdminFolderSnapshotPrompt = PublicFolderSnapshotPrompt
+
 export interface AdminFolder {
   id: number
   name: string
   description: string
   user_id: number
   author: string
-  original_folder_id: number | null
   is_featured: boolean
   prompt_count: number
   created_at: string

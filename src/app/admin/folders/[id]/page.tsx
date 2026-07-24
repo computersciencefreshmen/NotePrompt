@@ -1,27 +1,32 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  AlertCircle,
+  ArrowLeft,
+  FileText,
+  FolderOpen,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { 
-  ArrowLeft, 
-  Plus, 
-  Edit, 
-  Trash2, 
-  Folder, 
-  FileText,
-  Search,
-  Loader2
-} from 'lucide-react'
-import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
-import { AdminFolder, AdminPrompt } from '@/types'
+import { api } from '@/lib/api'
+import type { AdminFolder, AdminFolderSnapshotPrompt } from '@/types'
+import { PromptCandidateDialog } from './PromptCandidateDialog'
+
+function formatDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  return date.toLocaleDateString('zh-CN')
+}
 
 export default function AdminFolderDetailPage() {
   const params = useParams()
@@ -29,387 +34,387 @@ export default function AdminFolderDetailPage() {
   const { user } = useAuth()
   const { toast } = useToast()
   const hasAdminAccess = Boolean(user && (user.is_admin || user.user_type === 'admin'))
-  
-  const folderId = parseInt(params.id as string)
+  const folderId = Number(params.id)
+
   const [folder, setFolder] = useState<AdminFolder | null>(null)
-  const [prompts, setPrompts] = useState<AdminPrompt[]>([])
+  const [prompts, setPrompts] = useState<AdminFolderSnapshotPrompt[]>([])
   const [promptPage, setPromptPage] = useState(1)
   const [promptTotal, setPromptTotal] = useState(0)
   const [promptTotalPages, setPromptTotalPages] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [folderError, setFolderError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
-  const [showAddDialog, setShowAddDialog] = useState(false)
-  const [availablePrompts, setAvailablePrompts] = useState<AdminPrompt[]>([])
-  const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
-  const [loadingAvailablePrompts, setLoadingAvailablePrompts] = useState(false)
 
-  const fetchFolderData = useCallback(async (page = 1) => {
-    setLoading(true)
-    try {
-      const response = await api.admin.getPublicFolderPrompts(folderId, { page, limit: 20 })
-      if (response.success && response.data) {
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [removingSnapshotIds, setRemovingSnapshotIds] = useState<Set<number>>(
+    () => new Set(),
+  )
+  const folderRequestIdRef = useRef(0)
+
+  const fetchFolderData = useCallback(
+    async (page = 1) => {
+      const requestId = ++folderRequestIdRef.current
+      if (!Number.isInteger(folderId) || folderId <= 0) {
+        setFolderError('收藏集地址无效')
+        return
+      }
+
+      setLoading(true)
+      setFolderError(null)
+      try {
+        const response = await api.admin.getPublicFolderPrompts(folderId, {
+          page,
+          limit: 20,
+        })
+        if (!response.success || !response.data) {
+          throw new Error(response.error || '无法读取公共收藏集')
+        }
+
+        if (folderRequestIdRef.current !== requestId) return
+
         setFolder(response.data.folder)
         setPrompts(response.data.prompts)
         setPromptPage(response.pagination?.page ?? page)
         setPromptTotal(response.pagination?.total ?? response.data.prompts.length)
         setPromptTotalPages(response.pagination?.totalPages ?? 1)
-      } else {
-        toast({
-          title: '获取数据失败',
-          description: response.error || '无法获取文件夹数据',
-          variant: 'destructive',
-        })
+      } catch (error) {
+        if (folderRequestIdRef.current !== requestId) return
+        const message = error instanceof Error ? error.message : '无法读取公共收藏集'
+        setFolderError(message)
+      } finally {
+        if (folderRequestIdRef.current === requestId) setLoading(false)
       }
-    } catch (error) {
-      console.error('Failed to fetch folder data:', error)
-      toast({
-        title: '获取数据失败',
-        description: '无法获取文件夹数据',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoading(false)
-    }
-  }, [folderId, toast])
+    },
+    [folderId],
+  )
 
   useEffect(() => {
-    if (hasAdminAccess && folderId) {
-      void fetchFolderData()
-    }
-  }, [fetchFolderData, folderId, hasAdminAccess])
+    if (hasAdminAccess) void fetchFolderData()
+  }, [fetchFolderData, hasAdminAccess])
 
-  const handleAddPrompt = async () => {
-    if (!selectedPromptId) return
+  const handleRemovePrompt = async (snapshotId: number) => {
+    if (removingSnapshotIds.has(snapshotId)) return
 
+    setRemovingSnapshotIds(previous => new Set(previous).add(snapshotId))
     try {
-      const response = await api.admin.addPromptToPublicFolder(folderId, selectedPromptId)
-      if (response.success) {
-        toast({
-          title: '添加成功',
-          description: '提示词已添加到文件夹',
-          variant: 'success',
-        })
-        fetchFolderData(promptPage)
-        setShowAddDialog(false)
-        setSelectedPromptId(null)
-      } else {
-        toast({
-          title: '添加失败',
-          description: response.error || '添加提示词失败',
-          variant: 'destructive',
-        })
+      const response = await api.admin.removeSnapshotPromptFromPublicFolder(
+        folderId,
+        snapshotId,
+      )
+      if (!response.success) {
+        throw new Error(response.error || '移除快照失败')
       }
-    } catch (error) {
-      console.error('Add prompt error:', error)
+
+      const nextPage = prompts.length === 1 && promptPage > 1 ? promptPage - 1 : promptPage
+      await fetchFolderData(nextPage)
       toast({
-        title: '添加失败',
-        description: '添加提示词失败',
-        variant: 'destructive',
+        title: '已移除快照',
+        description: '公共收藏集不再展示这条内容。',
+        variant: 'success',
       })
-    }
-  }
-
-  const handleRemovePrompt = async (promptId: number) => {
-    try {
-      const response = await api.admin.removePromptFromPublicFolder(folderId, promptId)
-      if (response.success) {
-        toast({
-          title: '移除成功',
-          description: '提示词已从文件夹移除',
-          variant: 'success',
-        })
-        fetchFolderData(promptPage)
-      } else {
-        toast({
-          title: '移除失败',
-          description: response.error || '移除提示词失败',
-          variant: 'destructive',
-        })
-      }
     } catch (error) {
-      console.error('Remove prompt error:', error)
       toast({
         title: '移除失败',
-        description: '移除提示词失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
-    }
-  }
-
-  const fetchAvailablePrompts = async (search?: string) => {
-    setLoadingAvailablePrompts(true)
-    try {
-      const response = await api.admin.getAvailablePrompts({
-        search,
-        folderId
-      })
-      if (response.success) {
-        setAvailablePrompts(response.data || [])
-      }
-    } catch (error) {
-      console.error('Failed to fetch available prompts:', error)
     } finally {
-      setLoadingAvailablePrompts(false)
+      setRemovingSnapshotIds(previous => {
+        const next = new Set(previous)
+        next.delete(snapshotId)
+        return next
+      })
     }
   }
 
-  const filteredPrompts = prompts.filter(prompt =>
-    prompt.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    prompt.content.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredPrompts = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase('zh-CN')
+    if (!query) return prompts
+    return prompts.filter(prompt =>
+      [prompt.title, prompt.content, prompt.description, prompt.author]
+        .filter(Boolean)
+        .some(value => value?.toLocaleLowerCase('zh-CN').includes(query)),
+    )
+  }, [prompts, searchTerm])
 
   if (!hasAdminAccess) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">权限不足</h1>
-          <p className="text-gray-600">您没有管理员权限</p>
-        </div>
-      </div>
+      <main className="np-product-surface flex min-h-screen items-center justify-center px-4">
+        <section className="w-full max-w-md rounded-[10px] border border-[var(--np-rule)] bg-[var(--np-surface)] p-8 text-center">
+          <p className="font-mono text-xs uppercase tracking-[0.14em] text-[var(--np-accent-strong)]">
+            Access restricted
+          </p>
+          <h1 className="mt-3 text-2xl font-semibold text-[var(--np-ink)]">权限不足</h1>
+          <p className="mt-2 text-sm leading-6 text-[var(--np-ink-muted)]">
+            当前账户没有公共内容审核权限。
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-6 min-h-11 border-[var(--np-rule)] bg-transparent text-[var(--np-ink)] hover:bg-[var(--np-surface-soft)]"
+            onClick={() => router.push('/')}
+          >
+            返回首页
+          </Button>
+        </section>
+      </main>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6">
-          <Button
-            onClick={() => router.push('/admin')}
-            variant="outline"
-            className="mb-4"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            返回管理员控制台
-          </Button>
-        </div>
+    <main className="np-product-surface min-h-screen bg-[var(--np-canvas)] text-[var(--np-ink)]">
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-11 px-2 text-[var(--np-ink-muted)] hover:bg-[var(--np-surface-soft)] hover:text-[var(--np-ink)]"
+          onClick={() => router.push('/admin')}
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
+          返回管理台
+        </Button>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600">正在加载...</span>
+        {loading && !folder ? (
+          <div className="mt-6 overflow-hidden rounded-[10px] border border-[var(--np-rule)] bg-[var(--np-surface)]">
+            <div className="space-y-3 border-b border-[var(--np-rule)] px-5 py-7 sm:px-7">
+              <div className="h-3 w-28 animate-pulse rounded bg-[var(--np-surface-soft)] motion-reduce:animate-none" />
+              <div className="h-8 w-2/5 animate-pulse rounded bg-[var(--np-surface-soft)] motion-reduce:animate-none" />
+              <div className="h-4 w-3/5 animate-pulse rounded bg-[var(--np-surface-soft)] motion-reduce:animate-none" />
+            </div>
+            <div className="space-y-1 px-5 py-4 sm:px-7">
+              {[0, 1, 2].map(item => (
+                <div
+                  key={item}
+                  className="h-24 animate-pulse border-b border-[var(--np-rule)] bg-[var(--np-surface)] motion-reduce:animate-none"
+                />
+              ))}
+            </div>
           </div>
+        ) : folderError && !folder ? (
+          <section className="mt-6 rounded-[10px] border border-[var(--np-rule)] bg-[var(--np-surface)] px-6 py-10 text-center">
+            <AlertCircle
+              className="mx-auto h-7 w-7 text-[var(--np-accent-strong)]"
+              aria-hidden="true"
+            />
+            <h1 className="mt-4 text-xl font-semibold">无法读取公共收藏集</h1>
+            <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-[var(--np-ink-muted)]">
+              {folderError}
+            </p>
+            <Button
+              type="button"
+              className="mt-6 min-h-11 bg-[var(--np-accent)] text-[var(--np-ink)] hover:bg-[var(--np-accent-hover)]"
+              onClick={() => void fetchFolderData()}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+              重试
+            </Button>
+          </section>
         ) : folder ? (
-          <>
-            <Card className="mb-8">
-              <CardHeader>
-                <div className="flex items-center space-x-3">
-                  <Folder className="h-8 w-8 text-blue-600" />
-                  <div>
-                    <CardTitle className="text-2xl font-bold">
-                      {folder.name}
-                    </CardTitle>
-                    <div className="flex items-center space-x-4 text-sm text-gray-500 mt-2">
-                      <div className="flex items-center space-x-1">
-                        <FileText className="h-4 w-4" />
-                        <span>{promptTotal} 个提示词</span>
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <span>作者: {folder.author}</span>
-                      </div>
-                      {folder.is_featured && (
-                        <Badge variant="default" className="bg-yellow-100 text-yellow-800">
-                          精选
-                        </Badge>
-                      )}
+          <section className="mt-6 overflow-hidden rounded-[10px] border border-[var(--np-rule)] bg-[var(--np-surface)] shadow-[0_18px_50px_rgb(20_20_19_/_0.055)]">
+            <header className="border-b border-[var(--np-rule)] bg-[var(--np-surface-raised)] px-5 py-7 sm:px-7">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--np-accent-strong)]">
+                    Public collection
+                  </p>
+                  <div className="mt-2 flex items-start gap-3">
+                    <FolderOpen
+                      className="mt-1 h-6 w-6 shrink-0 text-[var(--np-accent-strong)]"
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0">
+                      <h1 className="text-2xl font-semibold tracking-[-0.02em] sm:text-3xl">
+                        {folder.name}
+                      </h1>
+                      <p className="mt-2 max-w-[70ch] text-sm leading-6 text-[var(--np-ink-muted)]">
+                        {folder.description || '暂未填写收藏集说明。'}
+                      </p>
                     </div>
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-600">{folder.description}</p>
-              </CardContent>
-            </Card>
+                {folder.is_featured && (
+                  <Badge className="w-fit border border-[var(--np-rule)] bg-[var(--np-accent-soft)] text-[var(--np-accent-strong)] hover:bg-[var(--np-accent-soft)]">
+                    精选
+                  </Badge>
+                )}
+              </div>
+              <dl className="mt-6 flex flex-wrap gap-x-7 gap-y-2 border-t border-[var(--np-rule)] pt-4 text-sm text-[var(--np-ink-muted)]">
+                <div className="flex items-center gap-2">
+                  <dt>维护者</dt>
+                  <dd className="font-medium text-[var(--np-ink)]">{folder.author}</dd>
+                </div>
+                <div className="flex items-center gap-2">
+                  <dt>已验证快照</dt>
+                  <dd className="font-mono tabular-nums text-[var(--np-ink)]">{promptTotal}</dd>
+                </div>
+                <div className="flex items-center gap-2">
+                  <dt>收藏集 ID</dt>
+                  <dd className="font-mono tabular-nums text-[var(--np-ink)]">{folder.id}</dd>
+                </div>
+              </dl>
+            </header>
 
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  文件夹内的提示词 ({promptTotal})
-                </h2>
-                                 <Button onClick={() => {
-                   setShowAddDialog(true)
-                   fetchAvailablePrompts()
-                 }}>
-                   <Plus className="h-4 w-4 mr-2" />
-                   添加提示词
-                 </Button>
+            <div>
+              <div className="flex flex-col gap-4 border-b border-[var(--np-rule)] px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-7">
+                <div>
+                  <h2 className="text-lg font-semibold">公开快照</h2>
+                  <p className="mt-1 text-sm leading-6 text-[var(--np-ink-muted)]">
+                    这里只展示经过来源验证的已发布内容，快照 ID 不等于公开提示词 ID。
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  className="min-h-11 shrink-0 bg-[var(--np-accent)] text-[var(--np-ink)] hover:bg-[var(--np-accent-hover)]"
+                  onClick={() => setShowAddDialog(true)}
+                >
+                  <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
+                  从已发布内容添加
+                </Button>
               </div>
 
-              <div className="mb-4">
-                <Input
-                  aria-label="搜索文件夹内的提示词"
-                  placeholder="搜索提示词..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="max-w-md"
-                />
+              <div className="border-b border-[var(--np-rule)] px-5 py-4 sm:px-7">
+                <div className="relative max-w-lg">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--np-ink-muted)]"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    aria-label="筛选当前页的快照"
+                    placeholder="筛选当前页标题、作者或正文"
+                    value={searchTerm}
+                    onChange={event => setSearchTerm(event.target.value)}
+                    className="min-h-11 border-[var(--np-rule)] bg-[var(--np-surface-raised)] pl-10 text-[var(--np-ink)] placeholder:text-[var(--np-ink-muted)]"
+                  />
+                </div>
               </div>
+
+              {folderError && (
+                <div
+                  className="mx-5 mt-5 flex flex-col gap-3 rounded-[8px] border border-[var(--np-rule)] bg-[var(--np-accent-soft)] p-4 text-sm sm:mx-7 sm:flex-row sm:items-center sm:justify-between"
+                  role="alert"
+                >
+                  <span className="flex items-start gap-2 text-[var(--np-ink)]">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    {folderError}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 border-[var(--np-rule)] bg-transparent"
+                    onClick={() => void fetchFolderData(promptPage)}
+                  >
+                    重试
+                  </Button>
+                </div>
+              )}
 
               {filteredPrompts.length === 0 ? (
-                <div className="text-center py-12">
-                  <FileText className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    暂无提示词
+                <div className="px-5 py-16 text-center sm:px-7">
+                  <FileText
+                    className="mx-auto h-8 w-8 text-[var(--np-accent-strong)]"
+                    aria-hidden="true"
+                  />
+                  <h3 className="mt-4 text-lg font-semibold">
+                    {searchTerm ? '当前页没有匹配快照' : '还没有公开快照'}
                   </h3>
-                  <p className="text-gray-600">
-                    这个文件夹中还没有提示词
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--np-ink-muted)]">
+                    {searchTerm
+                      ? '清除筛选词，或切换到其他分页继续检查。'
+                      : '从明确发布的提示词中选择内容，系统会保存受审核快照；源发布撤回后自动隐藏。'}
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {filteredPrompts.map((prompt) => (
-                    <div key={prompt.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg">{prompt.title}</h3>
-                          <p className="text-sm text-gray-600 mt-1">{prompt.author}</p>
-                          <p className="text-sm text-gray-500 mt-2 line-clamp-2">
-                            {prompt.description || prompt.content}
-                          </p>
-                          <div className="flex items-center space-x-2 mt-2">
-                            <span className="text-xs text-gray-500">
-                              {new Date(prompt.created_at).toLocaleDateString()}
+                <div aria-live="polite">
+                  {filteredPrompts.map(prompt => {
+                    const removing = removingSnapshotIds.has(prompt.snapshot_id)
+                    return (
+                      <article
+                        key={prompt.snapshot_id}
+                        className="grid gap-4 border-b border-[var(--np-rule)] px-5 py-5 transition-colors duration-150 ease-out last:border-b-0 hover:bg-[var(--np-surface-raised)] sm:grid-cols-[minmax(0,1fr)_auto] sm:px-7"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-base font-semibold">{prompt.title}</h3>
+                            <span className="rounded-[6px] border border-[var(--np-rule)] bg-[var(--np-surface-soft)] px-2 py-0.5 font-mono text-[10px] text-[var(--np-ink-muted)]">
+                              snapshot:{prompt.snapshot_id}
                             </span>
                           </div>
+                          <p className="mt-1 text-sm text-[var(--np-ink-muted)]">
+                            {prompt.author || '未知作者'}
+                            <span aria-hidden="true"> · </span>
+                            <time dateTime={prompt.created_at}>{formatDate(prompt.created_at)}</time>
+                          </p>
+                          <p className="mt-3 line-clamp-2 max-w-[75ch] text-sm leading-6 text-[var(--np-ink-muted)]">
+                            {prompt.description || prompt.content || '该快照没有摘要。'}
+                          </p>
                         </div>
-                        <div className="flex items-center space-x-2 ml-4">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => window.open(`/public-prompts/${prompt.id}?source=published`, '_blank', 'noopener,noreferrer')}
-                            aria-label={`在新窗口查看提示词：${prompt.title}`}
-                          >
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleRemovePrompt(prompt.id)}
-                            className="text-red-600 hover:text-red-700"
-                            aria-label={`从文件夹移除提示词：${prompt.title}`}
-                          >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-11 w-full shrink-0 text-[var(--np-ink-muted)] hover:bg-[var(--np-accent-soft)] hover:text-[var(--np-accent-strong)] sm:w-11"
+                          disabled={removing}
+                          onClick={() => void handleRemovePrompt(prompt.snapshot_id)}
+                          aria-label={`从公共收藏集移除快照：${prompt.title}`}
+                        >
+                          {removing ? (
+                            <Loader2
+                              className="h-4 w-4 animate-spin motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                          ) : (
                             <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                          )}
+                          <span className="ml-2 sm:sr-only">
+                            {removing ? '正在移除' : '移除'}
+                          </span>
+                        </Button>
+                      </article>
+                    )
+                  })}
                 </div>
               )}
+
               {promptTotalPages > 1 && (
-                <div className="mt-6 flex items-center justify-center gap-3" aria-label="文件夹提示词分页">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={promptPage <= 1}
-                    onClick={() => void fetchFolderData(promptPage - 1)}
-                  >
-                    上一页
-                  </Button>
-                  <span className="text-sm text-gray-500">{promptPage} / {promptTotalPages}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={promptPage >= promptTotalPages}
-                    onClick={() => void fetchFolderData(promptPage + 1)}
-                  >
-                    下一页
-                  </Button>
-                </div>
+                <nav
+                  className="flex flex-col gap-3 border-t border-[var(--np-rule)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7"
+                  aria-label="公共收藏集快照分页"
+                >
+                  <p className="font-mono text-xs tabular-nums text-[var(--np-ink-muted)]">
+                    {promptTotal} 条，第 {promptPage} / {promptTotalPages} 页
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 flex-1 border-[var(--np-rule)] bg-transparent sm:flex-none"
+                      disabled={loading || promptPage <= 1}
+                      onClick={() => void fetchFolderData(promptPage - 1)}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 flex-1 border-[var(--np-rule)] bg-transparent sm:flex-none"
+                      disabled={loading || promptPage >= promptTotalPages}
+                      onClick={() => void fetchFolderData(promptPage + 1)}
+                    >
+                      下一页
+                    </Button>
+                  </div>
+                </nav>
               )}
             </div>
-          </>
-        ) : (
-          <div className="text-center py-12">
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">文件夹不存在</h1>
-            <p className="text-gray-600">无法找到指定的文件夹</p>
-          </div>
-        )}
+          </section>
+        ) : null}
       </div>
 
-             {/* 添加提示词对话框 */}
-       <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-         <DialogContent className="max-w-2xl">
-           <DialogHeader>
-             <DialogTitle>添加提示词到文件夹</DialogTitle>
-           </DialogHeader>
-           <div className="space-y-4">
-             <div>
-               <label htmlFor="available-prompt-search" className="block text-sm font-medium text-gray-700 mb-2">
-                 搜索提示词
-               </label>
-               <Input
-                 id="available-prompt-search"
-                 placeholder="搜索提示词..."
-                 onChange={(e) => fetchAvailablePrompts(e.target.value)}
-                 className="mb-4"
-               />
-             </div>
-             
-             <div className="max-h-60 overflow-y-auto">
-               {loadingAvailablePrompts ? (
-                 <div className="flex items-center justify-center py-8" role="status" aria-live="polite">
-                   <Loader2 className="h-6 w-6 animate-spin text-blue-600" aria-hidden="true" />
-                   <span className="ml-2 text-gray-600">加载中...</span>
-                 </div>
-               ) : availablePrompts.length === 0 ? (
-                 <div className="text-center py-8">
-                   <p className="text-gray-500">没有找到可添加的提示词</p>
-                 </div>
-               ) : (
-                 <div className="space-y-2" role="radiogroup" aria-label="选择要添加的提示词">
-                   {availablePrompts.map((prompt) => (
-                     <div
-                       key={prompt.id}
-                       className={`border rounded-lg hover:bg-gray-50 ${
-                         selectedPromptId === prompt.id ? 'border-blue-500 bg-blue-50' : ''
-                       }`}
-                     >
-                       <label className="flex cursor-pointer items-start justify-between p-3">
-                         <span className="flex-1">
-                           <span className="block font-medium text-sm">{prompt.title}</span>
-                           <span className="block text-xs text-gray-600 mt-1">{prompt.author}</span>
-                           <span className="block text-xs text-gray-500 mt-1 line-clamp-2">
-                             {prompt.description || prompt.content}
-                           </span>
-                         </span>
-                         <span className="ml-2">
-                           <input
-                             type="radio"
-                             name="available-prompt"
-                             checked={selectedPromptId === prompt.id}
-                             onChange={() => setSelectedPromptId(prompt.id)}
-                             className="text-blue-600"
-                           />
-                         </span>
-                       </label>
-                     </div>
-                   ))}
-                 </div>
-               )}
-             </div>
-             
-             <div className="flex justify-end space-x-2">
-               <Button
-                 variant="outline"
-                 onClick={() => {
-                   setShowAddDialog(false)
-                   setSelectedPromptId(null)
-                 }}
-               >
-                 取消
-               </Button>
-               <Button
-                 onClick={handleAddPrompt}
-                 disabled={!selectedPromptId}
-               >
-                 添加
-               </Button>
-             </div>
-           </div>
-         </DialogContent>
-       </Dialog>
-    </div>
+      <PromptCandidateDialog
+        folderId={folderId}
+        open={showAddDialog}
+        onOpenChange={setShowAddDialog}
+        onAdded={() => fetchFolderData(promptPage)}
+      />
+    </main>
   )
 }

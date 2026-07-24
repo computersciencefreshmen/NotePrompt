@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -13,6 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { 
   Trash2, 
   Folder, 
+  FolderOpen,
   FileText, 
   Users, 
   BarChart3,
@@ -26,7 +27,8 @@ import {
   Home,
   LogOut,
   Zap,
-  RefreshCw
+  RefreshCw,
+  Pencil
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
@@ -55,7 +57,6 @@ interface AdminFolder {
   description: string
   user_id: number
   author: string
-  original_folder_id: number | null
   is_featured: boolean
   prompt_count: number
   created_at: string
@@ -135,6 +136,8 @@ export default function AdminPage() {
   const [folderPage, setFolderPage] = useState(1)
   const [folderTotal, setFolderTotal] = useState(0)
   const [folderTotalPages, setFolderTotalPages] = useState(0)
+  const [folderError, setFolderError] = useState<string | null>(null)
+  const folderRequestIdRef = useRef(0)
   
   // 用户
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -202,17 +205,25 @@ export default function AdminPage() {
 
   // 获取文件夹
   const fetchFolders = useCallback(async (page = 1, search = '') => {
+    const requestId = ++folderRequestIdRef.current
     setFoldersLoading(true)
+    setFolderError(null)
     try {
       const res = await api.admin.getPublicFolders({ page, limit: 20, search: search || undefined })
+      if (folderRequestIdRef.current !== requestId) return
+      if (!res.success) {
+        throw new Error(res.error || '\u65e0\u6cd5\u8bfb\u53d6\u516c\u5171\u6536\u85cf\u96c6')
+      }
       setFolders(res.data || [])
       setFolderPage(res.pagination?.page ?? page)
       setFolderTotal(res.pagination?.total ?? res.data?.length ?? 0)
       setFolderTotalPages(res.pagination?.totalPages ?? 1)
     } catch (error) {
+      if (folderRequestIdRef.current !== requestId) return
       console.error('Failed to fetch folders:', error)
+      setFolderError(error instanceof Error ? error.message : '\u65e0\u6cd5\u8bfb\u53d6\u516c\u5171\u6536\u85cf\u96c6')
     } finally {
-      setFoldersLoading(false)
+      if (folderRequestIdRef.current === requestId) setFoldersLoading(false)
     }
   }, [])
 
@@ -408,24 +419,27 @@ export default function AdminPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <main className="np-product-surface min-h-screen bg-[var(--np-canvas)] text-[var(--np-ink)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 页面标题 */}
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">管理员控制台</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">管理系统资源和用户</p>
+            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--np-accent-strong)]">
+              Administration
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-[var(--np-ink)]">管理员控制台</h1>
+            <p className="mt-2 text-[var(--np-ink-muted)]">管理账户、公共内容和 AI 用量</p>
           </div>
-          <div className="flex items-center space-x-2">
-            <Button variant="outline" onClick={fetchStats} disabled={statsLoading}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" className="min-h-11" onClick={fetchStats} disabled={statsLoading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${statsLoading ? 'animate-spin' : ''}`} />
               刷新统计
             </Button>
-            <Button variant="outline" onClick={() => router.push('/')}>
+            <Button variant="outline" className="min-h-11" onClick={() => router.push('/')}>
               <Home className="h-4 w-4 mr-2" />
               返回主页
             </Button>
-            <Button variant="outline" onClick={() => router.push('/prompts')}>
+            <Button variant="outline" className="min-h-11" onClick={() => router.push('/prompts')}>
               <FileText className="h-4 w-4 mr-2" />
               我的提示词
             </Button>
@@ -433,23 +447,23 @@ export default function AdminPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="dashboard" className="flex items-center space-x-2">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+            <TabsTrigger value="dashboard" className="flex min-h-11 items-center space-x-2">
               <BarChart3 className="h-4 w-4" />
               <span>数据概览</span>
             </TabsTrigger>
-            <TabsTrigger value="users" className="flex items-center space-x-2">
+            <TabsTrigger value="users" className="flex min-h-11 items-center space-x-2">
               <Users className="h-4 w-4" />
               <span>用户管理</span>
             </TabsTrigger>
-            <TabsTrigger value="prompts" className="flex items-center space-x-2">
+            <TabsTrigger value="prompts" className="flex min-h-11 items-center space-x-2">
               <FileText className="h-4 w-4" />
               <span>提示词</span>
               {promptTotal > 0 && <Badge variant="secondary" className="ml-1">{promptTotal}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="folders" className="flex items-center space-x-2">
+            <TabsTrigger value="folders" className="flex min-h-11 items-center space-x-2">
               <Folder className="h-4 w-4" />
-              <span>文件夹</span>
+              <span>公共收藏集</span>
               {folderTotal > 0 && <Badge variant="secondary" className="ml-1">{folderTotal}</Badge>}
             </TabsTrigger>
           </TabsList>
@@ -498,7 +512,7 @@ export default function AdminPage() {
                       <div className="flex items-center space-x-2">
                         <Folder className="h-8 w-8 text-purple-600" />
                         <div>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">公共文件夹</p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">公共收藏集</p>
                           <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{statsData.stats.totalPublicFolders}</p>
                         </div>
                       </div>
@@ -872,81 +886,115 @@ export default function AdminPage() {
             </Card>
           </TabsContent>
 
-          {/* ===== 公共文件夹 Tab ===== */}
+          {/* ===== 公共收藏集 Tab ===== */}
           <TabsContent value="folders" className="mt-6">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>公共文件夹管理</CardTitle>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Card className="overflow-hidden rounded-[10px] border-[var(--np-rule)] bg-[var(--np-surface)] text-[var(--np-ink)] shadow-[0_18px_50px_rgb(20_20_19_/_0.055)]">
+              <CardHeader className="border-b border-[var(--np-rule)] bg-[var(--np-surface-raised)]">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <CardTitle className="text-xl font-semibold">公共收藏集</CardTitle>
+                    <p className="mt-1 max-w-[65ch] text-sm leading-6 text-[var(--np-ink-muted)]">
+                      审核集合信息，并进入详情管理经过来源验证的公开快照。
+                    </p>
+                  </div>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--np-ink-muted)]" aria-hidden="true" />
                     <Input
-                      aria-label="搜索公共文件夹"
-                      placeholder="搜索文件夹..."
+                      aria-label="搜索公共收藏集"
+                      placeholder="搜索名称或说明"
                       value={folderSearch}
                       onChange={(e) => setFolderSearch(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') void fetchFolders(1, folderSearch)
                       }}
-                      className="pl-9 w-64"
+                      className="min-h-11 w-full border-[var(--np-rule)] bg-[var(--np-surface)] pl-10 text-[var(--np-ink)] placeholder:text-[var(--np-ink-muted)]"
                     />
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
-                {foldersLoading ? (
-                  <div className="text-center py-8" role="status" aria-live="polite">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" aria-hidden="true"></div>
-                    <p className="mt-2 text-gray-600 dark:text-gray-400">加载中...</p>
+              <CardContent className="p-0">
+                {folderError && (
+                  <div
+                    className="m-5 flex flex-col gap-3 rounded-[8px] border border-[var(--np-rule)] bg-[var(--np-accent-soft)] p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
+                    role="alert"
+                  >
+                    <span>{folderError}</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 border-[var(--np-rule)] bg-transparent"
+                      onClick={() => void fetchFolders(folderPage, folderSearch)}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+                      {'\u91cd\u8bd5'}
+                    </Button>
                   </div>
-                ) : filteredFolders.length === 0 ? (
+                )}
+                {foldersLoading ? (
+                  <div className="space-y-0" role="status" aria-live="polite" aria-label="正在加载公共收藏集">
+                    {[0, 1, 2].map(item => (
+                      <div
+                        key={item}
+                        className="h-28 animate-pulse border-b border-[var(--np-rule)] bg-[var(--np-surface)] motion-reduce:animate-none"
+                      />
+                    ))}
+                  </div>
+                ) : !folderError && filteredFolders.length === 0 ? (
                   <div className="text-center py-8">
-                    <Folder className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">暂无文件夹</h3>
-                    <p className="text-gray-600 dark:text-gray-400">还没有公共文件夹</p>
+                    <FolderOpen className="mx-auto mb-4 h-10 w-10 text-[var(--np-accent-strong)]" aria-hidden="true" />
+                    <h3 className="mb-2 text-lg font-semibold text-[var(--np-ink)]">没有匹配的公共收藏集</h3>
+                    <p className="text-sm leading-6 text-[var(--np-ink-muted)]">
+                      {folderSearch ? '调整搜索词，或按回车从全部收藏集中查询。' : '公开收藏集会在发布后出现在这里。'}
+                    </p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div>
                     {filteredFolders.map((folder) => (
                       <div
                         key={folder.id}
-                        className="border dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-shadow"
+                        className="border-b border-[var(--np-rule)] p-5 transition-colors duration-150 ease-out last:border-b-0 hover:bg-[var(--np-surface-raised)]"
                       >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <h3 className="text-lg font-semibold text-[var(--np-ink)]">
                               <button
                                 type="button"
-                                className="rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-                                onClick={() => { setEditingFolder(folder); setShowFolderEditDialog(true) }}
-                                aria-label={`编辑公共文件夹：${folder.name}`}
+                                className="rounded-[6px] text-left transition-colors hover:text-[var(--np-accent-strong)] focus-visible:outline-none"
+                                onClick={() => router.push(`/admin/folders/${folder.id}`)}
+                                aria-label={`管理公共收藏集快照：${folder.name}`}
                               >
                                 {folder.name}
                               </button>
                             </h3>
-                            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">作者: {folder.author}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{folder.description}</p>
+                            <p className="mt-1 text-sm text-[var(--np-ink-muted)]">维护者：{folder.author}</p>
+                            <p className="mt-2 line-clamp-2 max-w-[75ch] text-sm leading-6 text-[var(--np-ink-muted)]">{folder.description || '暂未填写收藏集说明。'}</p>
                             <div className="flex items-center space-x-2 mt-2">
                               {folder.is_featured && (
-                                <Badge variant="default" className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">精选</Badge>
+                                <Badge className="border border-[var(--np-rule)] bg-[var(--np-accent-soft)] text-[var(--np-accent-strong)] hover:bg-[var(--np-accent-soft)]">精选</Badge>
                               )}
-                              <Badge variant="secondary">{folder.prompt_count} 个提示词</Badge>
-                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                              <Badge variant="secondary">{folder.prompt_count} 条已验证快照</Badge>
+                              <span className="font-mono text-xs text-[var(--np-ink-muted)]">
                                 {new Date(folder.created_at).toLocaleDateString()}
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center space-x-2 ml-4">
-                            <Button type="button" size="sm" variant="outline" onClick={() => window.open(`/public-folders/${folder.id}`, '_blank', 'noopener,noreferrer')} aria-label={`在新窗口查看文件夹：${folder.name}`}>
+                          <div className="flex flex-wrap items-center gap-2 sm:ml-4">
+                            <Button type="button" variant="outline" className="min-h-11 flex-1 border-[var(--np-rule)] bg-transparent sm:flex-none" onClick={() => router.push(`/admin/folders/${folder.id}`)} aria-label={`管理公共收藏集快照：${folder.name}`}>
+                              <FolderOpen className="mr-2 h-4 w-4" aria-hidden="true" />
+                              管理快照
+                            </Button>
+                            <Button type="button" variant="ghost" className="h-11 w-11 text-[var(--np-ink-muted)]" onClick={() => { setEditingFolder(folder); setShowFolderEditDialog(true) }} aria-label={`编辑公共收藏集：${folder.name}`}>
+                              <Pencil className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                            <Button type="button" variant="ghost" className="h-11 w-11 text-[var(--np-ink-muted)]" onClick={() => window.open(`/public-folders/${folder.id}`, '_blank', 'noopener,noreferrer')} aria-label={`在新窗口查看公共收藏集：${folder.name}`}>
                               <Eye className="h-4 w-4" aria-hidden="true" />
                             </Button>
                             <Button
                               type="button"
-                              size="sm"
-                              variant="outline"
+                              variant="ghost"
                               onClick={() => handleDelete('folder', folder.id, folder.name)}
-                              className="text-red-600 hover:text-red-700"
-                              aria-label={`删除公共文件夹：${folder.name}`}
+                              className="h-11 w-11 text-[var(--np-ink-muted)] hover:bg-[var(--np-accent-soft)] hover:text-[var(--np-accent-strong)]"
+                              aria-label={`删除公共收藏集：${folder.name}`}
                             >
                               <Trash2 className="h-4 w-4" aria-hidden="true" />
                             </Button>
@@ -957,13 +1005,13 @@ export default function AdminPage() {
                   </div>
                 )}
                 {folderTotalPages > 1 && (
-                  <div className="mt-5 flex items-center justify-between border-t pt-4">
-                    <span className="text-sm text-gray-500">共 {folderTotal} 个，第 {folderPage}/{folderTotalPages} 页</span>
+                  <div className="flex flex-col gap-3 border-t border-[var(--np-rule)] bg-[var(--np-surface-raised)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="font-mono text-xs tabular-nums text-[var(--np-ink-muted)]">共 {folderTotal} 个公共收藏集，第 {folderPage}/{folderTotalPages} 页</span>
                     <div className="flex gap-2">
-                      <Button type="button" size="sm" variant="outline" disabled={folderPage <= 1} onClick={() => void fetchFolders(folderPage - 1, folderSearch)} aria-label="上一页文件夹">
+                      <Button type="button" size="sm" variant="outline" className="min-h-11 min-w-11 border-[var(--np-rule)] bg-transparent" disabled={foldersLoading || folderPage <= 1} onClick={() => void fetchFolders(folderPage - 1, folderSearch)} aria-label="上一页公共收藏集">
                         <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                       </Button>
-                      <Button type="button" size="sm" variant="outline" disabled={folderPage >= folderTotalPages} onClick={() => void fetchFolders(folderPage + 1, folderSearch)} aria-label="下一页文件夹">
+                      <Button type="button" size="sm" variant="outline" className="min-h-11 min-w-11 border-[var(--np-rule)] bg-transparent" disabled={foldersLoading || folderPage >= folderTotalPages} onClick={() => void fetchFolders(folderPage + 1, folderSearch)} aria-label="下一页公共收藏集">
                         <ChevronRight className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     </div>
@@ -984,7 +1032,7 @@ export default function AdminPage() {
           <div className="space-y-4">
             <p className="text-gray-600 dark:text-gray-400">
               确定要删除
-              {deleteTarget?.type === 'prompt' ? '提示词' : deleteTarget?.type === 'folder' ? '文件夹' : '用户'}
+              {deleteTarget?.type === 'prompt' ? '提示词' : deleteTarget?.type === 'folder' ? '公共收藏集' : '用户'}
               {' '}&ldquo;{deleteTarget?.title}&rdquo; 吗？此操作不可撤销。
             </p>
             <div className="flex justify-end space-x-2">
@@ -1006,7 +1054,7 @@ export default function AdminPage() {
         }}
       />
 
-      {/* 公共文件夹编辑对话框 */}
+      {/* 公共收藏集编辑对话框 */}
       <AdminFolderEditDialog
         folder={editingFolder}
         open={showFolderEditDialog}

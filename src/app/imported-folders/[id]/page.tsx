@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
 import { api } from '@/lib/api'
-import { ImportedFolder, PublicPrompt } from '@/types'
+import { ImportedFolder, PublicFolderSnapshotPrompt, PublicPrompt } from '@/types'
 import PromptCard from '@/components/PromptCard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,6 +14,27 @@ import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Folder, User, Calendar, FileText } from 'lucide-react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
+
+// PromptCard still renders the generic public-prompt view model. Keep the
+// namespace conversion explicit at this component boundary; API/state retain
+// the canonical snapshot_id throughout.
+function toPromptCardViewModel(snapshot: PublicFolderSnapshotPrompt): PublicPrompt {
+  return {
+    id: snapshot.snapshot_id,
+    title: snapshot.title,
+    content: snapshot.content,
+    description: snapshot.description ?? undefined,
+    author: snapshot.author,
+    author_id: snapshot.author_id,
+    category: snapshot.category ?? '未分类',
+    tags: snapshot.tags,
+    views_count: snapshot.views_count,
+    favorites_count: snapshot.favorites_count,
+    is_featured: snapshot.is_featured,
+    created_at: snapshot.created_at,
+    updated_at: snapshot.updated_at,
+  }
+}
 export default function ImportedFolderDetailPage() {
   const { user } = useAuth()
   const { toast } = useToast()
@@ -22,9 +43,9 @@ export default function ImportedFolderDetailPage() {
   const folderId = parseInt(params.id as string)
 
   const [folder, setFolder] = useState<ImportedFolder | null>(null)
-  const [prompts, setPrompts] = useState<PublicPrompt[]>([])
+  const [prompts, setPrompts] = useState<PublicFolderSnapshotPrompt[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedPrompt, setSelectedPrompt] = useState<PublicPrompt | null>(null)
+  const [selectedPrompt, setSelectedPrompt] = useState<PublicFolderSnapshotPrompt | null>(null)
   const [showPromptDialog, setShowPromptDialog] = useState(false)
 
   const fetchFolderData = useCallback(async () => {
@@ -100,7 +121,7 @@ export default function ImportedFolderDetailPage() {
     }
   }
 
-  const handlePromptClick = (prompt: PublicPrompt) => {
+  const handlePromptClick = (prompt: PublicFolderSnapshotPrompt) => {
     // 显示提示词完整详情对话框
     setSelectedPrompt(prompt)
     setShowPromptDialog(true)
@@ -200,14 +221,15 @@ export default function ImportedFolderDetailPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {prompts.map((prompt) => (
                   <PromptCard
-                    key={prompt.id}
-                    prompt={prompt}
+                    key={prompt.snapshot_id}
+                    prompt={toPromptCardViewModel(prompt)}
                     type="public"
                     onEdit={() => {}} // 导入的提示词暂时不支持编辑
-                    onDelete={() => handleRemoveFromImportedFolder(prompt.id)} // 导入的提示词暂时不支持删除
+                    onDelete={() => handleRemoveFromImportedFolder(prompt.snapshot_id)} // 导入的提示词暂时不支持删除
                     onFavoriteChange={() => {}}
                     onClick={() => handlePromptClick(prompt)}
                     disableFavorite={true} // 禁用导入文件夹中提示词的收藏功能
+                    disableImport={true} // Snapshot IDs are not standalone public-prompt IDs.
                   />
                 ))}
               </div>
@@ -249,7 +271,7 @@ export default function ImportedFolderDetailPage() {
                     <h3 className="text-lg font-semibold text-gray-900">标签</h3>
                     <div className="flex flex-wrap gap-2">
                       {selectedPrompt.tags.map((tag, index) => (
-                        <Badge key={`dialog-tag-${selectedPrompt.id}-${index}`} variant="secondary" className="text-sm">
+                        <Badge key={`dialog-tag-${selectedPrompt.snapshot_id}-${index}`} variant="secondary" className="text-sm">
                           {tag}
                         </Badge>
                       ))}

@@ -6,6 +6,7 @@ import {
   parseBoundedPagination,
   readBoundedSearchParam,
 } from '@/lib/pagination-policy'
+import { PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL } from '@/lib/public-folder-snapshot-policy'
 
 // GET - 管理员获取公共文件夹列表
 export async function GET(request: NextRequest) {
@@ -42,29 +43,37 @@ export async function GET(request: NextRequest) {
       queryParams.push(pattern, pattern, pattern)
     }
 
-    const countResult = await db.query(
-      `SELECT COUNT(*) AS total
-         FROM public_folders pf
-         JOIN users u ON pf.user_id = u.id
-         ${whereClause}`,
-      queryParams,
-    )
-    const total = Number((countResult.rows as Array<{ total?: number | string }>)[0]?.total) || 0
+    const countQuery = `SELECT COUNT(*) AS total
+                          FROM public_folders pf
+                          JOIN users u ON pf.user_id = u.id
+                          ${whereClause}`
 
-    const result = await db.query(`
-      SELECT pf.*, u.username as author,
-             COALESCE(prompt_counts.count, 0) as prompt_count
-      FROM public_folders pf
-      JOIN users u ON pf.user_id = u.id
-      LEFT JOIN (
-        SELECT snapshot.public_folder_id, COUNT(*) as count
-        FROM public_folder_prompts snapshot
-        GROUP BY snapshot.public_folder_id
-      ) prompt_counts ON prompt_counts.public_folder_id = pf.id
-      ${whereClause}
-      ORDER BY pf.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...queryParams, limit, offset])
+    const itemQuery = `
+      SELECT page_folder.id, page_folder.name, page_folder.description,
+             page_folder.user_id, page_folder.is_featured,
+             page_folder.created_at, page_folder.updated_at, page_folder.author,
+             (SELECT COUNT(*) FROM public_folder_prompts snapshot
+               JOIN public_folders published_folder
+                 ON published_folder.id = snapshot.public_folder_id
+              WHERE snapshot.public_folder_id = page_folder.id
+                AND ${PUBLIC_FOLDER_SNAPSHOT_VISIBILITY_SQL}) AS prompt_count
+        FROM (
+          SELECT pf.id, pf.name, pf.description, pf.user_id, pf.is_featured,
+                 pf.created_at, pf.updated_at, u.username AS author
+            FROM public_folders pf
+            JOIN users u ON pf.user_id = u.id
+            ${whereClause}
+           ORDER BY pf.created_at DESC, pf.id DESC
+           LIMIT ? OFFSET ?
+        ) page_folder
+       ORDER BY page_folder.created_at DESC, page_folder.id DESC
+    `
+    const { countResult, result } = await db.withConsistentReadSnapshot(async snapshotQuery => {
+      const countResult = await snapshotQuery(countQuery, queryParams)
+      const result = await snapshotQuery(itemQuery, [...queryParams, limit, offset])
+      return { countResult, result }
+    })
+    const total = Number((countResult.rows as Array<{ total?: number | string }>)[0]?.total) || 0
 
     const folders = (result.rows as Array<Record<string, unknown>>).map(folder => ({
       id: folder.id,
@@ -72,7 +81,6 @@ export async function GET(request: NextRequest) {
       description: folder.description,
       user_id: folder.user_id,
       author: folder.author,
-      original_folder_id: folder.original_folder_id,
       is_featured: Boolean(folder.is_featured),
       prompt_count: Number(folder.prompt_count) || 0,
       created_at: folder.created_at,

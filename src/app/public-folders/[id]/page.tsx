@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { PublicFolder, PublicPrompt } from '@/types'
+import { PublicFolder, PublicFolderSnapshotPrompt } from '@/types'
 import { api } from '@/lib/api'
 import { 
   ArrowLeft, 
@@ -91,14 +91,14 @@ export default function PublicFolderDetailPage() {
   const href = (path: string) => withLocaleHref(path, locale)
   
   const [folder, setFolder] = useState<PublicFolder | null>(null)
-  const [prompts, setPrompts] = useState<PublicPrompt[]>([])
+  const [prompts, setPrompts] = useState<PublicFolderSnapshotPrompt[]>([])
   const [promptPage, setPromptPage] = useState(1)
   const [promptTotal, setPromptTotal] = useState(0)
   const [promptTotalPages, setPromptTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [copiedPromptId, setCopiedPromptId] = useState<number | null>(null)
   const [importing, setImporting] = useState(false)
-  const [selectedPrompt, setSelectedPrompt] = useState<PublicPrompt | null>(null)
+  const [selectedPrompt, setSelectedPrompt] = useState<PublicFolderSnapshotPrompt | null>(null)
   const [showPromptDialog, setShowPromptDialog] = useState(false)
 
   useEffect(() => {
@@ -143,25 +143,25 @@ export default function PublicFolderDetailPage() {
     }
   }, [fetchFolderDetail, fetchFolderPrompts, folderId, localeReady])
 
-  const handlePromptClick = (prompt: PublicPrompt) => {
+  const handlePromptClick = (prompt: PublicFolderSnapshotPrompt) => {
     // 显示提示词详情对话框
     setSelectedPrompt(prompt)
     setShowPromptDialog(true)
   }
 
-  const handleCopyPrompt = async (prompt: PublicPrompt) => {
+  const handleCopyPrompt = async (prompt: PublicFolderSnapshotPrompt) => {
     try {
       await navigator.clipboard.writeText(prompt.content)
-      setCopiedPromptId(prompt.id)
+      setCopiedPromptId(prompt.snapshot_id)
       setTimeout(() => setCopiedPromptId(null), 2000)
     } catch (error) {
       console.error('Failed to copy prompt:', error)
     }
   }
 
-  const handleImportPrompt = async (promptId: number) => {
+  const handleImportPrompt = async (snapshotId: number) => {
     if (locale === 'en') {
-      const prompt = prompts.find(item => item.id === promptId)
+      const prompt = prompts.find(item => item.snapshot_id === snapshotId)
       if (prompt) await handleCopyPrompt(prompt)
       return
     }
@@ -169,7 +169,7 @@ export default function PublicFolderDetailPage() {
     try {
       // Import this folder's immutable snapshot row. Snapshot ids are a separate namespace
       // from standalone public prompt ids.
-      const response = await api.publicFolders.importPrompt(folderId, promptId)
+      const response = await api.publicFolders.importPrompt(folderId, snapshotId)
       if (response.success) {
         toast({
           title: copy.promptImportSuccessTitle,
@@ -360,7 +360,7 @@ export default function PublicFolderDetailPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {prompts.map((prompt) => (
                 <Card 
-                  key={prompt.id} 
+                  key={prompt.snapshot_id}
                   className="hover:shadow-md transition-shadow"
                 >
                   <CardHeader className="pb-3">
@@ -413,12 +413,12 @@ export default function PublicFolderDetailPage() {
                           onClick={() => handleCopyPrompt(prompt)}
                           className="bg-blue-600 hover:bg-blue-700 text-white"
                         >
-                          {copiedPromptId === prompt.id ? (
+                          {copiedPromptId === prompt.snapshot_id ? (
                             <Check className="h-4 w-4 mr-1" />
                           ) : (
                             <Copy className="h-4 w-4 mr-1" />
                           )}
-                          {copiedPromptId === prompt.id ? copy.copied : copy.copy}
+                          {copiedPromptId === prompt.snapshot_id ? copy.copied : copy.copy}
                         </Button>
                       </div>
                     </div>

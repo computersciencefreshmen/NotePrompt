@@ -13,6 +13,7 @@ ADRs record accepted, long-lived product and architecture semantics. They do not
 | [0005](0005-materialize-imports-as-independent-copies.md) | Materialize imports as independent private copies | Accepted |
 | [0006](0006-persist-ai-usage-reservations.md) | Persist AI usage reservations | Accepted |
 | [0007](0007-operate-to-a-single-ecs-slo.md) | Operate to an honest single-ECS SLO | Accepted |
+| [0008](0008-attest-public-folder-snapshot-origins.md) | Attest public-folder snapshot origins | Accepted |
 
 ## Format
 

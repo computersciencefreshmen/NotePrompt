@@ -54,7 +54,7 @@ The word folder implies a single tree location and reinforces the legacy column.
 
 ## Failure and rollback considerations
 
-Migration 011 is an expand migration. Backfill joins through user ownership and records or fails on cross-tenant anomalies. Cutover keeps the legacy column readable for one version and measures the containment and same-tenant invariants above. The contract migration is forbidden while a legacy-only row or code dependency remains. If cutover fails, keep canonical data, route legacy reads through the documented projection, and investigate the measured anomaly without deleting additional memberships.
+Migration 012 is an expand migration. Backfill joins through user ownership and records or fails on cross-tenant anomalies. Cutover keeps the legacy column readable for one version and measures the containment and same-tenant invariants above. The contract migration is forbidden while a legacy-only row or code dependency remains. If cutover fails, keep canonical data, route legacy reads through the documented projection, and investigate the measured anomaly without deleting additional memberships.
 
 ## References
 

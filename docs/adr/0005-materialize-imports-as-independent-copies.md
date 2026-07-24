@@ -52,7 +52,7 @@ Public collection content is already a publication snapshot. An import must copy
 
 ## Failure and rollback considerations
 
-Migration 012 expands storage without deleting the old pointer relation. Backfill materializes the exact currently published snapshots and records import operation identity. Cutover reads only user-owned copies. The old projection is removed only after row counts, ownership, and content fingerprints match. A partial import transaction rolls back; a retried request uses its idempotency key.
+Migration 013 expands storage without deleting the old pointer relation. Backfill materializes the exact currently published snapshots and records import operation identity. Cutover reads only user-owned copies. The old projection is removed only after row counts, ownership, and content fingerprints match. A partial import transaction rolls back; a retried request uses its idempotency key.
 
 ## References
 

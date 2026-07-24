@@ -63,7 +63,7 @@ dispatched -> committed with success, provider_error, client_disconnect, or time
 
 ## Failure and rollback considerations
 
-Migration 014 first adds the ledger and transition constraints while existing counters remain. A shadow comparison proves reservation projections match current entitlement totals before cutover. If the new path fails before dispatch, it refunds by idempotent transition. If it fails after dispatch, reconciliation commits it. The old compensation path is removed only after retry, crash, timeout, and replay tests pass.
+Migration 015 first adds the ledger and transition constraints while existing counters remain. A shadow comparison proves reservation projections match current entitlement totals before cutover. If the new path fails before dispatch, it refunds by idempotent transition. If it fails after dispatch, reconciliation commits it. The old compensation path is removed only after retry, crash, timeout, and replay tests pass.
 
 ## References
 

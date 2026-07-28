@@ -271,6 +271,33 @@ jobs:
             "note-prompt-ci:${GITHUB_SHA}")"
           test "${revision}" = "${GITHUB_SHA}"
 
+      - name: Exercise patched Sharp in the final Alpine image
+        run: |
+          docker run --rm \
+            --entrypoint node \
+            "note-prompt-ci:${GITHUB_SHA}" \
+            -e '
+              const sharp = require("sharp")
+              if (sharp.versions.sharp !== "0.35.3") {
+                throw new Error(`Unexpected Sharp version: ${sharp.versions.sharp}`)
+              }
+              sharp({
+                create: {
+                  width: 1,
+                  height: 1,
+                  channels: 4,
+                  background: { r: 218, g: 119, b: 86, alpha: 1 },
+                },
+              })
+                .webp()
+                .toBuffer()
+                .then(output => {
+                  if (output.length < 12 || output.toString("ascii", 0, 4) !== "RIFF") {
+                    throw new Error("Sharp did not produce a valid WebP image")
+                  }
+                })
+            '
+
       - name: Create report directory
         run: mkdir -p reports
 

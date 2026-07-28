@@ -209,8 +209,7 @@ NotePrompt/
 │   │   │   ├── public-prompts/ #     Public prompt library
 │   │   │   ├── folders/        #     Folder management
 │   │   │   ├── favorites/      #     Favorites system
-│   │   │   ├── search/         #     Global search
-│   │   │   └── tags/           #     Tag management
+│   │   │   └── search/         #     Global search
 │   │   ├── prompts/            #   Prompt workspace pages
 │   │   ├── public-prompts/     #   Public library pages
 │   │   ├── folders/            #   Folder view pages
@@ -268,7 +267,6 @@ All API endpoints are prefixed with `/api/v1/`.
 | `GET` | `/favorites` | List favorites |
 | `POST` | `/favorites` | Add to favorites |
 | `GET` | `/categories` | List all categories |
-| `GET` | `/tags` | List all tags |
 
 ---
 

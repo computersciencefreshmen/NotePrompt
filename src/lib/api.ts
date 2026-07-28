@@ -20,7 +20,6 @@ import {
   UserProfile,
   UserStats,
   Category,
-  Tag,
   PublicFolder,
   ExportData,
   ImportedFolder,
@@ -501,22 +500,6 @@ export const categories = {
   // 获取所有分类
   list: async (): Promise<ApiResponse<Category[]>> => {
     return apiRequest<ApiResponse<Category[]>>('/categories')
-  }
-}
-
-// 标签相关API
-export const tags = {
-  // 获取所有标签
-  list: async (): Promise<ApiResponse<Tag[]>> => {
-    return apiRequest<ApiResponse<Tag[]>>('/tags')
-  },
-
-  // 创建标签
-  create: async (data: { name: string; color?: string }): Promise<ApiResponse<Tag>> => {
-    return apiRequest<ApiResponse<Tag>>('/tags', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    })
   }
 }
 
@@ -1017,7 +1000,6 @@ export const api = {
       })
     }
   },
-  tags,
   favorites,
   categories,
   ai,

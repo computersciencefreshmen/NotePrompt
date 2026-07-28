@@ -8,6 +8,7 @@ import { Prompt, PromptEditorSaveData } from '@/types'
 import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Loader2 } from 'lucide-react'
+import { normalizeInternalReturnPath } from '@/lib/navigation-policy'
 import { toast } from '@/hooks/use-toast'
 
 export default function EditPromptPage() {
@@ -21,7 +22,7 @@ export default function EditPromptPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const searchParams = new URLSearchParams(window.location.search)
-      setReturnPath(searchParams.get('return') || '/prompts')
+      setReturnPath(normalizeInternalReturnPath(searchParams.get('return')))
     }
   }, [])
 

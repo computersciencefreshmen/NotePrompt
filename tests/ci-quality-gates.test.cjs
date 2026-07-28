@@ -16,7 +16,7 @@ test('release workflow pins every external action and uses least privilege', () 
   for (const actionReference of actionReferences) {
     assert.match(actionReference, /^[a-z0-9_.-]+\/[a-z0-9_.-]+@[a-f0-9]{40}$/i)
   }
-  assert.match(workflow, /^permissions:\n  contents: read$/m)
+  assert.match(workflow, /^permissions:\r?\n  contents: read$/m)
   assert.doesNotMatch(workflow, /persist-credentials:\s*true/)
   assert.doesNotMatch(workflow, /continue-on-error/)
   assert.match(workflow, /node-version:\s*\$\{\{ env\.NODE_VERSION \}\}/)
@@ -89,6 +89,10 @@ test('security gates scan full history, source, dependencies, and final image', 
 
 test('container build proves commit identity and the aggregate gate is fail-closed', () => {
   assert.match(workflow, /load: true/)
+  assert.match(workflow, /Exercise patched Sharp in the final Alpine image/)
+  assert.match(workflow, /--entrypoint node/)
+  assert.match(workflow, /sharp\.versions\.sharp !== "0\.35\.3"/)
+  assert.match(workflow, /\.webp\(\)/)
   assert.match(workflow, /APP_VERSION=\$\{\{ github\.sha \}\}/)
   assert.match(workflow, /org\.opencontainers\.image\.revision/)
   assert.match(workflow, /revision[^\n]*GITHUB_SHA|GITHUB_SHA[^\n]*revision/)
@@ -104,7 +108,7 @@ test('container build proves commit identity and the aggregate gate is fail-clos
   ]) {
     assert.match(workflow, new RegExp(`      - ${dependency.replace('-', '\\-')}`))
   }
-  assert.match(workflow, /release-gate:\n[\s\S]*?if: \$\{\{ always\(\) \}\}/)
+  assert.match(workflow, /release-gate:\r?\n[\s\S]*?if: \$\{\{ always\(\) \}\}/)
   assert.match(workflow, /if \[\[ "\$\{result\}" != success \]\]/)
 })
 

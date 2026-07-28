@@ -5,10 +5,13 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   AI_MODEL_CATALOG,
+  AI_MODEL_CATALOG_VERIFIED_AT,
   AI_PROVIDER_MODEL_OPTIONS,
   DEFAULT_PUBLIC_AI_MODEL,
   DEFAULT_PUBLIC_AI_PROVIDER,
   getAIProviderModels,
+  getAIPersonalQuotaPolicy,
+  getAvailableAIProviders,
   getAIModelParameterPolicy,
   getDefaultAIModel,
   isActiveTextAIModel,
@@ -37,6 +40,10 @@ test('public model catalog contains only unique active text chat models', () => 
     assert.ok(model.requestPolicy.maxOutputTokens > 0)
     assert.match(model.requestPolicy.temperatureMode, /^(?:configurable|provider-default)$/)
     assert.match(model.requestPolicy.tokenParameter, /^(?:max_tokens|max_completion_tokens)$/)
+    assert.equal(model.availability.status, 'catalog-verified')
+    assert.equal(model.availability.evidence, 'official')
+    assert.equal(model.availability.verifiedAt, AI_MODEL_CATALOG_VERIFIED_AT)
+    assert.match(model.usagePolicy.personalQuota, /^(?:metered|unmetered)$/)
     assert.doesNotMatch(model.id, /(?:tts|asr|speech|voice|audio)/i)
   }
 })
@@ -61,6 +68,7 @@ test('global default and recommendations resolve to active text models', () => {
   assert.equal(isActiveTextAIModel(DEFAULT_PUBLIC_AI_PROVIDER, DEFAULT_PUBLIC_AI_MODEL), true)
   assert.equal(DEFAULT_PUBLIC_AI_PROVIDER, 'minimax')
   assert.equal(DEFAULT_PUBLIC_AI_MODEL, 'MiniMax-M3')
+  assert.equal(getAvailableAIProviders()[0].key, 'minimax')
 
   const recommended = catalogEntries().filter(({ model }) => model.recommendation !== null)
   assert.equal(recommended.length, Object.keys(AI_MODEL_CATALOG).length)
@@ -68,6 +76,17 @@ test('global default and recommendations resolve to active text models', () => {
     assert.equal(isActiveTextAIModel(provider, model.id), true)
     assert.equal(model.default, true)
   }
+})
+
+test('only the exact MiniMax M3 catalog entry bypasses NotePrompt personal quota', () => {
+  const unmetered = catalogEntries().filter(({ model }) => model.usagePolicy.personalQuota === 'unmetered')
+  assert.deepEqual(
+    unmetered.map(({ provider, model }) => `${provider}/${model.id}`),
+    ['minimax/MiniMax-M3'],
+  )
+  assert.equal(getAIPersonalQuotaPolicy('minimax', 'MiniMax-M3'), 'unmetered')
+  assert.equal(getAIPersonalQuotaPolicy('minimax', 'minimax-m3'), 'metered')
+  assert.equal(getAIPersonalQuotaPolicy('unknown', 'MiniMax-M3'), 'metered')
 })
 
 test('retired, restricted legacy, and non-chat IDs never reach the public catalog', () => {
@@ -100,7 +119,7 @@ test('model parameter policies match the product request contract', () => {
 
   const miniMaxM3 = getAIModelParameterPolicy('minimax', 'MiniMax-M3')
   assert.equal(miniMaxM3.samplingEditable, true)
-  assert.equal(miniMaxM3.maxOutputTokens, 2048)
+  assert.equal(miniMaxM3.maxOutputTokens, 8192)
 
   const xiaomi = getAIModelParameterPolicy('xiaomi', 'mimo-v2.5-pro')
   assert.deepEqual(xiaomi.temperature, { min: 0.1, max: 1, step: 0.1 })
@@ -109,7 +128,7 @@ test('model parameter policies match the product request contract', () => {
 
 test('capability metadata distinguishes current native vision models', () => {
   assert.equal(AI_MODEL_CATALOG.qwen.models['qwen3.7-plus'].capabilities.vision, true)
-  assert.equal(AI_MODEL_CATALOG.qwen.models['qwen3.6-flash'].capabilities.vision, true)
+  assert.equal(AI_MODEL_CATALOG.qwen.models['qwen3.7-flash'].capabilities.vision, true)
   assert.equal(AI_MODEL_CATALOG.qwen.models['qwen3.7-max'].capabilities.vision, false)
   assert.equal(AI_MODEL_CATALOG.kimi.models['kimi-k2.7-code'].capabilities.vision, true)
   assert.equal(AI_MODEL_CATALOG.minimax.models['MiniMax-M3'].capabilities.vision, true)
@@ -131,7 +150,8 @@ test('server model configuration derives from the client-safe catalog', () => {
 test('model catalog knowledge base records official sources and regional key risk', () => {
   const documentation = fs.readFileSync(path.join(projectRoot, 'docs/engineering/ai-model-catalog.md'), 'utf8')
 
-  assert.match(documentation, /Verified: 2026-07-20/)
+  assert.match(documentation, /Verified: 2026-07-28/)
+  assert.match(documentation, /qwen3\.7-flash/)
   assert.match(documentation, /https:\/\/help\.aliyun\.com\/zh\/model-studio\/text-generation-model/)
   assert.match(documentation, /https:\/\/api-docs\.deepseek\.com\//)
   assert.match(documentation, /https:\/\/platform\.kimi\.(?:ai|com)\/docs\/models/)

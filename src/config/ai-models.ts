@@ -2,6 +2,8 @@ export type AIModelLifecycle = 'active'
 export type AIModelTier = 'flagship' | 'balanced' | 'fast' | 'specialist'
 export type AITemperatureMode = 'configurable' | 'provider-default'
 export type AITokenParameter = 'max_tokens' | 'max_completion_tokens'
+export type AIPersonalQuotaPolicy = 'metered' | 'unmetered'
+export const AI_MODEL_CATALOG_VERIFIED_AT = '2026-07-28'
 
 // NotePrompt deliberately exposes a conservative cross-provider sampling
 // envelope. It is narrower than some vendors' theoretical ranges so a value
@@ -32,12 +34,29 @@ export type PublicAIModelDefinition = {
     temperatureMode: AITemperatureMode
     tokenParameter: AITokenParameter
   }
+  availability: {
+    status: 'catalog-verified'
+    evidence: 'official'
+    verifiedAt: string
+  }
+  usagePolicy: {
+    personalQuota: AIPersonalQuotaPolicy
+  }
 }
 
 type AIProviderDefinition = {
   name: string
   models: Record<string, PublicAIModelDefinition>
 }
+
+const OFFICIAL_AVAILABILITY = {
+  status: 'catalog-verified',
+  evidence: 'official',
+  verifiedAt: AI_MODEL_CATALOG_VERIFIED_AT,
+} as const
+
+const METERED_USAGE_POLICY = { personalQuota: 'metered' } as const
+const UNMETERED_USAGE_POLICY = { personalQuota: 'unmetered' } as const
 
 /**
  * Client-safe canonical model catalog.
@@ -51,6 +70,8 @@ export const AI_MODEL_CATALOG = {
     models: {
       'qwen3.7-plus': {
         id: 'qwen3.7-plus',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'Qwen3.7 Plus',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -62,6 +83,8 @@ export const AI_MODEL_CATALOG = {
       },
       'qwen3.7-max': {
         id: 'qwen3.7-max',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'Qwen3.7 Max',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -71,9 +94,11 @@ export const AI_MODEL_CATALOG = {
         contextWindowTokens: 1_000_000,
         requestPolicy: { maxOutputTokens: 32_768, temperatureMode: 'configurable', tokenParameter: 'max_tokens' },
       },
-      'qwen3.6-flash': {
-        id: 'qwen3.6-flash',
-        name: 'Qwen3.6 Flash',
+      'qwen3.7-flash': {
+        id: 'qwen3.7-flash',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
+        name: 'Qwen3.7 Flash',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
         tier: 'fast',
@@ -89,6 +114,8 @@ export const AI_MODEL_CATALOG = {
     models: {
       'deepseek-v4-flash': {
         id: 'deepseek-v4-flash',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'DeepSeek V4 Flash',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -100,6 +127,8 @@ export const AI_MODEL_CATALOG = {
       },
       'deepseek-v4-pro': {
         id: 'deepseek-v4-pro',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'DeepSeek V4 Pro',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -116,6 +145,8 @@ export const AI_MODEL_CATALOG = {
     models: {
       'kimi-k3': {
         id: 'kimi-k3',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'Kimi K3',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -127,6 +158,8 @@ export const AI_MODEL_CATALOG = {
       },
       'kimi-k2.7-code': {
         id: 'kimi-k2.7-code',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'Kimi K2.7 Code',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -138,6 +171,8 @@ export const AI_MODEL_CATALOG = {
       },
       'kimi-k2.7-code-highspeed': {
         id: 'kimi-k2.7-code-highspeed',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'Kimi K2.7 Code Highspeed',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -149,6 +184,8 @@ export const AI_MODEL_CATALOG = {
       },
       'kimi-k2.6': {
         id: 'kimi-k2.6',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'Kimi K2.6',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -165,6 +202,8 @@ export const AI_MODEL_CATALOG = {
     models: {
       'glm-5.2': {
         id: 'glm-5.2',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'GLM-5.2',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -176,6 +215,8 @@ export const AI_MODEL_CATALOG = {
       },
       'glm-5.1': {
         id: 'glm-5.1',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'GLM-5.1',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -187,10 +228,12 @@ export const AI_MODEL_CATALOG = {
       },
       'glm-5-turbo': {
         id: 'glm-5-turbo',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'GLM-5 Turbo',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
-        tier: 'fast',
+        tier: 'specialist',
         default: false,
         recommendation: null,
         contextWindowTokens: 204_800,
@@ -203,6 +246,8 @@ export const AI_MODEL_CATALOG = {
     models: {
       'MiniMax-M3': {
         id: 'MiniMax-M3',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: UNMETERED_USAGE_POLICY,
         name: 'MiniMax M3',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -210,10 +255,12 @@ export const AI_MODEL_CATALOG = {
         default: true,
         recommendation: '当前默认：前沿推理、代码与百万上下文',
         contextWindowTokens: 1_000_000,
-        requestPolicy: { maxOutputTokens: 2_048, temperatureMode: 'configurable', tokenParameter: 'max_completion_tokens' },
+        requestPolicy: { maxOutputTokens: 8_192, temperatureMode: 'configurable', tokenParameter: 'max_completion_tokens' },
       },
       'MiniMax-M2.7-highspeed': {
         id: 'MiniMax-M2.7-highspeed',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'MiniMax M2.7 Highspeed',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -221,10 +268,12 @@ export const AI_MODEL_CATALOG = {
         default: false,
         recommendation: null,
         contextWindowTokens: 204_800,
-        requestPolicy: { maxOutputTokens: 2_048, temperatureMode: 'configurable', tokenParameter: 'max_completion_tokens' },
+        requestPolicy: { maxOutputTokens: 8_192, temperatureMode: 'configurable', tokenParameter: 'max_completion_tokens' },
       },
       'MiniMax-M2.7': {
         id: 'MiniMax-M2.7',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'MiniMax M2.7',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: false },
@@ -232,7 +281,7 @@ export const AI_MODEL_CATALOG = {
         default: false,
         recommendation: null,
         contextWindowTokens: 204_800,
-        requestPolicy: { maxOutputTokens: 2_048, temperatureMode: 'configurable', tokenParameter: 'max_completion_tokens' },
+        requestPolicy: { maxOutputTokens: 8_192, temperatureMode: 'configurable', tokenParameter: 'max_completion_tokens' },
       },
     },
   },
@@ -241,6 +290,8 @@ export const AI_MODEL_CATALOG = {
     models: {
       'mimo-v2.5-pro': {
         id: 'mimo-v2.5-pro',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'MiMo V2.5 Pro',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -252,6 +303,8 @@ export const AI_MODEL_CATALOG = {
       },
       'mimo-v2.5': {
         id: 'mimo-v2.5',
+        availability: OFFICIAL_AVAILABILITY,
+        usagePolicy: METERED_USAGE_POLICY,
         name: 'MiMo V2.5',
         lifecycle: 'active',
         capabilities: { text: true, reasoning: true, coding: true, longContext: true, vision: true },
@@ -301,11 +354,14 @@ export function isActiveTextAIModel(provider: string, modelId: string): boolean 
   return model?.lifecycle === 'active' && model.capabilities.text
 }
 
+export function getAIPersonalQuotaPolicy(provider: string, modelId: string): AIPersonalQuotaPolicy {
+  return getAIModelDefinition(provider, modelId)?.usagePolicy.personalQuota ?? 'metered'
+}
+
 export function getAvailableAIProviders() {
-  return Object.entries(AI_MODEL_CATALOG).map(([key, value]) => ({
-    key,
-    name: value.name,
-  }))
+  return Object.entries(AI_MODEL_CATALOG)
+    .map(([key, value]) => ({ key: key as PublicAIProvider, name: value.name }))
+    .sort((left, right) => Number(right.key === DEFAULT_PUBLIC_AI_PROVIDER) - Number(left.key === DEFAULT_PUBLIC_AI_PROVIDER))
 }
 
 export function getAIProviderModels(provider: string) {
@@ -314,6 +370,11 @@ export function getAIProviderModels(provider: string) {
   return Object.values(AI_MODEL_CATALOG[provider].models).map(model => ({
     key: model.id,
     name: model.name,
+    availability: model.availability,
+    usagePolicy: model.usagePolicy,
+    tier: model.tier,
+    default: model.default,
+    recommendation: model.recommendation,
   }))
 }
 

@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
 
     // 获取AI配置
     const aiConfig = validation.config!
-    const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+    const quota = await reserveAIUsage(auth.user, 'ai_optimize', { provider: effectiveProvider, model })
     if (!quota.ok) return quota.response
     const reservation = quota.reservation
     

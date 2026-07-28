@@ -37,6 +37,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
   
   // 获取当前选择提供商的所有模型
   const models = getAIProviderModels(selectedProvider);
+  const selectedModelDefinition = models.find(model => model.key === selectedModel);
 
   // 当提供商改变时，重置模型选择
   const handleProviderChange = (provider: string) => {
@@ -153,7 +154,7 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
             <div className="space-y-2">
               <Label htmlFor="provider-select">AI提供商</Label>
               <Select value={selectedProvider} onValueChange={handleProviderChange} disabled={isLoading}>
-                <SelectTrigger id="provider-select">
+                <SelectTrigger id="provider-select" className="h-11 rounded-[8px]">
                   <SelectValue placeholder="选择AI提供商" />
                 </SelectTrigger>
                 <SelectContent>
@@ -168,19 +169,24 @@ export function AIOptimizeDialog({ open, onOpenChange, originalPrompt, onOptimiz
             <div className="space-y-2">
               <Label htmlFor="model-select">具体模型</Label>
               <Select value={selectedModel} onValueChange={setSelectedModel} disabled={isLoading}>
-                <SelectTrigger id="model-select">
+                <SelectTrigger id="model-select" className="h-11 rounded-[8px]">
                   <SelectValue placeholder="选择具体模型" />
                 </SelectTrigger>
                 <SelectContent>
                   {models.map((model) => (
                     <SelectItem key={model.key} value={model.key}>
-                      {model.name}
+                      {model.name} · 官方目录已核验{model.default ? ' · 默认' : ''}{model.recommendation ? ' · 推荐' : ''}{model.usagePolicy.personalQuota === 'unmetered' ? ' · 站内额度不限' : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
+          {selectedModelDefinition && (
+            <p className="rounded-[8px] bg-[#f4efe7] px-3 py-2 text-xs leading-5 text-[#655b50] dark:bg-[#211d18] dark:text-[#cfc5b7]" role="status">
+              {selectedModelDefinition.name} · 官方目录已核验 · {selectedModelDefinition.usagePolicy.personalQuota === 'unmetered' ? '站内额度不限' : '扣除站内额度'} · 仍受供应商余额、限流和平台防滥用约束。
+            </p>
+          )}
 
           {/* 优化按钮 + 状态指示 */}
           <div className="flex flex-col items-center gap-2">

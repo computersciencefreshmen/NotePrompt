@@ -30,8 +30,8 @@ export async function GET(request: NextRequest) {
 
     const providers = await listUserProviderConfigs(auth.user.id)
     return NextResponse.json({ success: true, data: { providers } })
-  } catch (error) {
-    console.error('Failed to load user provider configs:', error)
+  } catch {
+    console.error('Failed to load user provider configs')
     return NextResponse.json({ success: false, error: '读取个人模型配置失败' }, { status: 500 })
   }
 }
@@ -106,8 +106,8 @@ export async function DELETE(request: NextRequest) {
     const providers = await listUserProviderConfigs(auth.user.id)
 
     return NextResponse.json({ success: true, data: { providers } })
-  } catch (error) {
-    console.error('Failed to delete user provider config:', error)
+  } catch {
+    console.error('Failed to delete user provider config')
     return NextResponse.json({ success: false, error: '删除个人模型配置失败' }, { status: 500 })
   }
 }

@@ -107,14 +107,32 @@ function normalizeMaxTokens(provider: string, model: string, value: number) {
   return Math.round(clampNumber(value, 1, upperBound))
 }
 
+function requireActiveTextAIModel(provider: string, model: string) {
+  const modelDefinition = getAIModelDefinition(provider, model)
+
+  if (
+    !modelDefinition
+    || modelDefinition.lifecycle !== 'active'
+    || !modelDefinition.capabilities.text
+  ) {
+    throw new RangeError('AI model is not active in the canonical catalog')
+  }
+
+  return modelDefinition
+}
+
 /**
  * Kimi K3/K2 generation models currently control sampling internally. Sending
  * temperature or top_p can be rejected by the provider, so both are omitted.
  */
 export function modelControlsSampling(provider: string, model: string) {
-  const policy = getAIModelDefinition(provider, model)?.requestPolicy
-  return policy?.temperatureMode === 'provider-default'
-    || (provider === 'kimi' && /^kimi-k(?:3|2)(?:[.\-]|$)/i.test(model))
+  const modelDefinition = getAIModelDefinition(provider, model)
+  return Boolean(
+    modelDefinition
+    && modelDefinition.lifecycle === 'active'
+    && modelDefinition.capabilities.text
+    && modelDefinition.requestPolicy.temperatureMode === 'provider-default',
+  )
 }
 
 /**
@@ -131,9 +149,10 @@ export function buildAIChatCompletionBody({
   stream = false,
   fixedTemperature = false,
 }: BuildAIChatCompletionBodyOptions): AIChatCompletionBody {
-  const providerControlsSampling = modelControlsSampling(provider, model)
+  const modelDefinition = requireActiveTextAIModel(provider, model)
+  const providerControlsSampling = modelDefinition.requestPolicy.temperatureMode === 'provider-default'
   const parameterPolicy = getAIModelParameterPolicy(provider, model)
-  const tokenParameter = getAIModelDefinition(provider, model)?.requestPolicy.tokenParameter ?? 'max_tokens'
+  const tokenParameter = modelDefinition.requestPolicy.tokenParameter
   const body: AIChatCompletionBody = {
     model,
     messages,

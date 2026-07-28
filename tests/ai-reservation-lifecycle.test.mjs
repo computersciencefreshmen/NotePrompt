@@ -61,3 +61,30 @@ test('diagnostics dispatches at most one provider probe per request', () => {
   assert.match(source, /onProviderCallStart\?\.\(\)[\s\S]{0,200}fetch\(/)
   assert.match(source, /await reservation\.rollback\(\)/)
 })
+
+test('all remote AI routes bind quota policy to the exact dispatch target', () => {
+  for (const route of [
+    'src/app/api/v1/ai/generate-prompt/route.ts',
+    'src/app/api/v1/ai/optimize-prompt/route.ts',
+    'src/app/api/v1/ai/optimize-prompt-stream/route.ts',
+    'src/app/api/v1/ai/optimize-prompt-multiturn/route.ts',
+    'src/app/api/v1/ai/diagnostics/route.ts',
+  ]) {
+    const source = read(route)
+    assert.match(source, /reserveAIUsage\([\s\S]{0,200}\{\s*provider:/, route)
+  }
+})
+
+test('unmetered personal quota never bypasses model validation or global cost controls', () => {
+  const source = read('src/lib/ai-runtime-security.ts')
+  const validation = source.indexOf('isActiveTextAIModel(dispatchTarget.provider, dispatchTarget.model)')
+  const policy = source.indexOf('getAIPersonalQuotaPolicy(dispatchTarget.provider, dispatchTarget.model)')
+  const personal = source.indexOf("personalQuotaPolicy === 'metered'")
+  const global = source.indexOf('reserveGlobalAICall()')
+
+  assert.ok(validation >= 0 && validation < policy)
+  assert.ok(policy < personal && personal < global)
+  assert.match(source, /if \(personalQuotaPolicy === 'metered'\)[\s\S]*\r?\n    }\r?\n\r?\n    const globalCost = await reserveGlobalAICall\(\)/)
+  assert.match(source, /new AIUsageReservation\(globalCost\.reservation, personalReservation\)/)
+  assert.doesNotMatch(source, /dispatchTarget\.model\.toLowerCase/)
+})

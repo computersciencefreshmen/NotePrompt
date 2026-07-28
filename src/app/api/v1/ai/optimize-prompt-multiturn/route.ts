@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAIRequestConfig, aiConfig } from '@/config/ai'
+import { DEFAULT_PUBLIC_AI_PROVIDER, getDefaultAIModel } from '@/config/ai-models'
 import { getUserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { AIUsageReservation, requireAIUser, reserveAIUsage, requestPolicyResponse } from '@/lib/ai-runtime-security'
 import { buildAIChatCompletionBody, createAIIncompleteResponse, createAIProviderFailure, isCompleteAIFinishReason, readLimitedAIProviderJSON } from '@/lib/ai-request-policy'
@@ -50,8 +51,8 @@ export async function POST(request: NextRequest) {
     const optimizationMode: 'optimize' | 'rewrite' = body.optimizationMode === 'rewrite' ? 'rewrite' : 'optimize'
     const rawProvider = body.provider ?? body.modelType
     const rawModel = body.model ?? body.modelName
-    const provider = typeof rawProvider === 'string' ? rawProvider : aiConfig.defaultProvider
-    const model = typeof rawModel === 'string' ? rawModel : undefined
+    const provider = typeof rawProvider === 'string' ? rawProvider : DEFAULT_PUBLIC_AI_PROVIDER
+    const model = typeof rawModel === 'string' ? rawModel : getDefaultAIModel(provider)
     const temperatureOverride = typeof body.temperature === 'number' ? body.temperature : undefined
     const rawTopP = body.topP ?? body.top_p
     const rawMaxTokens = body.maxTokens ?? body.max_tokens
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
       )
     }
     const systemPrompt = aiConfig.prompts.multiTurn
-    const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+    const quota = await reserveAIUsage(auth.user, 'ai_optimize', { provider: config.provider, model: config.modelId })
     if (!quota.ok) return quota.response
     reservation = quota.reservation
 

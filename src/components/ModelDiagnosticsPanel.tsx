@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Activity, AlertTriangle, CheckCircle2, Loader2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Locale, withLocaleHref } from '@/lib/i18n'
+import { getAIProviderModels } from '@/config/ai-models'
 
 type DiagnosticProvider = {
   provider: string
@@ -31,7 +32,7 @@ const diagnosticsCopy = {
     } as Record<DiagnosticProvider['status'], string>,
     failed: '模型检测失败',
     title: '模型可用性检测',
-    description: '不会自动检测。配置检查不调用模型；实际探针每次最多测试一个已配置供应商。',
+    description: '不会自动检测。配置检查不产生模型调用；实际探针只测试当前选中的供应商和模型。配置就绪不等于探针可用。',
     checking: '检测中',
     configCheck: '配置检查',
     probe: '低成本调用测试',
@@ -55,7 +56,7 @@ const diagnosticsCopy = {
     } as Record<DiagnosticProvider['status'], string>,
     failed: 'Model diagnostics failed',
     title: 'Model diagnostics',
-    description: 'No checks run automatically. Config checks are free; each probe tests at most one configured provider.',
+    description: 'No checks run automatically. Config checks make no model call; a probe tests only the selected provider and model. Configured does not mean probe-ready.',
     checking: 'Checking',
     configCheck: 'Config check',
     probe: 'Low-cost probe',
@@ -102,8 +103,19 @@ function statusClass(status: DiagnosticProvider['status']) {
   return 'border-gray-200 bg-gray-50 text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300'
 }
 
-export function ModelDiagnosticsPanel({ locale = 'zh' }: { locale?: Locale }) {
+type ModelDiagnosticsPanelProps = {
+  locale?: Locale
+  provider: string
+  model: string
+}
+
+export function ModelDiagnosticsPanel({ locale = 'zh', provider, model }: ModelDiagnosticsPanelProps) {
   const copy = diagnosticsCopy[locale]
+  const selectedModel = getAIProviderModels(provider).find(option => option.key === model)
+  const unmetered = selectedModel?.usagePolicy.personalQuota === 'unmetered'
+  const probeConfirm = locale === 'en'
+    ? unmetered ? 'This makes one real provider call. It does not debit NotePrompt in-app quota, but provider balance, rate limits, and platform abuse controls still apply. Continue?' : 'This makes one real provider call and debits one NotePrompt in-app quota unit. Continue?'
+    : unmetered ? '这会发起一次真实供应商调用，不扣 NotePrompt 站内额度；供应商余额、限流和平台防滥用约束仍然生效。确定继续吗？' : '这会发起一次真实供应商调用，并扣除一次 NotePrompt 站内额度。确定继续吗？'
   const [providers, setProviders] = useState<DiagnosticProvider[]>([])
   const [checkedAt, setCheckedAt] = useState('')
   const [durationMs, setDurationMs] = useState<number | null>(null)
@@ -112,14 +124,14 @@ export function ModelDiagnosticsPanel({ locale = 'zh' }: { locale?: Locale }) {
   const [mode, setMode] = useState<'config' | 'probe'>('config')
 
   const runDiagnostics = async (nextMode: 'config' | 'probe', force = false) => {
-    if (nextMode === 'probe' && !window.confirm(copy.probeConfirm)) return
+    if (nextMode === 'probe' && !window.confirm(probeConfirm)) return
     setRunning(true)
     setError('')
     try {
       const response = await fetch('/api/v1/ai/diagnostics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: nextMode, force, confirmed: nextMode === 'probe' }),
+        body: JSON.stringify({ mode: nextMode, force, confirmed: nextMode === 'probe', provider, model }),
         credentials: 'same-origin',
       })
       const payload = await response.json()

@@ -1,8 +1,8 @@
 import 'server-only'
 import crypto from 'crypto'
 import { AI_MODELS } from '@/config/ai'
+import { getAIProviderModels, getAvailableAIProviders } from '@/config/ai-models'
 import db from '@/lib/mysql-database'
-import { maskSecret } from '@/lib/provider-runtime-config'
 import { normalizeProviderBaseURL } from '@/lib/ai-runtime-policy'
 
 type AIProviderKey = keyof typeof AI_MODELS
@@ -80,22 +80,21 @@ export async function listUserProviderConfigs(userId: number) {
   )
   const rowsByProvider = new Map((result.rows as UserProviderRow[]).map(row => [row.provider, row]))
 
-  return Object.entries(AI_MODELS).map(([provider, config]) => {
+  return getAvailableAIProviders().map(({ key: provider }) => {
+    const config = AI_MODELS[provider]
     const row = rowsByProvider.get(provider)
-    let keyPreview = ''
-    if (row?.encrypted_api_key) {
-      try {
-        keyPreview = maskSecret(decryptSecret(row.encrypted_api_key))
-      } catch {
-        keyPreview = 'configured'
-      }
-    }
 
     return {
       provider,
       name: config.name,
+      platformKeyConfigured: Boolean(config.apiKey),
+      keySource: row?.encrypted_api_key && row.is_active
+        ? 'personal'
+        : config.apiKey
+          ? 'platform'
+          : 'unconfigured',
+      models: getAIProviderModels(provider),
       keyConfigured: Boolean(row?.encrypted_api_key && row.is_active),
-      keyPreview,
       baseURL: (() => {
         try {
           return normalizeProviderBaseURL(provider, row?.base_url) || ''

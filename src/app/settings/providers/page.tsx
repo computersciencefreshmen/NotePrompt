@@ -11,14 +11,28 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
 import { detectLocaleFromSearch, Locale, withLocaleHref } from '@/lib/i18n'
 
+type ProviderModelRow = {
+  key: string
+  name: string
+  availability: { status: 'catalog-verified'; verifiedAt: string }
+  usagePolicy: { personalQuota: 'metered' | 'unmetered' }
+  tier: 'flagship' | 'balanced' | 'fast' | 'specialist'
+  default: boolean
+  recommendation: string | null
+}
+
+type ProviderKeySource = 'personal' | 'platform' | 'unconfigured'
+
 type ProviderConfigRow = {
   provider: string
   name: string
   keyConfigured: boolean
-  keyPreview: string
   baseURL: string
   defaultBaseURL: string
   modelCount: number
+  platformKeyConfigured: boolean
+  keySource: ProviderKeySource
+  models: ProviderModelRow[]
   updatedAt: string | null
 }
 
@@ -44,6 +58,16 @@ const copy = {
     removeFailed: '删除失败',
     loginRequired: '请先登录后配置个人 API Keys。',
     defaultBaseURL: '默认地址',
+    availabilityNote: '这里展示官方目录状态。配置就绪不等于真实探针可用，余额、区域和供应商限流仍可能影响调用。',
+    official: '官方目录已核验',
+    defaultModel: '默认',
+    recommended: '推荐',
+    unmetered: '站内额度不限',
+    metered: '扣除站内额度',
+    personalKey: '个人 Key',
+    platformKey: '平台 Key',
+    unconfiguredKey: '未配置',
+    verifiedAt: '核验',
   },
   en: {
     back: 'Back to Optimizer',
@@ -64,6 +88,16 @@ const copy = {
     removeFailed: 'Remove failed',
     loginRequired: 'Log in before configuring personal API keys.',
     defaultBaseURL: 'Default URL',
+    availabilityNote: 'This is official catalog status. Configured does not mean a real probe will succeed; provider balance, region, and rate limits still apply.',
+    official: 'Official catalog verified',
+    defaultModel: 'Default',
+    recommended: 'Recommended',
+    unmetered: 'No in-app quota debit',
+    metered: 'Uses in-app quota',
+    personalKey: 'Personal key',
+    platformKey: 'Platform key',
+    unconfiguredKey: 'Not configured',
+    verifiedAt: 'Verified',
   },
 } satisfies Record<Locale, Record<string, string>>
 
@@ -197,6 +231,9 @@ export default function ProviderSettingsPage() {
 
         {message && <p className="rounded-[8px] bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{message}</p>}
         {error && <p className="rounded-[8px] bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{error}</p>}
+        <p className="rounded-[8px] border border-[#ded6c8] bg-[#f0ebe2] px-4 py-3 text-sm leading-6 text-[#655b50] dark:border-[#3a342c] dark:bg-[#211d18] dark:text-[#cfc5b7]">
+          {text.availabilityNote}
+        </p>
 
         <div className="grid gap-4">
           {providers.map(provider => (
@@ -205,10 +242,10 @@ export default function ProviderSettingsPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold">{provider.name}</h2>
-                    {provider.keyConfigured && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                    {provider.keySource !== 'unconfigured' && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
                   </div>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{provider.provider} · {provider.modelCount} {text.models}</p>
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{text.currentKey}: {provider.keyConfigured ? provider.keyPreview : text.notConfigured}</p>
+                  <p className="mt-2 text-xs font-medium text-gray-600 dark:text-gray-300">{text.currentKey}: {provider.keySource === 'personal' ? text.personalKey : provider.keySource === 'platform' ? text.platformKey : text.unconfiguredKey}</p>
                   <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{text.defaultBaseURL}: {provider.defaultBaseURL}</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -244,6 +281,23 @@ export default function ProviderSettingsPage() {
                     {text.remove}
                   </Button>
                 </div>
+              </CardContent>
+              <CardContent className="border-t border-[#e6ded2] px-5 py-4 dark:border-[#332d26]">
+                <ul className="grid gap-2 md:grid-cols-2" aria-label={`${provider.name} ${text.models}`}>
+                  {provider.models.map(model => (
+                    <li key={model.key} className="rounded-[8px] bg-[#f4efe7] px-3 py-3 dark:bg-[#171410]">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold">{model.name}</span>
+                        <span className="rounded-[6px] bg-emerald-100 px-2 py-1 text-[11px] font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">{text.official}</span>
+                        {model.default && <span className="rounded-[6px] bg-[#ead7cb] px-2 py-1 text-[11px] font-medium text-[#7b422f] dark:bg-[#4a2a20] dark:text-[#f0c5b5]">{text.defaultModel}</span>}
+                        {model.recommendation && <span className="rounded-[6px] border border-[#d8cfc2] px-2 py-1 text-[11px] dark:border-[#463e34]">{text.recommended}</span>}
+                        <span className="rounded-[6px] border border-[#d8cfc2] px-2 py-1 text-[11px] dark:border-[#463e34]">{model.usagePolicy.personalQuota === 'unmetered' ? text.unmetered : text.metered}</span>
+                      </div>
+                      {model.recommendation && <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-400">{model.recommendation}</p>}
+                      <p className="mt-1 font-mono text-[11px] text-gray-500 dark:text-gray-500">{model.key} · {text.verifiedAt} {model.availability.verifiedAt}</p>
+                    </li>
+                  ))}
+                </ul>
               </CardContent>
             </Card>
           ))}

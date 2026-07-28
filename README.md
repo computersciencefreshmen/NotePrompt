@@ -80,7 +80,7 @@ These governance documents describe accepted direction. This README describes th
 | **Caching** | Redis 7 |
 | **Authentication** | JWT + bcrypt |
 | **Email** | Nodemailer |
-| **AI Providers** | DeepSeek, Kimi (Moonshot), Qwen (DashScope), Zhipu GLM |
+| **AI Providers** | MiniMax, Kimi (Moonshot AI), DeepSeek, Qwen (Alibaba Cloud Model Studio), Zhipu GLM, Xiaomi MiMo |
 | **Deployment** | Docker Compose + Nginx + SSL |
 
 ---
@@ -144,6 +144,8 @@ DEEPSEEK_API_KEY=sk-xxx
 KIMI_API_KEY=sk-xxx
 QWEN_API_KEY=sk-xxx
 ZHIPU_API_KEY=xxx.xxx
+MINIMAX_API_KEY=xxx
+XIAOMI_API_KEY=xxx
 
 # ── Email (optional) ────────────────────────
 EMAIL_HOST=smtp.example.com
@@ -272,12 +274,20 @@ All API endpoints are prefixed with `/api/v1/`.
 
 ## 🤖 Supported AI Models
 
-| Provider | Models | Highlights |
-|----------|--------|------------|
-| **DeepSeek** | V3.2 Chat, R1 (Reasoner) | Top-tier reasoning capability |
-| **Kimi (Moonshot)** | K2.5, K2 Thinking, Moonshot V1 (32K/128K) | 128K context window |
-| **Qwen (Alibaba)** | 3.5 Plus, 3 Max, Coder Plus, Long, 3.5 Flash | Best Chinese language support |
-| **Zhipu GLM** | GLM-5, GLM-4.7, GLM-4.7-Flash, GLM-4.6, GLM-4.5 | 128K context, up to 131072 tokens |
+NotePrompt exposes 17 active text models through one canonical catalog. “Catalog verified” means the exact model ID was checked against the provider’s official documentation on 2026-07-28; it does not guarantee that a specific API key has entitlement, balance, regional access, or a successful live probe.
+
+| Provider | Exact model IDs | Default | Catalog status |
+|----------|-----------------|---------|----------------|
+| **MiniMax** | `MiniMax-M3`, `MiniMax-M2.7-highspeed`, `MiniMax-M2.7` | `MiniMax-M3` — global product default | Catalog verified |
+| **Kimi** | `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6` | `kimi-k3` | Catalog verified |
+| **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro` | `deepseek-v4-flash` | Catalog verified |
+| **Qwen** | `qwen3.7-plus`, `qwen3.7-max`, `qwen3.7-flash` | `qwen3.7-plus` | Catalog verified |
+| **Zhipu GLM** | `glm-5.2`, `glm-5.1`, `glm-5-turbo` | `glm-5.2` | Catalog verified |
+| **Xiaomi MiMo** | `mimo-v2.5-pro`, `mimo-v2.5` | `mimo-v2.5-pro` | Catalog verified |
+
+`MiniMax-M3` is unmetered only against NotePrompt’s personal product quota. Provider balance, upstream rate limits, regional restrictions, and platform abuse controls still apply.
+
+See the [canonical model catalog](docs/engineering/ai-model-catalog.md) and [availability verification runbook](docs/operations/ai-model-availability.md) for exact evidence and live-readiness semantics.
 
 ---
 

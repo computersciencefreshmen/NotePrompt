@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AI_MODELS } from '@/config/ai'
-import { AI_MODEL_CATALOG, PublicAIModelDefinition, isPublicAIProvider } from '@/config/ai-models'
+import {
+  AI_MODEL_CATALOG,
+  DEFAULT_PUBLIC_AI_PROVIDER,
+  PublicAIModelDefinition,
+  isActiveTextAIModel,
+  isPublicAIProvider,
+} from '@/config/ai-models'
 import { validateAIModel } from '@/lib/ai-utils'
 import { getUserProviderRuntimeConfig, UserProviderRuntimeConfig } from '@/lib/user-provider-config'
 import { requireAIUser, reserveAIUsage, requestPolicyResponse, AIUsageReservation } from '@/lib/ai-runtime-security'
 import { readLimitedJson } from '@/lib/ai-runtime-policy'
-import { buildAIChatCompletionBody } from '@/lib/ai-request-policy'
+import { buildAIChatCompletionBody, readLimitedAIProviderJSON } from '@/lib/ai-request-policy'
 
 type DiagnosticStatus = 'ready' | 'configured' | 'missing-key' | 'missing-base-url' | 'rate-limited' | 'billing' | 'error'
 type DiagnosticMode = 'config' | 'probe'
@@ -60,10 +66,15 @@ function diagnosticFailureMessage(status: DiagnosticStatus, httpStatus: number) 
   return `供应商探针失败（HTTP ${httpStatus}）`
 }
 
-function getDiagnosticModel(provider: string, models: Record<string, unknown>) {
+function getDiagnosticModel(provider: string, models: Record<string, unknown>, requestedModel?: string | null) {
+  if (requestedModel && Object.prototype.hasOwnProperty.call(models, requestedModel)) return requestedModel
+
   if (isPublicAIProvider(provider)) {
     const catalogModels = Object.values(AI_MODEL_CATALOG[provider].models) as PublicAIModelDefinition[]
     const availableModels = catalogModels.filter(model => model.id in models)
+    if (provider === 'minimax') {
+      return availableModels.find(model => model.default)?.id || availableModels[0]?.id
+    }
     return availableModels.find(model => model.tier === 'fast')?.id
       || availableModels.find(model => model.tier === 'balanced')?.id
       || availableModels.find(model => model.default)?.id
@@ -72,9 +83,8 @@ function getDiagnosticModel(provider: string, models: Record<string, unknown>) {
 
   return Object.keys(models)[0]
 }
-
-function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], runtimeConfig?: UserProviderRuntimeConfig | null): CachedDiagnostic {
-  const model = getDiagnosticModel(provider, config.models)
+function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof typeof AI_MODELS], runtimeConfig?: UserProviderRuntimeConfig | null, requestedModel?: string | null): CachedDiagnostic {
+  const model = getDiagnosticModel(provider, config.models, requestedModel)
   const validation = validateAIModel(provider, model, runtimeConfig || undefined)
   const missingBaseUrl = validation.error?.includes('API地址')
   const missingKey = validation.error?.includes('API密钥')
@@ -95,12 +105,12 @@ function getConfigOnlyResult(provider: string, config: typeof AI_MODELS[keyof ty
 async function probeProvider(
   provider: string,
   config: typeof AI_MODELS[keyof typeof AI_MODELS],
+  model: string,
   force: boolean,
   userId?: number | null,
   runtimeConfig?: UserProviderRuntimeConfig | null,
   onProviderCallStart?: () => void,
 ): Promise<CachedDiagnostic> {
-  const model = getDiagnosticModel(provider, config.models)
   const validation = validateAIModel(provider, model, runtimeConfig || undefined)
   const cacheKey = `${userId ? `user:${userId}` : 'platform'}:${provider}:${model}`
   const cached = probeCache.get(cacheKey)
@@ -172,7 +182,25 @@ async function probeProvider(
       return result
     }
 
-    await response.body?.cancel().catch(() => undefined)
+    const completion = await readLimitedAIProviderJSON<{
+      choices?: Array<{ message?: { content?: unknown } }>
+    }>(response)
+    const assistantContent = completion.choices?.[0]?.message?.content
+    if (typeof assistantContent !== 'string' || assistantContent.trim().length === 0) {
+      const result: CachedDiagnostic = {
+        checkedAt: new Date().toISOString(),
+        provider,
+        name: config.name,
+        model,
+        keyConfigured: true,
+        callable: false,
+        status: 'error',
+        message: '供应商探针返回空内容',
+        latencyMs: Date.now() - requestStartedAt,
+      }
+      cacheProbeResult(cacheKey, result)
+      return result
+    }
 
     const result: CachedDiagnostic = {
       checkedAt: new Date().toISOString(),
@@ -216,24 +244,53 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await readLimitedJson<{
-      mode?: DiagnosticMode
+      mode?: unknown
       force?: unknown
       confirmed?: unknown
       provider?: unknown
+      model?: unknown
     }>(request)
+    if (body.mode !== undefined && body.mode !== 'config' && body.mode !== 'probe') {
+      return NextResponse.json({ success: false, error: 'mode 必须是 config 或 probe' }, { status: 400 })
+    }
     const mode: DiagnosticMode = body.mode === 'probe' ? 'probe' : 'config'
     if (body.force !== undefined && typeof body.force !== 'boolean') {
       return NextResponse.json({ success: false, error: 'force 必须是布尔值' }, { status: 400 })
     }
     const force = body.force === true
+    if (
+      body.provider !== undefined
+      && (
+        typeof body.provider !== 'string'
+        || body.provider.length === 0
+        || body.provider.length > 32
+        || body.provider.trim() !== body.provider
+        || !isPublicAIProvider(body.provider)
+      )
+    ) {
+      return NextResponse.json({ success: false, error: '不支持的模型供应商' }, { status: 400 })
+    }
+    if (
+      body.model !== undefined
+      && (
+        typeof body.model !== 'string'
+        || body.model.length === 0
+        || body.model.length > 128
+        || body.model.trim() !== body.model
+      )
+    ) {
+      return NextResponse.json({ success: false, error: 'model 必须是精确模型 ID' }, { status: 400 })
+    }
+    const requestedProvider = typeof body.provider === 'string' ? body.provider : null
+    const requestedModel = typeof body.model === 'string' ? body.model : null
     if (mode === 'probe' && body.confirmed !== true) {
       return NextResponse.json({ success: false, error: '实际调用探针需要用户确认' }, { status: 400 })
     }
-    if (
-      body.provider !== undefined &&
-      (typeof body.provider !== 'string' || !Object.prototype.hasOwnProperty.call(AI_MODELS, body.provider))
-    ) {
-      return NextResponse.json({ success: false, error: '不支持的模型供应商' }, { status: 400 })
+    if (requestedModel && !requestedProvider) {
+      return NextResponse.json({ success: false, error: '指定模型时必须同时指定供应商' }, { status: 400 })
+    }
+    if (requestedProvider && requestedModel && !isActiveTextAIModel(requestedProvider, requestedModel)) {
+      return NextResponse.json({ success: false, error: '不支持的模型' }, { status: 400 })
     }
 
     const entries = await Promise.all(Object.entries(AI_MODELS).map(async ([provider, config]) => {
@@ -242,35 +299,49 @@ export async function POST(request: NextRequest) {
         provider,
         config,
         runtimeConfig,
-        diagnostic: getConfigOnlyResult(provider, config, runtimeConfig),
+        diagnostic: getConfigOnlyResult(
+          provider,
+          config,
+          runtimeConfig,
+          provider === requestedProvider ? requestedModel : null,
+        ),
       }
     }))
 
     let providers = entries.map(entry => entry.diagnostic)
     let probedProvider: string | null = null
+    let probedModel: string | null = null
 
     if (mode === 'probe') {
-      const requestedProvider = typeof body.provider === 'string' ? body.provider : null
       const target = requestedProvider
         ? entries.find(entry => entry.provider === requestedProvider)
-        : entries.find(entry => entry.diagnostic.status === 'configured')
+        : entries.find(entry => entry.provider === DEFAULT_PUBLIC_AI_PROVIDER && entry.diagnostic.status === 'configured')
+          || entries.find(entry => entry.diagnostic.status === 'configured')
+      const targetModel = target
+        ? getDiagnosticModel(target.provider, target.config.models, requestedModel)
+        : null
 
       // A probe request is allowed to make at most one external call. Missing
       // provider configuration is reported without consuming user/global quota.
-      if (target && target.diagnostic.status === 'configured') {
-        const quota = await reserveAIUsage(auth.user, 'ai_optimize')
+      if (target && targetModel && target.diagnostic.status === 'configured') {
+        const quota = await reserveAIUsage(auth.user, 'ai_optimize', {
+          provider: target.provider,
+          model: targetModel,
+        })
         if (!quota.ok) return quota.response
         reservation = quota.reservation
 
         const diagnostic = await probeProvider(
           target.provider,
           target.config,
+          targetModel,
           force,
           auth.user.id,
           target.runtimeConfig,
           () => reservation?.markProviderCallStarted(),
         )
         probedProvider = target.provider
+        probedModel = targetModel
         providers = entries.map(entry => entry.provider === target.provider ? diagnostic : entry.diagnostic)
 
         // Cached probes never invoke the callback and therefore remain
@@ -278,7 +349,6 @@ export async function POST(request: NextRequest) {
         await reservation.rollback()
       }
     }
-
     return NextResponse.json({
       success: true,
       data: {
@@ -287,6 +357,7 @@ export async function POST(request: NextRequest) {
         durationMs: Date.now() - startedAt,
         cacheTtlMs: PROBE_CACHE_TTL_MS,
         probedProvider,
+        probedModel,
         providers,
       }
     })

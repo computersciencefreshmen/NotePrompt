@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getAIPersonalQuotaPolicy, isActiveTextAIModel } from '@/config/ai-models'
 import { requireAuth } from '@/lib/auth'
 import db from '@/lib/mysql-database'
 import { RequestPolicyError } from '@/lib/ai-runtime-policy'
@@ -107,14 +108,28 @@ export async function requireAIUser(
   }
 }
 
+export type NormalizedAIDispatchTarget = Readonly<{
+  provider: string
+  model: string
+}>
+
+type PersonalAIUsageReservation = {
+  userId: number
+  mode: AIUsageMode
+  usageDate: string
+}
+
+async function rollbackPersonalAIUsage(reservation: PersonalAIUsageReservation | undefined) {
+  if (!reservation) return
+  await db.rollbackAIUsage(reservation.userId, reservation.mode, reservation.usageDate)
+}
+
 export class AIUsageReservation {
   private readonly settlement = new ReservationSettlement()
 
   constructor(
-    private readonly userId: number,
-    private readonly mode: AIUsageMode,
-    private readonly usageDate: string,
     private readonly globalReservation: GlobalAICostReservation,
+    private readonly personalReservation?: PersonalAIUsageReservation,
   ) {}
 
   commit() {
@@ -127,15 +142,21 @@ export class AIUsageReservation {
 
   async rollback() {
     return this.settlement.rollback(async () => {
-      const results = await Promise.allSettled([
-        Promise.resolve().then(() => db.rollbackAIUsage(this.userId, this.mode, this.usageDate)),
+      const compensations: Array<Promise<unknown>> = [
         Promise.resolve().then(() => this.globalReservation.rollback()),
-      ])
+      ]
+      if (this.personalReservation) {
+        compensations.push(
+          Promise.resolve().then(() => rollbackPersonalAIUsage(this.personalReservation)),
+        )
+      }
+
+      const results = await Promise.allSettled(compensations)
       const failedCompensations = results.filter(result => result.status === 'rejected').length
       if (failedCompensations > 0) {
         console.error('AI usage reservation rollback compensation failed', {
-          userId: this.userId,
-          mode: this.mode,
+          userId: this.personalReservation?.userId,
+          mode: this.personalReservation?.mode,
           failedCompensations,
         })
       }
@@ -146,29 +167,49 @@ export class AIUsageReservation {
 export async function reserveAIUsage(
   user: AuthenticatedAIUser,
   mode: AIUsageMode,
+  dispatchTarget: NormalizedAIDispatchTarget,
 ): Promise<AIReservationResult> {
+  if (!isActiveTextAIModel(dispatchTarget.provider, dispatchTarget.model)) {
+    return {
+      ok: false,
+      response: NextResponse.json({ success: false, error: '不支持的模型' }, { status: 400 }),
+    }
+  }
+
   const monthlyLimit = resolveAiMonthlyLimit(user.userType)
+  const personalQuotaPolicy = getAIPersonalQuotaPolicy(dispatchTarget.provider, dispatchTarget.model)
+  let personalReservation: PersonalAIUsageReservation | undefined
 
   try {
-    const result = await db.reserveAIUsage(user.id, mode, monthlyLimit)
-    if (!result.allowed) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            success: false,
-            error: '本月 AI 使用额度已用完',
-            limit: monthlyLimit,
-            remaining: 0,
-          },
-          { status: 429 },
-        ),
+    if (personalQuotaPolicy === 'metered') {
+      const result = await db.reserveAIUsage(user.id, mode, monthlyLimit)
+      if (!result.allowed) {
+        return {
+          ok: false,
+          response: NextResponse.json(
+            {
+              success: false,
+              error: '本月 AI 使用额度已用完',
+              limit: monthlyLimit,
+              remaining: 0,
+            },
+            { status: 429 },
+          ),
+        }
       }
+      personalReservation = { userId: user.id, mode, usageDate: result.usageDate }
     }
 
     const globalCost = await reserveGlobalAICall()
     if (!globalCost.allowed || !globalCost.reservation) {
-      await db.rollbackAIUsage(user.id, mode, result.usageDate).catch(() => undefined)
+      await rollbackPersonalAIUsage(personalReservation).catch(() => {
+        console.error('AI personal usage compensation failed before dispatch', {
+          userId: personalReservation?.userId,
+          mode: personalReservation?.mode,
+          compensationFailed: true,
+        })
+      })
+      personalReservation = undefined
       return {
         ok: false,
         response: NextResponse.json(
@@ -180,21 +221,22 @@ export async function reserveAIUsage(
 
     return {
       ok: true,
-      reservation: new AIUsageReservation(
-        user.id,
-        mode,
-        result.usageDate,
-        globalCost.reservation,
-      ),
+      reservation: new AIUsageReservation(globalCost.reservation, personalReservation),
     }
   } catch {
+    await rollbackPersonalAIUsage(personalReservation).catch(() => {
+      console.error('AI personal usage compensation failed after reservation error', {
+        userId: personalReservation?.userId,
+        mode: personalReservation?.mode,
+        compensationFailed: true,
+      })
+    })
     return {
       ok: false,
       response: NextResponse.json({ success: false, error: 'AI 额度服务暂不可用' }, { status: 503 }),
     }
   }
 }
-
 export function requestPolicyResponse(error: unknown) {
   if (error instanceof RequestPolicyError) {
     return NextResponse.json({ success: false, error: error.message }, { status: error.status })

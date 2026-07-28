@@ -22,7 +22,12 @@ const projectRoot = path.resolve(import.meta.dirname, '..')
 const read = relativePath => fs.readFileSync(path.join(projectRoot, relativePath), 'utf8')
 
 test('Kimi K3 and K2 models omit provider-controlled sampling parameters', () => {
-  for (const model of ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5']) {
+  for (const model of [
+    'kimi-k3',
+    'kimi-k2.7-code',
+    'kimi-k2.7-code-highspeed',
+    'kimi-k2.6',
+  ]) {
     assert.equal(modelControlsSampling('kimi', model), true)
     const body = buildAIChatCompletionBody({
       provider: 'kimi',
@@ -38,6 +43,22 @@ test('Kimi K3 and K2 models omit provider-controlled sampling parameters', () =>
   }
 })
 
+test('request bodies fail closed for models outside the active canonical catalog', () => {
+  const build = (provider, model) => () => buildAIChatCompletionBody({
+    provider,
+    model,
+    messages,
+    maxTokens: 512,
+  })
+
+  for (const [provider, model] of [
+    ['kimi', 'kimi-k2.5'],
+    ['unknown-provider', 'unknown-model'],
+    ['qwen', 'MiniMax-M3'],
+  ]) assert.throws(build(provider, model), /not active in the canonical catalog/)
+
+  assert.equal(modelControlsSampling('kimi', 'kimi-k2.5'), false)
+})
 test('other providers retain bounded sampling parameters and provider token shape', () => {
   const miniMaxBody = buildAIChatCompletionBody({
     provider: 'minimax',
@@ -48,7 +69,7 @@ test('other providers retain bounded sampling parameters and provider token shap
     topP: 4,
   })
 
-  assert.equal(miniMaxBody.max_completion_tokens, 2048)
+  assert.equal(miniMaxBody.max_completion_tokens, 8192)
   assert.equal(miniMaxBody.temperature, 1)
   assert.equal(miniMaxBody.top_p, 1)
   assert.equal(miniMaxBody.reasoning_split, true)
@@ -93,10 +114,10 @@ test('Kimi K3 uses its current completion-token field and fixed sampling contrac
   assert.equal('top_p' in body, false)
 })
 
-test('fixed-temperature models omit temperature without discarding top_p', () => {
+test('request-scoped fixed temperature omits temperature without discarding top_p', () => {
   const body = buildAIChatCompletionBody({
-    provider: 'some-provider',
-    model: 'fixed-model',
+    provider: 'qwen',
+    model: 'qwen3.7-plus',
     messages,
     maxTokens: 100,
     temperature: 0.7,
@@ -208,13 +229,30 @@ test('routes resolve omitted models from the selected provider and status honors
   assert.match(status, /validateAIModel\(provider, model, runtimeConfig \|\| undefined\)/)
 })
 
-test('diagnostics selects a current fast model from the canonical catalog', () => {
+test('diagnostics probes the exact requested model and rejects ambiguous identifiers', () => {
   const source = read('src/app/api/v1/ai/diagnostics/route.ts')
 
   assert.match(source, /AI_MODEL_CATALOG/)
-  assert.match(source, /model\.tier === 'fast'/)
-  assert.match(source, /model\.tier === 'balanced'/)
+  assert.match(source, /isActiveTextAIModel\(requestedProvider, requestedModel\)/)
+  assert.match(source, /getDiagnosticModel\(target\.provider, target\.config\.models, requestedModel\)/)
+  assert.match(source, /body\.model\.trim\(\) !== body\.model/)
+  assert.match(source, /body\.provider\.trim\(\) !== body\.provider/)
+  assert.match(source, /readLimitedAIProviderJSON/)
+  assert.match(source, /assistantContent\.trim\(\)\.length === 0/)
+  assert.match(source, /probedModel/)
   assert.doesNotMatch(source, /moonshot-v1|mimo-v2-flash|deepseek-chat|qwen-turbo/)
+})
+
+test('status separates catalog, configuration, and exact-probe state', () => {
+  const status = read('src/app/api/v1/ai/status/route.ts')
+
+  assert.match(status, /isPublicAIProvider\(requestedProvider\)/)
+  assert.match(status, /getAIModelDefinition\(provider, model\)/)
+  assert.match(status, /catalogStatus: modelDefinition\.availability\.status/)
+  assert.match(status, /configurationStatus:/)
+  assert.match(status, /probeStatus: 'not-checked'/)
+  assert.match(status, /personalQuota: getAIPersonalQuotaPolicy\(provider, model\)/)
+  assert.doesNotMatch(status, /console\.error/)
 })
 
 test('optimizer controls are locked while a request is active', () => {

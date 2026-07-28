@@ -185,6 +185,12 @@ const optimizerCopy = {
     proHint: '专业模式会合并提示词、约束条件和附件上下文进行优化。模型与执行入口在下方统一控制。',
     modelExecution: '模型与执行',
     modelExecutionDesc: '选择供应商和模型后，直接对上方输入内容发起优化。',
+    officialStatus: '官方目录已核验',
+    defaultModel: '默认',
+    recommendedModel: '推荐',
+    unmeteredModel: '站内额度不限',
+    meteredModel: '扣除站内额度',
+    upstreamConstraint: '仍受供应商余额、限流和平台防滥用约束。',
     modelStatus: '模型状态',
     hideModelStatus: '隐藏模型状态',
     providerAria: '模型提供商',
@@ -289,6 +295,12 @@ const optimizerCopy = {
     modelExecution: 'Model & execution',
     modelExecutionDesc: 'Choose a provider and model, then optimize the input above.',
     modelStatus: 'Model status',
+    officialStatus: 'Official catalog verified',
+    defaultModel: 'Default',
+    recommendedModel: 'Recommended',
+    unmeteredModel: 'No in-app quota debit',
+    meteredModel: 'Uses in-app quota',
+    upstreamConstraint: 'Provider balance, rate limits, and platform abuse controls still apply.',
     hideModelStatus: 'Hide model status',
     providerAria: 'Model provider',
     modelAria: 'Model',
@@ -547,12 +559,16 @@ export default function PromptOptimizerV2() {
     []
   )
   const selectedModels = useMemo(
-    () => getAIProviderModels(provider).map(option => ({ value: option.key, label: option.name })),
+    () => getAIProviderModels(provider).map(option => ({ value: option.key, label: option.name, ...option })),
     [provider]
   )
   const selectedParameterPolicy = useMemo(
     () => getAIModelParameterPolicy(provider, model),
     [provider, model]
+  )
+  const selectedModelDefinition = useMemo(
+    () => selectedModels.find(option => option.value === model),
+    [model, selectedModels]
   )
   const hasParsedAttachment = attachments.some(attachment => attachment.parseStatus === 'parsed' && attachment.textPreview?.trim())
   const runInProgress = optimizing || refining
@@ -913,7 +929,7 @@ export default function PromptOptimizerV2() {
           </Button>
           {showModelDiagnostics && (
             <div className="mt-3">
-              <ModelDiagnosticsPanel locale={locale} />
+              <ModelDiagnosticsPanel locale={locale} provider={provider} model={model} />
             </div>
           )}
         </div>
@@ -996,7 +1012,7 @@ export default function PromptOptimizerV2() {
                       </SelectTrigger>
                       <SelectContent>
                         {selectedModels.map(option => (
-                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          <SelectItem key={option.value} value={option.value}>{option.label} · {copy.officialStatus}{option.default ? ` · ${copy.defaultModel}` : ''}{option.recommendation ? ` · ${copy.recommendedModel}` : ''}{option.usagePolicy.personalQuota === 'unmetered' ? ` · ${copy.unmeteredModel}` : ''}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1007,6 +1023,11 @@ export default function PromptOptimizerV2() {
                   </div>
                   {!canOptimize && !optimizing && !parsingFiles && (
                     <p className="mt-2 text-xs font-medium text-[#6b5f51] dark:text-[#c9bda9]">{copy.optimizeRequirement}</p>
+                  )}
+                  {selectedModelDefinition && (
+                    <p className="mt-3 text-xs leading-5 text-[#6b5f51] dark:text-[#c9bda9]" role="status">
+                      {selectedModelDefinition.label} · {copy.officialStatus} · {selectedModelDefinition.usagePolicy.personalQuota === 'unmetered' ? copy.unmeteredModel : copy.meteredModel} · {copy.upstreamConstraint}
+                    </p>
                   )}
                 </div>
 

@@ -1,4 +1,7 @@
-import { parseAttachmentFile } from './attachment-parser.ts'
+import {
+  parseAttachmentFile,
+  type AttachmentParseOptions,
+} from './attachment-parser.ts'
 import {
   MAX_AI_ATTACHMENTS,
   MAX_AI_ATTACHMENT_FILE_BYTES,
@@ -9,6 +12,8 @@ import {
 } from './ai-runtime-policy.ts'
 import { attachmentParseScheduler } from './attachment-parse-scheduler.ts'
 
+export const ATTACHMENT_PARSE_REQUEST_TIMEOUT_MS = 80_000
+
 export class AttachmentParseClientAbortedError extends Error {
   constructor() {
     super('Attachment parse request aborted')
@@ -16,19 +21,44 @@ export class AttachmentParseClientAbortedError extends Error {
   }
 }
 
+export class AttachmentParseDeadlineError extends Error {
+  constructor() {
+    super('Attachment parse request deadline exceeded')
+    this.name = 'AttachmentParseDeadlineError'
+  }
+}
+
 type AttachmentParseResult = Awaited<ReturnType<typeof parseAttachmentFile>>
+type AttachmentParseFunction = (
+  file: File,
+  options?: AttachmentParseOptions,
+) => Promise<AttachmentParseResult>
 
 type AttachmentParseSchedulerLike = {
   run<T>(accountId: number, work: () => Promise<T>, signal?: AbortSignal): Promise<T>
 }
 
 type AttachmentParseServiceOptions = {
-  parseFile?: typeof parseAttachmentFile
+  parseFile?: AttachmentParseFunction
   scheduler?: AttachmentParseSchedulerLike
+  deadlineMs?: number
 }
 
-function throwIfClientAborted(signal: AbortSignal) {
-  if (signal.aborted) throw new AttachmentParseClientAbortedError()
+type CancellationSource = 'client' | 'deadline'
+
+function throwIfOperationCancelled(
+  signal: AbortSignal,
+  deadlineAt: number,
+  onDeadline: () => void,
+) {
+  if (!signal.aborted && Date.now() >= deadlineAt) onDeadline()
+  if (signal.aborted) throw new Error('Attachment parse operation cancelled')
+}
+
+function validateDeadlineMs(value: number) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError('deadlineMs must be a positive safe integer')
+  }
 }
 
 function validateFiles(files: File[]) {
@@ -61,13 +91,33 @@ export async function parseAttachmentRequest(
 
   const scheduler = options.scheduler ?? attachmentParseScheduler
   const parseFile = options.parseFile ?? parseAttachmentFile
-  const signal = request.signal
+  const deadlineMs = options.deadlineMs ?? ATTACHMENT_PARSE_REQUEST_TIMEOUT_MS
+  validateDeadlineMs(deadlineMs)
+  const deadlineAt = Date.now() + deadlineMs
+
+  const operationController = new AbortController()
+  let cancellationSource: CancellationSource | null = null
+  const cancel = (source: CancellationSource) => {
+    if (cancellationSource !== null) return
+    cancellationSource = source
+    operationController.abort()
+  }
+  const onClientAbort = () => cancel('client')
+  request.signal.addEventListener('abort', onClientAbort, { once: true })
+  if (request.signal.aborted) onClientAbort()
+
+  const deadlineTimer = setTimeout(
+    () => cancel('deadline'),
+    Math.max(1, deadlineAt - Date.now()),
+  )
+  deadlineTimer.unref?.()
+  const signal = operationController.signal
 
   try {
     const attachments = await scheduler.run(accountId, async () => {
-      throwIfClientAborted(signal)
+      throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
       const rawBody = await readLimitedBody(request, MAX_ATTACHMENT_UPLOAD_BODY_BYTES, { signal })
-      throwIfClientAborted(signal)
+      throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
 
       const boundedRequest = new Request(request.url, {
         method: 'POST',
@@ -82,10 +132,10 @@ export async function parseAttachmentRequest(
       try {
         formData = await boundedRequest.formData()
       } catch {
-        throwIfClientAborted(signal)
+        throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
         throw new RequestPolicyError('multipart/form-data 请求格式无效', 400)
       }
-      throwIfClientAborted(signal)
+      throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
       const files = formData
         .getAll('files')
         .filter((item): item is File => item instanceof File)
@@ -93,18 +143,21 @@ export async function parseAttachmentRequest(
 
       const parsed: AttachmentParseResult[] = []
       for (const file of files) {
-        throwIfClientAborted(signal)
-        // Batch A prevents dispatching another file after disconnect. Hard
-        // cancellation of an in-flight parser belongs to the child/Worker layer.
-        parsed.push(await parseFile(file))
-        throwIfClientAborted(signal)
+        throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
+        parsed.push(await parseFile(file, { signal, deadlineAt }))
+        throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
       }
       return parsed
     }, signal)
-    throwIfClientAborted(signal)
+    throwIfOperationCancelled(signal, deadlineAt, () => cancel('deadline'))
     return attachments
   } catch (error) {
-    if (signal.aborted) throw new AttachmentParseClientAbortedError()
+    if (cancellationSource === null && Date.now() >= deadlineAt) cancel('deadline')
+    if (cancellationSource === 'client') throw new AttachmentParseClientAbortedError()
+    if (cancellationSource === 'deadline') throw new AttachmentParseDeadlineError()
     throw error
+  } finally {
+    clearTimeout(deadlineTimer)
+    request.signal.removeEventListener('abort', onClientAbort)
   }
 }

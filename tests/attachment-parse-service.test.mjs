@@ -4,6 +4,7 @@ import test from 'node:test'
 import { AttachmentParseAdmissionError } from '../src/lib/attachment-parse-scheduler.ts'
 import {
   AttachmentParseClientAbortedError,
+  AttachmentParseDeadlineError,
   parseAttachmentRequest,
 } from '../src/lib/attachment-parse-service.ts'
 import { RequestPolicyError } from '../src/lib/ai-runtime-policy.ts'
@@ -113,4 +114,37 @@ test('a pre-aborted request never reaches the attachment parser', async () => {
     AttachmentParseClientAbortedError,
   )
   assert.equal(parserCalls, 0)
+})
+
+test('the hard deadline waits for parser cancellation before releasing admission', async () => {
+  const formData = new FormData()
+  formData.append('files', new File(['hello'], 'note.txt', { type: 'text/plain' }))
+  const request = new Request('http://localhost/api/v1/attachments/parse', {
+    method: 'POST',
+    body: formData,
+  })
+  let abortObserved = false
+  let parserStopped = false
+
+  const parsing = parseAttachmentRequest(request, 42, {
+    scheduler: inlineScheduler,
+    deadlineMs: 100,
+    parseFile: async (_file, options) => new Promise((_resolve, reject) => {
+      const keepAlive = setInterval(() => undefined, 10)
+      const signal = options?.signal
+      assert.ok(signal)
+      signal.addEventListener('abort', () => {
+        abortObserved = true
+        clearInterval(keepAlive)
+        setTimeout(() => {
+          parserStopped = true
+          reject(new Error('parser stopped'))
+        }, 20)
+      }, { once: true })
+    }),
+  })
+
+  await assert.rejects(parsing, AttachmentParseDeadlineError)
+  assert.equal(abortObserved, true)
+  assert.equal(parserStopped, true)
 })

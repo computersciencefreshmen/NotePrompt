@@ -66,6 +66,7 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts/ocr-image.cjs ./scripts/ocr-image.cjs
+COPY --from=builder /app/scripts/attachment-office-worker.mjs ./scripts/attachment-office-worker.mjs
 COPY --from=builder /app/scripts/mysql-migrate.cjs ./scripts/mysql-migrate.cjs
 COPY --from=builder /app/scripts/lib ./scripts/lib
 COPY --from=builder /app/database/migrations ./database/migrations

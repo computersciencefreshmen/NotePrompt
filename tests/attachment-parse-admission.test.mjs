@@ -24,12 +24,17 @@ test('attachment admission is bounded globally and per account', () => {
   assert.match(scheduler, /entry\.pool\.run\(\(\) => this\.runGlobal\(work, signal\), signal\)/)
 })
 
-test('request cancellation reaches admission, body reading, and every file boundary', () => {
-  assert.match(service, /scheduler\.run\(accountId,[\s\S]*readLimitedBody\([\s\S]*\{ signal \}/)
-  assert.match(service, /for \(const file of files\)[\s\S]*throwIfClientAborted\(signal\)[\s\S]*parseFile\(file\)[\s\S]*throwIfClientAborted\(signal\)/)
+test('one hard request budget reaches admission, body reading, and every parser', () => {
+  assert.match(service, /ATTACHMENT_PARSE_REQUEST_TIMEOUT_MS = 80_000/)
+  assert.match(service, /const deadlineAt = Date\.now\(\) \+ deadlineMs/)
+  assert.match(service, /Math\.max\(1, deadlineAt - Date\.now\(\)\)/)
+  assert.match(service, /scheduler\.run\([\s\S]*accountId,[\s\S]*readLimitedBody\([\s\S]*\{ signal \}/)
+  assert.match(service, /throwIfOperationCancelled\(signal, deadlineAt/)
+  assert.match(service, /parseFile\(file, \{ signal, deadlineAt \}\)/)
   assert.match(service, /formData\(\)[\s\S]*RequestPolicyError\('multipart\/form-data 请求格式无效', 400\)/)
+  assert.match(service, /cancellationSource === 'deadline'[\s\S]*AttachmentParseDeadlineError/)
   assert.match(service, /\}, signal\)/)
-  assert.doesNotMatch(service, /80_000|AttachmentParseDeadlineError|Promise\.race/)
+  assert.doesNotMatch(service, /Promise\.race/)
 })
 
 test('the attachment route is a thin authenticated adapter with stable overload responses', () => {
@@ -39,6 +44,6 @@ test('the attachment route is a thin authenticated adapter with stable overload 
   assert.doesNotMatch(route, /readLimitedBody\(|formData\(|parseAttachmentFile\(/)
   assert.match(route, /error\.scope === 'account'[\s\S]*status: accountBusy \? 429 : 503/)
   assert.match(route, /headers: \{ 'Retry-After': RETRY_AFTER_SECONDS \}/)
-  assert.doesNotMatch(route, /AttachmentParseDeadlineError|status: 504/)
   assert.match(route, /AttachmentParseClientAbortedError[\s\S]*status: 499/)
+  assert.match(route, /AttachmentParseDeadlineError[\s\S]*status: 504/)
 })

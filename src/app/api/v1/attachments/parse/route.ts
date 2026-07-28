@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AttachmentParseAdmissionError } from '@/lib/attachment-parse-scheduler'
-import {
-  AttachmentParseClientAbortedError,
-  parseAttachmentRequest,
-} from '@/lib/attachment-parse-service'
+import { AttachmentParseClientAbortedError, AttachmentParseDeadlineError, parseAttachmentRequest } from '@/lib/attachment-parse-service'
 import { requireAIUser, requestPolicyResponse } from '@/lib/ai-runtime-security'
 import { RequestPolicyError } from '@/lib/ai-runtime-policy'
 
@@ -26,9 +23,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: accountBusy
-            ? '当前账户已有附件解析任务，请稍后重试'
-            : '附件解析服务繁忙，请稍后重试',
+          error: accountBusy ? '当前账户已有附件解析任务，请稍后重试' : '附件解析服务繁忙，请稍后重试',
         },
         {
           status: accountBusy ? 429 : 503,
@@ -37,10 +32,10 @@ export async function POST(request: NextRequest) {
       )
     }
     if (error instanceof AttachmentParseClientAbortedError) {
-      return NextResponse.json(
-        { success: false, error: '附件解析请求已取消' },
-        { status: 499 },
-      )
+      return NextResponse.json({ success: false, error: '附件解析请求已取消' }, { status: 499 })
+    }
+    if (error instanceof AttachmentParseDeadlineError) {
+      return NextResponse.json({ success: false, error: '附件解析超时，请缩小文件或稍后重试' }, { status: 504 })
     }
     return NextResponse.json({ success: false, error: '附件解析失败' }, { status: 500 })
   }

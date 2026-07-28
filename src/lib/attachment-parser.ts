@@ -1,17 +1,11 @@
-import { execFile } from 'child_process'
-import { randomUUID } from 'crypto'
-import { existsSync } from 'fs'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
-import { tmpdir } from 'os'
-import path from 'path'
-import { promisify } from 'util'
-import mammoth from 'mammoth'
-import { readSheet } from 'read-excel-file/node'
-import {
-  BoundedWorkPool,
-  WorkQueueCapacityError,
-  WorkQueueTimeoutError,
-} from './bounded-work-pool.ts'
+import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { AttachmentOfficeWorkerError, parseOfficeAttachmentInWorker } from './attachment-office-worker.ts'
+import { BoundedChildProcessError, runBoundedChildProcess } from './bounded-child-process.ts'
+import { BoundedWorkPool, WorkQueueCapacityError, WorkQueueTimeoutError } from './bounded-work-pool.ts'
 
 export type ParsedAttachment = {
   id: string
@@ -29,7 +23,6 @@ const WORD_EXTENSIONS = /\.(docx)$/i
 const PDF_EXTENSIONS = /\.(pdf)$/i
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|webp|bmp|tif|tiff)$/i
 const SPREADSHEET_EXTENSIONS = /\.(xlsx|csv|tsv)$/i
-const execFileAsync = promisify(execFile)
 const MAX_ARCHIVE_ENTRIES = 256
 const MAX_ARCHIVE_ENTRY_BYTES = 10 * 1024 * 1024
 const MAX_ARCHIVE_TOTAL_BYTES = 25 * 1024 * 1024
@@ -43,17 +36,42 @@ class SafeAttachmentParseError extends Error {
   }
 }
 
-const normalizeText = (value: string) => value
-  .replace(/\u0000/g, '')
-  .replace(/[\t ]+/g, ' ')
-  .replace(/\n{3,}/g, '\n\n')
-  .trim()
-  .slice(0, MAX_PREVIEW_LENGTH)
+class AttachmentParserAbortedError extends Error {
+  constructor() {
+    super('Attachment parser aborted')
+    this.name = 'AttachmentParserAbortedError'
+  }
+}
+
+export type AttachmentParseOptions = {
+  signal?: AbortSignal
+  deadlineAt?: number
+}
+
+function remainingTimeoutMs(maximumMs: number, deadlineAt?: number) {
+  if (deadlineAt === undefined) return maximumMs
+  const remainingMs = Math.ceil(deadlineAt - Date.now())
+  if (remainingMs <= 0) throw new AttachmentParserAbortedError()
+  return Math.min(maximumMs, remainingMs)
+}
+
+function throwIfAborted(signal?: AbortSignal, deadlineAt?: number) {
+  if (signal?.aborted || (deadlineAt !== undefined && Date.now() >= deadlineAt)) {
+    throw new AttachmentParserAbortedError()
+  }
+}
+
+const normalizeText = (value: string) =>
+  value
+    .replace(/\u0000/g, '')
+    .replace(/[\t ]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, MAX_PREVIEW_LENGTH)
 
 const getExtension = (fileName: string) => fileName.toLowerCase().split('.').pop() || ''
 
-const hasPrefix = (buffer: Buffer, signature: readonly number[]) =>
-  signature.every((byte, index) => buffer[index] === byte)
+const hasPrefix = (buffer: Buffer, signature: readonly number[]) => signature.every((byte, index) => buffer[index] === byte)
 
 const assertPdfSignature = (buffer: Buffer) => {
   if (buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
@@ -65,8 +83,7 @@ const assertImageSignature = (buffer: Buffer, extension: string) => {
   const signatures = {
     png: hasPrefix(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     jpg: hasPrefix(buffer, [0xff, 0xd8, 0xff]),
-    webp: buffer.subarray(0, 4).toString('ascii') === 'RIFF'
-      && buffer.subarray(8, 12).toString('ascii') === 'WEBP',
+    webp: buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP',
     bmp: buffer.subarray(0, 2).toString('ascii') === 'BM',
     tiff: hasPrefix(buffer, [0x49, 0x49, 0x2a, 0x00]) || hasPrefix(buffer, [0x4d, 0x4d, 0x00, 0x2a]),
   }
@@ -116,13 +133,7 @@ const inspectOfficeArchive = (buffer: Buffer) => {
     const extraLength = buffer.readUInt16LE(offset + 30)
     const commentLength = buffer.readUInt16LE(offset + 32)
     const nextOffset = offset + 46 + fileNameLength + extraLength + commentLength
-    if (
-      nextOffset > buffer.length
-      || (flags & 0x1) !== 0
-      || compressedBytes === 0xffffffff
-      || uncompressedBytes === 0xffffffff
-      || uncompressedBytes > MAX_ARCHIVE_ENTRY_BYTES
-    ) {
+    if (nextOffset > buffer.length || (flags & 0x1) !== 0 || compressedBytes === 0xffffffff || uncompressedBytes === 0xffffffff || uncompressedBytes > MAX_ARCHIVE_ENTRY_BYTES) {
       throw new SafeAttachmentParseError('Office 文件包含不安全或不受支持的压缩条目。')
     }
 
@@ -130,10 +141,7 @@ const inspectOfficeArchive = (buffer: Buffer) => {
     if (totalUncompressedBytes > MAX_ARCHIVE_TOTAL_BYTES) {
       throw new SafeAttachmentParseError('Office 文件解压后体积过大。')
     }
-    if (
-      uncompressedBytes > 1024 * 1024
-      && uncompressedBytes / Math.max(compressedBytes, 1) > MAX_ARCHIVE_COMPRESSION_RATIO
-    ) {
+    if (uncompressedBytes > 1024 * 1024 && uncompressedBytes / Math.max(compressedBytes, 1) > MAX_ARCHIVE_COMPRESSION_RATIO) {
       throw new SafeAttachmentParseError('Office 文件压缩比异常。')
     }
 
@@ -172,15 +180,11 @@ const getPdfToTextPath = () => {
 }
 
 const getTesseractPath = () => {
-  const candidates = [
-    process.env.TESSERACT_PATH?.trim(),
-    '/usr/bin/tesseract',
-    '/usr/local/bin/tesseract',
-  ]
+  const candidates = [process.env.TESSERACT_PATH?.trim(), '/usr/bin/tesseract', '/usr/local/bin/tesseract']
   return candidates.find(candidate => candidate && existsSync(candidate)) || ''
 }
 
-const parsePdfFile = async (buffer: Buffer) => {
+const parsePdfFile = async (buffer: Buffer, signal?: AbortSignal, deadlineAt?: number) => {
   const pdfToTextPath = getPdfToTextPath()
   if (!pdfToTextPath) {
     throw new SafeAttachmentParseError('PDF 正文解析工具未找到，已保留文件元数据。')
@@ -190,43 +194,33 @@ const parsePdfFile = async (buffer: Buffer) => {
   const inputPath = path.join(tempDirectory, `${randomUUID()}.pdf`)
 
   try {
-    await writeFile(inputPath, buffer)
-    const { stdout } = await execFileAsync(pdfToTextPath, ['-layout', '-enc', 'UTF-8', inputPath, '-'], {
-      maxBuffer: 1024 * 1024 * 4,
-      timeout: 30000,
+    throwIfAborted(signal, deadlineAt)
+    await writeFile(inputPath, buffer, { signal })
+    const { stdout } = await runBoundedChildProcess({
+      command: pdfToTextPath,
+      args: ['-layout', '-enc', 'UTF-8', inputPath, '-'],
+      timeoutMs: remainingTimeoutMs(30_000, deadlineAt),
+      maxStdoutBytes: 4 * 1024 * 1024,
+      maxStderrBytes: 256 * 1024,
+      signal,
     })
-    return normalizeText(stdout || '')
+    throwIfAborted(signal, deadlineAt)
+    return normalizeText(stdout.toString('utf8'))
   } finally {
     await rm(tempDirectory, { recursive: true, force: true })
   }
 }
 
-const parseDocxFile = async (buffer: Buffer) => {
-  const result = await mammoth.extractRawText({ buffer })
-  return normalizeText(result.value || '')
-}
-
-const formatSpreadsheetCell = (value: unknown) => {
-  if (value instanceof Date) return value.toISOString()
-  if (value === null || value === undefined) return ''
-  return String(value).replace(/[\r\n]+/g, ' ')
-}
-
-const parseSpreadsheetFile = async (buffer: Buffer, fileName: string) => {
+const parseSpreadsheetFile = async (buffer: Buffer, fileName: string, signal?: AbortSignal, deadlineAt?: number) => {
   if (/\.csv$/i.test(fileName) || /\.tsv$/i.test(fileName)) {
+    throwIfAborted(signal, deadlineAt)
     return normalizeText(buffer.toString('utf8'))
   }
 
-  const rows = await readSheet(buffer)
-  const text = rows
-    .slice(0, 200)
-    .map(row => row.slice(0, 50).map(formatSpreadsheetCell).join('\t'))
-    .join('\n')
-
-  return normalizeText(text)
+  return parseOfficeAttachmentInWorker('xlsx', buffer, { signal, deadlineAt })
 }
 
-const parseImageFile = async (buffer: Buffer) => {
+const parseImageFile = async (buffer: Buffer, signal?: AbortSignal, deadlineAt?: number) => {
   try {
     return await ocrWorkPool.run(async () => {
       const tempDirectory = await mkdtemp(path.join(tmpdir(), 'note-prompt-ocr-'))
@@ -235,21 +229,25 @@ const parseImageFile = async (buffer: Buffer) => {
       const scriptPath = path.resolve(process.cwd(), 'scripts', 'ocr-image.cjs')
 
       try {
-        await writeFile(inputPath, buffer)
+        throwIfAborted(signal, deadlineAt)
+        await writeFile(inputPath, buffer, { signal })
         const command = tesseractPath || process.execPath
-        const args = tesseractPath
-          ? [inputPath, 'stdout', '-l', 'chi_sim+eng']
-          : [scriptPath, inputPath]
-        const { stdout } = await execFileAsync(command, args, {
+        const args = tesseractPath ? [inputPath, 'stdout', '-l', 'chi_sim+eng'] : [scriptPath, inputPath]
+        const { stdout } = await runBoundedChildProcess({
+          command,
+          args,
           cwd: process.cwd(),
-          maxBuffer: 1024 * 1024,
-          timeout: 60000,
+          timeoutMs: remainingTimeoutMs(60_000, deadlineAt),
+          maxStdoutBytes: 1024 * 1024,
+          maxStderrBytes: 256 * 1024,
+          signal,
         })
-        return normalizeText(stdout || '')
+        throwIfAborted(signal, deadlineAt)
+        return normalizeText(stdout.toString('utf8'))
       } finally {
         await rm(tempDirectory, { recursive: true, force: true })
       }
-    })
+    }, signal)
   } catch (error) {
     if (error instanceof WorkQueueCapacityError || error instanceof WorkQueueTimeoutError) {
       throw new SafeAttachmentParseError('OCR 服务繁忙，请稍后重试。')
@@ -258,7 +256,7 @@ const parseImageFile = async (buffer: Buffer) => {
   }
 }
 
-export async function parseAttachmentFile(file: File): Promise<ParsedAttachment> {
+export async function parseAttachmentFile(file: File, options: AttachmentParseOptions = {}): Promise<ParsedAttachment> {
   const name = file.name || 'unnamed'
   const type = file.type || 'application/octet-stream'
   const size = file.size
@@ -270,36 +268,38 @@ export async function parseAttachmentFile(file: File): Promise<ParsedAttachment>
   }
 
   try {
+    throwIfAborted(options.signal, options.deadlineAt)
     const buffer = Buffer.from(await file.arrayBuffer())
+    throwIfAborted(options.signal, options.deadlineAt)
     const extension = getExtension(name)
     const isTextLike = type.startsWith('text/') || TEXT_EXTENSIONS.test(name)
     const isPdf = type === 'application/pdf' || PDF_EXTENSIONS.test(name)
     const isWord = type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || WORD_EXTENSIONS.test(name)
     const isImage = type.startsWith('image/') || IMAGE_EXTENSIONS.test(name)
-    const isSpreadsheet = SPREADSHEET_EXTENSIONS.test(name) || [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'text/csv',
-      'text/tab-separated-values',
-    ].includes(type)
+    const isSpreadsheet = SPREADSHEET_EXTENSIONS.test(name) || ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv', 'text/tab-separated-values'].includes(type)
 
     let textPreview = ''
     if (isPdf) {
       assertPdfSignature(buffer)
-      textPreview = await parsePdfFile(buffer)
+      textPreview = await parsePdfFile(buffer, options.signal, options.deadlineAt)
     } else if (isWord) {
       assertOfficeSignature(buffer, 'docx')
-      textPreview = await parseDocxFile(buffer)
+      textPreview = await parseOfficeAttachmentInWorker('docx', buffer, {
+        signal: options.signal,
+        deadlineAt: options.deadlineAt,
+      })
     } else if (isImage) {
       assertImageSignature(buffer, extension)
-      textPreview = await parseImageFile(buffer)
+      textPreview = await parseImageFile(buffer, options.signal, options.deadlineAt)
     } else if (isSpreadsheet) {
       if (/\.xlsx$/i.test(name) || type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
         assertOfficeSignature(buffer, 'xlsx')
       }
-      textPreview = await parseSpreadsheetFile(buffer, name)
+      textPreview = await parseSpreadsheetFile(buffer, name, options.signal, options.deadlineAt)
     } else if (isTextLike || ['json', 'xml'].includes(extension)) {
       textPreview = await parseTextFile(buffer)
     }
+    throwIfAborted(options.signal, options.deadlineAt)
 
     if (!textPreview) {
       return {
@@ -315,6 +315,14 @@ export async function parseAttachmentFile(file: File): Promise<ParsedAttachment>
       parseStatus: 'parsed',
     }
   } catch (error) {
+    if (
+      options.signal?.aborted ||
+      error instanceof AttachmentParserAbortedError ||
+      (error instanceof BoundedChildProcessError && error.code === 'aborted') ||
+      (error instanceof AttachmentOfficeWorkerError && error.code === 'aborted')
+    ) {
+      throw new AttachmentParserAbortedError()
+    }
     return {
       ...base,
       parseStatus: 'failed',

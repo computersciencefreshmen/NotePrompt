@@ -40,6 +40,7 @@ test('runtime image contains the migration runner without build-time secret file
   const runnerImage = dockerfile.slice(dockerfile.indexOf('FROM ${NODE_IMAGE} AS runner'))
 
   assert.match(dockerfile, /COPY --from=builder \/app\/scripts\/mysql-migrate\.cjs/)
+  assert.match(dockerfile, /COPY --from=builder \/app\/scripts\/attachment-office-worker\.mjs/)
   assert.match(dockerfile, /COPY --from=builder \/app\/database\/migrations/)
   assert.match(dockerfile, /USER node/)
   assert.match(dockerfile, /apk add --no-cache[\s\S]*poppler-utils/)

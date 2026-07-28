@@ -294,16 +294,14 @@ export async function DELETE(
       )
     }
 
-    // 对不存在和越权资源统一返回 404
-    const existingPrompt = await db.getOwnedUserPromptById(id, userId)
-    if (!existingPrompt) {
+    // 所有权条件与删除处于同一条 SQL 中，避免预读与写入之间的竞态。
+    const deleted = await db.deleteOwnedUserPrompt(id, userId)
+    if (!deleted) {
       return NextResponse.json(
         { success: false, error: '提示词不存在' },
         { status: 404 }
       )
     }
-
-    await db.deleteUserPrompt(id)
 
     return NextResponse.json({
       success: true,

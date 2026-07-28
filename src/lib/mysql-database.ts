@@ -34,7 +34,7 @@ type PromptVersionRow = DbRow & { title?: string; content?: string };
 type SchemaColumnRow = { TABLE_NAME: string; COLUMN_NAME: string };
 type MySQLParameter = string | number | bigint | boolean | Date | null | Buffer | Uint8Array;
 type SnapshotQuery = (sql: string, params?: unknown[]) => Promise<{ rows: unknown }>;
-const MYSQL_DB_INSTANCE_VERSION = 10;
+const MYSQL_DB_INSTANCE_VERSION = 11;
 
 function normalizeMySQLParameter(value: unknown): MySQLParameter {
   if (value === undefined || value === null) return null;
@@ -713,9 +713,16 @@ class MySQLDB {
     }
   }
 
-  async deleteUserPrompt(id: number) {
-    await this.query('DELETE FROM user_prompts WHERE id = ?', [id]);
-    return true;
+  async deleteOwnedUserPrompt(id: number, userId: number): Promise<boolean> {
+    const result = await this.query(
+      'DELETE FROM user_prompts WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+    const affectedRows = Number((result.rows as MutationResult).affectedRows);
+    if (affectedRows !== 0 && affectedRows !== 1) {
+      throw new Error('提示词删除失败：数据库返回异常影响行数');
+    }
+    return affectedRows === 1;
   }
 
   // 公共提示词相关方法

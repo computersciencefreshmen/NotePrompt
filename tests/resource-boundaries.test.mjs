@@ -62,9 +62,25 @@ test('prompt and folder limits are checked under a serialized user-row lock', ()
 
 test('normal prompt writes keep tag replacement inside the prompt transaction', () => {
   const createPrompt = methodSource('createUserPrompt', 'getUserPromptById')
-  const updatePrompt = methodSource('updateOwnedUserPromptWithVersion', 'deleteUserPrompt')
+  const updatePrompt = methodSource('updateOwnedUserPromptWithVersion', 'deleteOwnedUserPrompt')
   assert.match(createPrompt, /beginTransaction\(\)[\s\S]*replaceUserPromptTags\(connection, insertId, promptData\.tags\)[\s\S]*commit\(\)/)
   assert.match(updatePrompt, /beginTransaction\(\)[\s\S]*replaceUserPromptTags\(connection, promptId, updates\.tags\)[\s\S]*commit\(\)/)
+})
+
+test('prompt deletion binds ownership to the mutation statement', async () => {
+  const deletion = methodSource('deleteOwnedUserPrompt', 'createExternalPublicPrompt')
+  assert.match(deletion, /DELETE FROM user_prompts WHERE id = \? AND user_id = \?/)
+  assert.match(deletion, /\[id, userId\]/)
+  assert.match(deletion, /affectedRows === 1/)
+
+  const route = await readFile(
+    new URL('../src/app/api/v1/prompts/[id]/route.ts', import.meta.url),
+    'utf8',
+  )
+  const deleteHandler = route.slice(route.indexOf('export async function DELETE'))
+  assert.match(deleteHandler, /deleteOwnedUserPrompt\(id, userId\)/)
+  assert.doesNotMatch(deleteHandler, /getOwnedUserPromptById\(|deleteUserPrompt\(/)
+  assert.match(deleteHandler, /if \(!deleted\)[\s\S]*status: 404/)
 })
 
 test('admin public prompt content and tags update atomically', async () => {

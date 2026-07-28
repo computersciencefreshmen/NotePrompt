@@ -11,7 +11,7 @@ import {
   BoundedWorkPool,
   WorkQueueCapacityError,
   WorkQueueTimeoutError,
-} from './bounded-work-pool'
+} from './bounded-work-pool.ts'
 
 export type ParsedAttachment = {
   id: string

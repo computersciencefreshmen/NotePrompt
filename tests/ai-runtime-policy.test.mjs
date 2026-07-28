@@ -7,6 +7,7 @@ import {
   parseAIOptimizationPreferences,
   parseAIRequestAttachments,
   parseConversationHistory,
+  readLimitedBody,
   readLimitedJson,
   RequestPolicyError,
 } from '../src/lib/ai-runtime-policy.ts'
@@ -68,6 +69,27 @@ test('limited JSON reader rejects the actual streamed size', async () => {
   })
 })
 
+test('limited body reader cancels promptly when its signal aborts', async () => {
+  let cancelCalls = 0
+  const body = new ReadableStream({
+    cancel() { cancelCalls += 1 },
+  })
+  const request = new Request('http://localhost/test', {
+    method: 'POST',
+    body,
+    duplex: 'half',
+  })
+  const controller = new AbortController()
+  const reading = readLimitedBody(request, 1_024, { signal: controller.signal })
+  await Promise.resolve()
+  controller.abort(new Error('client disconnected'))
+
+  await assert.rejects(reading, error => {
+    assert.equal(error.message, 'client disconnected')
+    return true
+  })
+  assert.equal(cancelCalls, 1)
+})
 test('attachment and conversation limits reject oversized context', () => {
   const attachment = { name: 'a.txt', type: 'text/plain', size: 1, textPreview: 'ok' }
   assert.throws(

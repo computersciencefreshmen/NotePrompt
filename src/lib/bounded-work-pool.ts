@@ -12,10 +12,20 @@ export class WorkQueueTimeoutError extends Error {
   }
 }
 
+export class WorkQueueAbortedError extends Error {
+  constructor() {
+    super('Aborted while waiting for work capacity')
+    this.name = 'WorkQueueAbortedError'
+  }
+}
+
 type Waiter = {
   resolve: () => void
   reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | null
+  signal?: AbortSignal
+  abortHandler?: () => void
+  settled: boolean
 }
 
 export class BoundedWorkPool {
@@ -40,7 +50,30 @@ export class BoundedWorkPool {
     this.maxWaitMs = maxWaitMs
   }
 
-  private acquire() {
+  private settleWaiter(waiter: Waiter, error?: Error) {
+    if (waiter.settled) return false
+    waiter.settled = true
+
+    const index = this.waiters.indexOf(waiter)
+    if (index >= 0) this.waiters.splice(index, 1)
+    if (waiter.timer) {
+      clearTimeout(waiter.timer)
+      waiter.timer = null
+    }
+    if (waiter.signal && waiter.abortHandler) {
+      waiter.signal.removeEventListener('abort', waiter.abortHandler)
+      waiter.abortHandler = undefined
+    }
+
+    if (error) waiter.reject(error)
+    else waiter.resolve()
+    return true
+  }
+
+  private acquire(signal?: AbortSignal) {
+    if (signal?.aborted) {
+      return Promise.reject(new WorkQueueAbortedError())
+    }
     if (this.active < this.concurrency) {
       this.active += 1
       return Promise.resolve()
@@ -53,28 +86,35 @@ export class BoundedWorkPool {
       const waiter: Waiter = {
         resolve,
         reject,
-        timer: setTimeout(() => {
-          const index = this.waiters.indexOf(waiter)
-          if (index >= 0) this.waiters.splice(index, 1)
-          reject(new WorkQueueTimeoutError())
-        }, this.maxWaitMs),
+        timer: null,
+        signal,
+        settled: false,
+      }
+      waiter.timer = setTimeout(() => {
+        this.settleWaiter(waiter, new WorkQueueTimeoutError())
+      }, this.maxWaitMs)
+      if (signal) {
+        waiter.abortHandler = () => {
+          this.settleWaiter(waiter, new WorkQueueAbortedError())
+        }
+        signal.addEventListener('abort', waiter.abortHandler, { once: true })
       }
       this.waiters.push(waiter)
+      if (signal?.aborted) waiter.abortHandler?.()
     })
   }
 
   private release() {
-    const waiter = this.waiters.shift()
-    if (waiter) {
-      clearTimeout(waiter.timer)
-      waiter.resolve()
-      return
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters[0]
+      if (this.settleWaiter(waiter)) return
+      this.waiters.shift()
     }
     this.active -= 1
   }
 
-  async run<T>(work: () => Promise<T>): Promise<T> {
-    await this.acquire()
+  async run<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.acquire(signal)
     try {
       return await work()
     } finally {

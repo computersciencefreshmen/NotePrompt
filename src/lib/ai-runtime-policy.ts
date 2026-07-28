@@ -100,7 +100,23 @@ function getContentLength(request: Request) {
   return parsed
 }
 
-export async function readLimitedBody(request: Request, maxBytes: number): Promise<Uint8Array> {
+export type ReadLimitedBodyOptions = { signal?: AbortSignal }
+
+function requestAbortReason(signal: AbortSignal) {
+  return signal.reason instanceof Error ? signal.reason : new DOMException('Request aborted', 'AbortError')
+}
+
+function throwIfRequestAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw requestAbortReason(signal)
+}
+
+export async function readLimitedBody(
+  request: Request,
+  maxBytes: number,
+  options: ReadLimitedBodyOptions = {},
+): Promise<Uint8Array> {
+  const signal = options.signal
+  throwIfRequestAborted(signal)
   const contentLength = getContentLength(request)
   if (contentLength !== null && contentLength > maxBytes) {
     throw new RequestPolicyError('请求体过大', 413)
@@ -111,10 +127,14 @@ export async function readLimitedBody(request: Request, maxBytes: number): Promi
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let totalBytes = 0
+  const cancelOnAbort = () => { void reader.cancel().catch(() => undefined) }
+  signal?.addEventListener('abort', cancelOnAbort, { once: true })
 
   try {
     while (true) {
+      throwIfRequestAborted(signal)
       const { done, value } = await reader.read()
+      throwIfRequestAborted(signal)
       if (done) break
       if (!value) continue
 
@@ -125,7 +145,9 @@ export async function readLimitedBody(request: Request, maxBytes: number): Promi
       }
       chunks.push(value)
     }
+    throwIfRequestAborted(signal)
   } finally {
+    signal?.removeEventListener('abort', cancelOnAbort)
     reader.releaseLock()
   }
 

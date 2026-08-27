@@ -294,7 +294,7 @@ All API endpoints are prefixed with `/api/v1/`.
 ## 📸 Screenshots
 
 
-> 📌 *Screenshots coming soon — visit [noteprompt.cn](https://noteprompt.cn) for the live experience.*
+> 📌 *visit [noteprompt.cn](https://noteprompt.cn) for the live experience.*
 
 ---
 

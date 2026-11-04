@@ -90,8 +90,8 @@ export async function PUT(
     }
 
     // 检查权限 - 只能编辑自己发布的文件夹
-    if ((folder as any).user_id !== userId) {
-      console.log('权限检查失败:', { folderUserId: (folder as any).user_id, currentUserId: userId })
+    if (folder.user_id !== userId) {
+      console.log('权限检查失败:', { folderUserId: folder.user_id, currentUserId: userId })
       return NextResponse.json(
         { success: false, error: '没有权限编辑此文件夹' },
         { status: 403 }
@@ -99,7 +99,7 @@ export async function PUT(
     }
 
     // 更新公共文件夹
-    const updateData: any = {}
+    const updateData: Record<string, unknown> = {}
     if (body.name !== undefined) updateData.name = body.name
     if (body.description !== undefined) updateData.description = body.description
 
@@ -131,4 +131,4 @@ export async function PUT(
       { status: 500 }
     )
   }
-} 
+}

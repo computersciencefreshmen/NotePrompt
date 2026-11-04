@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     if (action === 'check') {
       // 检查所有公共提示词ID
       const result = await db.query('SELECT id, title FROM public_prompts ORDER BY id')
-      const prompts = result.rows as any[]
+      const prompts = result.rows as RowDataPacket[]
       
       const validIds = prompts.map(p => p.id)
       const maxId = Math.max(...validIds)

@@ -209,7 +209,7 @@ export default function PublicFolderDetailPage() {
       if (response.success) {
         toast({
           title: copy.folderImportSuccessTitle,
-          description: (response as any).message || copy.folderImportSuccessDesc,
+          description: response.message || copy.folderImportSuccessDesc,
           variant: 'success',
         })
         

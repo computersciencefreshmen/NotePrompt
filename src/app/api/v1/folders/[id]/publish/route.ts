@@ -30,8 +30,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       )
     }
 
-    if ((folder as any).user_id !== userId) {
-      console.log('权限检查失败:', { folderUserId: (folder as any).user_id, currentUserId: userId })
+    if (folder.user_id !== userId) {
+      console.log('权限检查失败:', { folderUserId: folder.user_id, currentUserId: userId })
       return NextResponse.json(
         { success: false, error: '无权限发布此文件夹' },
         { status: 403 }
@@ -40,14 +40,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
     // 创建公共文件夹
     console.log('创建公共文件夹，参数:', {
-      name: (folder as any).name,
+      name: folder.name,
       description: description || '',
       user_id: userId,
       original_folder_id: folderId
     })
     
     const publicFolder = await db.createPublicFolder({
-      name: (folder as any).name,
+      name: folder.name as string,
       description: description || '',
       user_id: userId,
       original_folder_id: folderId
@@ -72,4 +72,4 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       { status: 500 }
     )
   }
-} 
+}

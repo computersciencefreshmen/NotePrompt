@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
@@ -29,7 +30,7 @@ export async function DELETE(
       WHERE pf.id = ?
     `, [id])
 
-    if (!result.rows || (result.rows as any[]).length === 0) {
+    if (!result.rows || (result.rows as RowDataPacket[]).length === 0) {
       console.log('文件夹不存在')
       return NextResponse.json(
         { success: false, error: '公共文件夹不存在' },
@@ -37,7 +38,7 @@ export async function DELETE(
       )
     }
 
-    const folder = (result.rows as any[])[0]
+    const folder = (result.rows as RowDataPacket[])[0]
     console.log('找到文件夹:', folder)
 
     // 检查权限 - 只能删除自己发布的文件夹

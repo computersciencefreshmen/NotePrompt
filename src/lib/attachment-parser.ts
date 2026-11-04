@@ -88,7 +88,7 @@ const parseSpreadsheetFile = (buffer: Buffer, fileName: string) => {
 const parseImageFile = async (buffer: Buffer) => {
   const tempDirectory = await mkdtemp(path.join(tmpdir(), 'note-prompt-ocr-'))
   const inputPath = path.join(tempDirectory, `${randomUUID()}.png`)
-  const scriptPath = path.resolve(process.cwd(), 'scripts', 'ocr-image.cjs')
+  const scriptPath = path.resolve(process.cwd(), 'scripts', 'ocr-image.mjs')
 
   try {
     await writeFile(inputPath, buffer)

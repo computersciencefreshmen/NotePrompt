@@ -152,7 +152,7 @@ export default function PublicFoldersPage() {
       if (response.success) {
         toast({
           title: copy.importSuccessTitle,
-          description: (response as any).message || copy.importSuccessDesc,
+          description: response.message || copy.importSuccessDesc,
           variant: 'success',
         })
         

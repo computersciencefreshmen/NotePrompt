@@ -293,7 +293,7 @@ ${contextInstruction}
         const timeoutId = setTimeout(() => controller.abort(), 150000)
 
         // 根据不同提供商处理模型名称和参数
-        let requestModel = aiConfig.model
+        const requestModel = aiConfig.model
         // temperature 优先使用用户滑块传入的值，否则用默认值 0.7
         const isMiniMaxProvider = effectiveProvider === 'minimax'
         const isXiaomiProvider = effectiveProvider === 'xiaomi'

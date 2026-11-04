@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import db from '@/lib/mysql-database'
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
 
     // 获取用户文件夹
     const foldersResult = await db.query('SELECT * FROM folders WHERE user_id = ? ORDER BY created_at DESC', [user_id])
-    const folders = (foldersResult.rows as any[]).map(f => ({
+    const folders = (foldersResult.rows as RowDataPacket[]).map(f => ({
       id: f.id,
       name: f.name,
       created_at: f.created_at,
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     )
 
     const prompts = await Promise.all(
-      (promptsResult.rows as any[]).map(async (p) => {
+      (promptsResult.rows as RowDataPacket[]).map(async (p) => {
         // 获取提示词标签
         const tagsResult = await db.query(
           `SELECT t.name
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
            WHERE upt.user_prompt_id = ?`,
           [p.id]
         )
-        const tags = (tagsResult.rows as any[]).map(t => ({ name: t.name }))
+        const tags = (tagsResult.rows as RowDataPacket[]).map(t => ({ name: t.name }))
 
         return {
           id: p.id,
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest) {
       [user_id]
     )
 
-    const favorites = (favoritesResult.rows as any[]).map(f => ({
+    const favorites = (favoritesResult.rows as RowDataPacket[]).map(f => ({
       id: f.id,
       title: f.title,
       content: f.content,
@@ -86,7 +87,7 @@ export async function GET(request: NextRequest) {
       [user_id]
     )
 
-    const imported_folders = (importedFoldersResult.rows as any[]).map(f => ({
+    const imported_folders = (importedFoldersResult.rows as RowDataPacket[]).map(f => ({
       id: f.id,
       name: f.name,
       imported_at: f.created_at
@@ -102,7 +103,7 @@ export async function GET(request: NextRequest) {
       [user_id, user_id, user_id, user_id]
     )
 
-    const stats = (statsResult.rows as any[])[0]
+    const stats = (statsResult.rows as RowDataPacket[])[0]
 
     return NextResponse.json({
       success: true,
@@ -115,7 +116,7 @@ export async function GET(request: NextRequest) {
         stats
       }
     })
-  } catch (error: any) {
+  } catch (error) {
     console.error('导出数据失败:', error)
     return NextResponse.json(
       { success: false, error: '导出数据失败' },

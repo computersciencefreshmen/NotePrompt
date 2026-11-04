@@ -1,7 +1,21 @@
 
-import mysql from 'mysql2/promise';
+import mysql, { type ExecuteValues, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
 
 type DbRow = Record<string, unknown>;
+type ScalarRow<Column extends string> = RowDataPacket & Record<Column, number>;
+type PromptVersionRow = RowDataPacket & {
+  id: number;
+  prompt_id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  version_number: number;
+  change_summary: string | null;
+  created_at: Date | string;
+};
+// These legacy mutation helpers read index zero even though INSERT returns a
+// header, not rows. Keep their existing undefined result while typing the packet.
+type IndexedMutationResult = ResultSetHeader & { 0?: unknown };
 const MYSQL_DB_INSTANCE_VERSION = 4;
 
 function formatLocalDate(date: Date) {
@@ -47,7 +61,9 @@ class MySQLDB {
           return p;
         }) : [];
         
-        const [rows, fields] = await connection.execute(sql, cleanParams);
+        // Keep the public unknown[] API and existing null normalization. The
+        // driver still validates/encodes values (including Date, Buffer, JSON).
+        const [rows, fields] = await connection.execute(sql, cleanParams as ExecuteValues[]);
         return { rows, fields };
       } catch (error) {
         console.error(`数据库查询错误 (重试 ${4-retries}/3):`, error);
@@ -235,7 +251,7 @@ class MySQLDB {
     );
 
     // 正确获取插入ID
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     if (!insertId) {
       throw new Error('用户创建失败：无法获取插入ID');
     }
@@ -265,7 +281,7 @@ class MySQLDB {
       [title, content, description, user_id, folder_id, category_id, mode || 'basic', is_public ? 1 : 0]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     const newPrompt = await this.getUserPromptById(insertId);
     return newPrompt;
   }
@@ -361,8 +377,8 @@ class MySQLDB {
       [title, author_id]
     );
     
-    if ((existingPrompt.rows as any[]).length > 0) {
-      return (existingPrompt.rows as any[])[0];
+    if ((existingPrompt.rows as RowDataPacket[]).length > 0) {
+      return (existingPrompt.rows as RowDataPacket[])[0];
     }
     
     const result = await this.query(
@@ -370,7 +386,7 @@ class MySQLDB {
       [title, content, description, author_id, category_id]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     const newPrompt = await this.getPublicPromptById(insertId);
     return newPrompt;
   }
@@ -429,7 +445,7 @@ class MySQLDB {
       [name, user_id, parent_id]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     const newFolder = await this.getFolderById(insertId);
     return newFolder;
   }
@@ -543,7 +559,7 @@ class MySQLDB {
       'INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)',
       [userId]
     );
-    return (result.rows as any)[0];
+    return (result.rows as IndexedMutationResult)[0];
   }
 
   async getUserStats(userId: number) {
@@ -642,7 +658,7 @@ class MySQLDB {
       'INSERT INTO tags (name, color) VALUES (?, ?)',
       [name, color || '#6366f1']
     );
-    return (result.rows as any)[0];
+    return (result.rows as IndexedMutationResult)[0];
   }
 
   async getTags() {
@@ -752,7 +768,7 @@ class MySQLDB {
       [name, description, user_id, original_folder_id]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     
     if (!insertId) {
       throw new Error('公共文件夹创建失败：无法获取插入ID');
@@ -813,7 +829,7 @@ class MySQLDB {
       [user_id, public_folder_id, name, description]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     return await this.getImportedFolderById(insertId);
   }
 
@@ -855,11 +871,11 @@ class MySQLDB {
       [importedFolderId]
     );
     
-    if (!importedFolder.rows || (importedFolder.rows as any[]).length === 0) {
+    if (!importedFolder.rows || (importedFolder.rows as RowDataPacket[]).length === 0) {
       return [];
     }
     
-    const publicFolderId = ((importedFolder.rows as any[])[0] as any).public_folder_id;
+    const publicFolderId = (importedFolder.rows as ScalarRow<'public_folder_id'>[])[0].public_folder_id;
     
     // 获取公共文件夹对应的原始文件夹ID
     const publicFolder = await this.query(
@@ -867,11 +883,11 @@ class MySQLDB {
       [publicFolderId]
     );
     
-    if (!publicFolder.rows || (publicFolder.rows as any[]).length === 0) {
+    if (!publicFolder.rows || (publicFolder.rows as RowDataPacket[]).length === 0) {
       return [];
     }
     
-    const originalFolderId = ((publicFolder.rows as any[])[0] as any).original_folder_id;
+    const originalFolderId = (publicFolder.rows as ScalarRow<'original_folder_id'>[])[0].original_folder_id;
     
     // 获取原始文件夹中的用户提示词，包含标签和分类信息
     const result = await this.query(
@@ -899,7 +915,7 @@ class MySQLDB {
         'DELETE FROM user_imported_folders WHERE id = ? AND user_id = ?',
         [folderId, userId]
       );
-      return (result.rows as any).affectedRows > 0;
+      return (result.rows as ResultSetHeader).affectedRows > 0;
     } catch (error) {
       console.error('删除用户导入文件夹失败:', error);
       return false;
@@ -913,11 +929,11 @@ class MySQLDB {
       [importedFolderId]
     );
     
-    if (!importedFolder.rows || (importedFolder.rows as any[]).length === 0) {
+    if (!importedFolder.rows || (importedFolder.rows as RowDataPacket[]).length === 0) {
       return 0;
     }
     
-    const publicFolderId = ((importedFolder.rows as any[])[0] as any).public_folder_id;
+    const publicFolderId = (importedFolder.rows as ScalarRow<'public_folder_id'>[])[0].public_folder_id;
     
     // 获取公共文件夹对应的原始文件夹ID
     const publicFolder = await this.query(
@@ -925,11 +941,11 @@ class MySQLDB {
       [publicFolderId]
     );
     
-    if (!publicFolder.rows || (publicFolder.rows as any[]).length === 0) {
+    if (!publicFolder.rows || (publicFolder.rows as RowDataPacket[]).length === 0) {
       return 0;
     }
     
-    const originalFolderId = ((publicFolder.rows as any[])[0] as any).original_folder_id;
+    const originalFolderId = (publicFolder.rows as ScalarRow<'original_folder_id'>[])[0].original_folder_id;
     
     // 获取原始文件夹中的提示词数量
     const result = await this.query(
@@ -937,7 +953,7 @@ class MySQLDB {
       [originalFolderId]
     );
     
-    return ((result.rows as any[])[0] as any).count || 0;
+    return (result.rows as ScalarRow<'count'>[])[0].count || 0;
   }
 
   // ===== 版本历史相关方法 =====
@@ -954,14 +970,14 @@ class MySQLDB {
       'SELECT COALESCE(MAX(version_number), 0) as max_version FROM prompt_versions WHERE prompt_id = ?',
       [data.prompt_id]
     );
-    const nextVersion = ((maxVersion.rows as any[])[0] as any).max_version + 1;
+    const nextVersion = (maxVersion.rows as ScalarRow<'max_version'>[])[0].max_version + 1;
 
     const result = await this.query(
       'INSERT INTO prompt_versions (prompt_id, user_id, title, content, version_number, change_summary) VALUES (?, ?, ?, ?, ?, ?)',
       [data.prompt_id, data.user_id, data.title, data.content, nextVersion, data.change_summary || null]
     );
 
-    return { id: (result.rows as any).insertId, version_number: nextVersion };
+    return { id: (result.rows as ResultSetHeader).insertId, version_number: nextVersion };
   }
 
   async getPromptVersions(promptId: number) {
@@ -969,7 +985,7 @@ class MySQLDB {
       'SELECT id, prompt_id, user_id, title, version_number, change_summary, created_at FROM prompt_versions WHERE prompt_id = ? ORDER BY version_number DESC',
       [promptId]
     );
-    return result.rows as any[];
+    return result.rows as Omit<PromptVersionRow, 'content'>[];
   }
 
   async getPromptVersion(versionId: number) {
@@ -977,7 +993,7 @@ class MySQLDB {
       'SELECT * FROM prompt_versions WHERE id = ?',
       [versionId]
     );
-    return (result.rows as any[])[0] || null;
+    return (result.rows as PromptVersionRow[])[0] || null;
   }
 
   async getPromptVersionByNumber(promptId: number, versionNumber: number) {
@@ -985,7 +1001,7 @@ class MySQLDB {
       'SELECT * FROM prompt_versions WHERE prompt_id = ? AND version_number = ?',
       [promptId, versionNumber]
     );
-    return (result.rows as any[])[0] || null;
+    return (result.rows as PromptVersionRow[])[0] || null;
   }
 
   // ===== 全局搜索相关方法 =====
@@ -1039,15 +1055,15 @@ class MySQLDB {
 
     return {
       userPrompts: {
-        items: userPromptsResult.rows as any[],
-        total: ((userPromptsCountResult.rows as any[])[0] as any).total
+        items: userPromptsResult.rows as RowDataPacket[],
+        total: (userPromptsCountResult.rows as ScalarRow<'total'>[])[0].total
       },
       publicPrompts: {
-        items: publicPromptsResult.rows as any[],
-        total: ((publicPromptsCountResult.rows as any[])[0] as any).total
+        items: publicPromptsResult.rows as RowDataPacket[],
+        total: (publicPromptsCountResult.rows as ScalarRow<'total'>[])[0].total
       },
       folders: {
-        items: foldersResult.rows as any[]
+        items: foldersResult.rows as RowDataPacket[]
       }
     };
   }

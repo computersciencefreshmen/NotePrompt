@@ -38,8 +38,8 @@ export async function POST(request: NextRequest) {
         try {
           const tags = await db.getUserPromptTags(promptId)
           if (tags && tags.length > 0) {
-            const tagNames = tags.map(tag => (tag as any).name)
-            await db.addPublicPromptTags((publicPrompt as any).id, tagNames)
+            const tagNames = tags.map(tag => tag.name as string)
+            await db.addPublicPromptTags((publicPrompt as { id: number }).id, tagNames)
           }
         } catch (tagError) {
           console.error(`复制标签失败 (提示词 ${promptId}):`, tagError)
@@ -65,4 +65,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

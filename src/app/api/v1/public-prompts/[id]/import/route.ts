@@ -53,7 +53,7 @@ export async function POST(
       const tags = await db.getPublicPromptTags(id)
       if (tags && tags.length > 0) {
         const tagNames = tags.map(tag => (tag as Record<string, unknown>).name as string)
-        const promptId = (importedPrompt as any)?.id
+        const promptId = importedPrompt?.id as number | undefined
         if (promptId) {
           await db.addUserPromptTags(promptId, tagNames)
         }

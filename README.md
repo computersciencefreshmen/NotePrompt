@@ -90,7 +90,7 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 ### Prerequisites
 
-- **Node.js** >= 18
+- **Node.js 24** (the verified runtime and Docker base)
 - **MySQL** >= 8.0
 - **Redis** >= 6 (optional, for rate limiting)
 - At least one AI provider API key

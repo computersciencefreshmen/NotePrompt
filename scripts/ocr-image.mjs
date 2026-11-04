@@ -1,5 +1,8 @@
-const path = require('path')
-const { createWorker } = require('tesseract.js')
+import path from 'node:path'
+import { tmpdir } from 'node:os'
+import Tesseract from 'tesseract.js'
+
+const { createWorker } = Tesseract
 
 async function main() {
   const imagePath = process.argv[2]
@@ -11,7 +14,7 @@ async function main() {
     workerPath: path.resolve(process.cwd(), 'node_modules', 'tesseract.js', 'src', 'worker-script', 'node', 'index.js'),
     corePath: path.resolve(process.cwd(), 'node_modules', 'tesseract.js-core'),
     langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-    cachePath: path.join(require('os').tmpdir(), 'note-prompt-ocr-cache'),
+    cachePath: path.join(tmpdir(), 'note-prompt-ocr-cache'),
     gzip: true,
   })
 

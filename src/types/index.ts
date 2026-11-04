@@ -330,6 +330,7 @@ export interface PublicPromptQueryParams {
 
 // API响应包装
 export interface ApiResponse<T> {
+  message?: string
   success: boolean
   data?: T
   error?: string

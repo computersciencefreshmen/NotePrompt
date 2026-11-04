@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
 import crypto from 'crypto';
 
 // 邮件配置接口
@@ -24,7 +24,7 @@ interface VerificationEmailData {
  * 用于发送邮箱验证相关邮件
  */
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: Transporter;
   private fromEmail: string;
   private fromName: string;
 

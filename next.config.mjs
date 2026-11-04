@@ -9,7 +9,7 @@ const nextConfig = {
   outputFileTracingRoot: projectRoot,
   outputFileTracingIncludes: {
     '/api/v1/attachments/parse': [
-      './scripts/ocr-image.cjs',
+      './scripts/ocr-image.mjs',
       './node_modules/tesseract.js/**/*',
       './node_modules/tesseract.js-core/**/*',
     ],
@@ -19,9 +19,6 @@ const nextConfig = {
     root: projectRoot,
   },
 
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
 
   env: {
     CUSTOM_KEY: process.env.CUSTOM_KEY,

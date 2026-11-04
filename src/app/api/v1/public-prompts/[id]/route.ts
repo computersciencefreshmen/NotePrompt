@@ -98,8 +98,8 @@ export async function PUT(
     }
 
     // 检查权限 - 只能编辑自己发布的提示词
-    if ((prompt as any).author_id !== userId) {
-      console.log('权限检查失败:', { promptAuthorId: (prompt as any).author_id, currentUserId: userId })
+    if (prompt.author_id !== userId) {
+      console.log('权限检查失败:', { promptAuthorId: prompt.author_id, currentUserId: userId })
       return NextResponse.json(
         { success: false, error: '没有权限编辑此提示词' },
         { status: 403 }
@@ -107,7 +107,7 @@ export async function PUT(
     }
 
     // 更新公共提示词
-    const updateData: any = {}
+    const updateData: Record<string, unknown> = {}
     if (body.title !== undefined) updateData.title = body.title
     if (body.content !== undefined) updateData.content = body.content
     if (body.description !== undefined) updateData.description = body.description

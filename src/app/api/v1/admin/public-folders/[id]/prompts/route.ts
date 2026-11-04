@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
@@ -32,14 +33,14 @@ export async function GET(
       WHERE pf.id = ?
     `, [folderId])
 
-    if (!folderResult.rows || (folderResult.rows as any[]).length === 0) {
+    if (!folderResult.rows || (folderResult.rows as RowDataPacket[]).length === 0) {
       return NextResponse.json(
         { success: false, error: '公共文件夹不存在' },
         { status: 404 }
       )
     }
 
-    const folder = (folderResult.rows as any[])[0]
+    const folder = (folderResult.rows as RowDataPacket[])[0]
 
     // 获取文件夹内的提示词
     const promptsResult = await db.query(`
@@ -52,7 +53,7 @@ export async function GET(
       ORDER BY up.created_at DESC
     `, [folder.original_folder_id])
 
-    const prompts = (promptsResult.rows as any[]).map(prompt => ({
+    const prompts = (promptsResult.rows as RowDataPacket[]).map(prompt => ({
       id: prompt.id,
       title: prompt.title,
       content: prompt.content,
@@ -116,14 +117,14 @@ export async function POST(
       SELECT original_folder_id FROM public_folders WHERE id = ?
     `, [folderId])
 
-    if (!folderResult.rows || (folderResult.rows as any[]).length === 0) {
+    if (!folderResult.rows || (folderResult.rows as RowDataPacket[]).length === 0) {
       return NextResponse.json(
         { success: false, error: '公共文件夹不存在' },
         { status: 404 }
       )
     }
 
-    const folder = (folderResult.rows as any[])[0]
+    const folder = (folderResult.rows as RowDataPacket[])[0]
 
     // 检查提示词是否已存在
     const existingResult = await db.query(`
@@ -132,7 +133,7 @@ export async function POST(
       WHERE folder_id = ? AND user_prompt_id = ?
     `, [folder.original_folder_id, promptId])
 
-    if (Number((existingResult.rows as any[])[0]?.count) > 0) {
+    if (Number((existingResult.rows as RowDataPacket[])[0]?.count) > 0) {
       return NextResponse.json({
         success: false,
         error: '提示词已在该文件夹中'
@@ -194,14 +195,14 @@ export async function DELETE(
       SELECT original_folder_id FROM public_folders WHERE id = ?
     `, [folderId])
 
-    if (!folderResult.rows || (folderResult.rows as any[]).length === 0) {
+    if (!folderResult.rows || (folderResult.rows as RowDataPacket[]).length === 0) {
       return NextResponse.json(
         { success: false, error: '公共文件夹不存在' },
         { status: 404 }
       )
     }
 
-    const folder = (folderResult.rows as any[])[0]
+    const folder = (folderResult.rows as RowDataPacket[])[0]
 
     // 从文件夹移除提示词
     await db.query(`

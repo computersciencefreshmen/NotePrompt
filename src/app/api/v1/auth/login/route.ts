@@ -48,7 +48,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 验证密码
-    const isPasswordValid = await bcrypt.compare(password, dbUser.password_hash)
+    const passwordHash = String(dbUser.password_hash || '')
+    const isPasswordValid = await bcrypt.compare(password, passwordHash)
     if (!isPasswordValid) {
       return NextResponse.json<AuthResponse>({
         success: false,
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
             email_verified: false,
             requireVerification: true,
             user: {
-              email: dbUser.email
+              email: String(dbUser.email || '')
             }
           }
         }, { status: 403 })
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
         username: dbUser.username,
         userType: dbUser.user_type
       },
-      JWT_SECRET,
+      JWT_SECRET as string,
       { expiresIn: '7d' }
     )
 

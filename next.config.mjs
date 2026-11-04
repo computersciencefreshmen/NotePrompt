@@ -1,13 +1,24 @@
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const projectRoot = dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: projectRoot,
+  outputFileTracingIncludes: {
+    '/api/v1/attachments/parse': [
+      './scripts/ocr-image.mjs',
+      './node_modules/tesseract.js/**/*',
+      './node_modules/tesseract.js-core/**/*',
+    ],
+  },
+  experimental: { cpus: 2 },
+  turbopack: {
+    root: projectRoot,
+  },
 
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
 
   env: {
     CUSTOM_KEY: process.env.CUSTOM_KEY,

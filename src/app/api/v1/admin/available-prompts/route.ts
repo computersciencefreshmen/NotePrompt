@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
       LIMIT 50
     `, queryParams)
 
-    const prompts = (result.rows as any[]).map(prompt => ({
+    const prompts = (result.rows as RowDataPacket[]).map(prompt => ({
       id: prompt.id,
       title: prompt.title,
       content: prompt.content,

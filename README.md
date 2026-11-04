@@ -26,6 +26,17 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 > 🌐 **Live at [noteprompt.cn](https://noteprompt.cn)** — Deployed on Alibaba Cloud with Docker, Nginx reverse proxy, and SSL.
 
+## Portfolio Highlights
+
+- Local revision includes the opt-in `/optimizer` workspace, attachment text extraction (text, PDF, DOCX, spreadsheets and image OCR), bilingual UI settings and provider diagnostics.
+- Set `NEXT_PUBLIC_ENABLE_PROMPT_OPTIMIZER_V2=true` before building to enable the new workspace. Provider settings and paid diagnostic probes require administrator authentication; attachment parsing requires sign-in.
+- See [source-sync verification and deployment limits](docs/local-source-sync.md) before deploying this revision.
+
+- Built as a complete SaaS-style product rather than a single-page demo: authentication, personal workspace, public library, admin dashboard, deployment scripts, and production reverse proxy are all included.
+- Designed around a real prompt-management workflow: users can draft, organize, optimize, publish, search, and reuse prompts across multiple model providers.
+- Shows full-stack engineering range: Next.js App Router, TypeScript, MySQL, Redis, JWT auth, Docker Compose, Nginx, email verification, and rate limiting.
+- Useful as a portfolio project because it demonstrates product thinking, backend API design, AI-provider integration, and deployable infrastructure in one repository.
+
 ---
 
 ## 🎯 Key Features
@@ -79,7 +90,7 @@ A modern, full-stack AI prompt management platform with multi-model optimization
 
 ### Prerequisites
 
-- **Node.js** >= 18
+- **Node.js 24** (the verified runtime and Docker base)
 - **MySQL** >= 8.0
 - **Redis** >= 6 (optional, for rate limiting)
 - At least one AI provider API key
@@ -114,16 +125,16 @@ MYSQL_PASSWORD=your_password
 MYSQL_DATABASE=agent_report
 
 # ── Authentication ───────────────────────────
-JWT_SECRET=your_secret
+JWT_SECRET=your_jwt_secret_at_least_32_chars
 
 # ── Redis (optional) ────────────────────────
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
 # ── AI API Keys (configure at least one) ────
-DEEPSEEK_API_KEY=your_api_key
-KIMI_API_KEY=your_api_key
-QWEN_API_KEY=your_api_key
+DEEPSEEK_API_KEY=sk-xxx
+KIMI_API_KEY=sk-xxx
+QWEN_API_KEY=sk-xxx
 ZHIPU_API_KEY=xxx.xxx
 
 # ── Email (optional) ────────────────────────

@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
@@ -32,14 +33,14 @@ export async function GET(
       WHERE pp.id = ?
     `, [id])
 
-    if (!result.rows || (result.rows as any[]).length === 0) {
+    if (!result.rows || (result.rows as RowDataPacket[]).length === 0) {
       return NextResponse.json(
         { success: false, error: '公共提示词不存在' },
         { status: 404 }
       )
     }
 
-    const prompt = (result.rows as any[])[0]
+    const prompt = (result.rows as RowDataPacket[])[0]
 
     // 获取标签信息
     const tagsResult = await db.getPublicPromptTags(id)

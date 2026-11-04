@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken'
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import { NextRequest } from 'next/server'
 import { User } from '@/types'
 import db from './mysql-database'
@@ -18,9 +19,16 @@ interface TokenPayload {
   exp: number
 }
 
+type ApiKeyRow = RowDataPacket & {
+  id: number
+  user_id: number
+  is_active: boolean | number
+  expires_at: string | Date | null
+}
+
 export function verifyToken(token: string): TokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload
+    return jwt.verify(token, JWT_SECRET as string) as unknown as TokenPayload
   } catch (error) {
     return null
   }
@@ -134,7 +142,7 @@ export async function verifyApiKey(apiKey: string): Promise<boolean> {
       [apiKey]
     )
     
-    const keyData = (result as any)[0]
+    const keyData = (result as ApiKeyRow[])[0]
     if (!keyData) {
       return false
     }
@@ -200,7 +208,7 @@ export async function deleteApiKey(userId: number, keyId: number): Promise<boole
       [keyId, userId]
     )
     
-    return (result as any).affectedRows > 0
+    return (result as ResultSetHeader).affectedRows > 0
   } catch (error) {
     console.error('删除API密钥错误:', error)
     return false

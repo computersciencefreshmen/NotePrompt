@@ -1,3 +1,4 @@
+import type { RowDataPacket } from 'mysql2'
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/mysql-database'
 import { requireAuth } from '@/lib/auth'
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
       ORDER BY pf.created_at DESC
     `)
 
-    const folders = (result.rows as any[]).map(folder => ({
+    const folders = (result.rows as RowDataPacket[]).map(folder => ({
       id: folder.id,
       name: folder.name,
       description: folder.description,

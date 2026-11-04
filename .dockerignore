@@ -12,6 +12,17 @@ node_modules
 .env
 .env.production
 .env.test
+.env.*
+!.env.example
+.provider-config.local.json
+_scripts
+_snapshots
+.verification
+uploads
+nginx/ssl
+data
+redis_data
+deploy-latest.js
 
 # 忽略 log 文件
 npm-debug.log*

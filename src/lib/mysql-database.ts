@@ -1,10 +1,33 @@
 
-import mysql from 'mysql2/promise';
+import mysql, { type ExecuteValues, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
 
 type DbRow = Record<string, unknown>;
+type ScalarRow<Column extends string> = RowDataPacket & Record<Column, number>;
+type PromptVersionRow = RowDataPacket & {
+  id: number;
+  prompt_id: number;
+  user_id: number;
+  title: string;
+  content: string;
+  version_number: number;
+  change_summary: string | null;
+  created_at: Date | string;
+};
+// These legacy mutation helpers read index zero even though INSERT returns a
+// header, not rows. Keep their existing undefined result while typing the packet.
+type IndexedMutationResult = ResultSetHeader & { 0?: unknown };
+const MYSQL_DB_INSTANCE_VERSION = 4;
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 class MySQLDB {
   private pool: mysql.Pool;
+  private aiUsageSchemaReady = false;
 
   constructor() {
     this.pool = mysql.createPool({
@@ -14,8 +37,9 @@ class MySQLDB {
       password: process.env.MYSQL_PASSWORD || 'root',
       database: process.env.MYSQL_DATABASE || 'agent_report',
       waitForConnections: true,
-      connectionLimit: 5,
-      queueLimit: 0,
+      connectionLimit: 50,
+      queueLimit: 100,
+      connectTimeout: 10000,
       charset: 'utf8mb4',
       timezone: '+08:00',
       // 移除无效的配置参数
@@ -37,7 +61,9 @@ class MySQLDB {
           return p;
         }) : [];
         
-        const [rows, fields] = await connection.execute(sql, cleanParams);
+        // Keep the public unknown[] API and existing null normalization. The
+        // driver still validates/encodes values (including Date, Buffer, JSON).
+        const [rows, fields] = await connection.execute(sql, cleanParams as ExecuteValues[]);
         return { rows, fields };
       } catch (error) {
         console.error(`数据库查询错误 (重试 ${4-retries}/3):`, error);
@@ -57,6 +83,11 @@ class MySQLDB {
     }
     
     throw new Error('数据库查询失败，已重试3次');
+  }
+
+  async execute(sql: string, params?: unknown[]) {
+    const result = await this.query(sql, params);
+    return [result.rows, result.fields] as const;
   }
 
   // 直接执行SQL，不使用预处理语句
@@ -92,6 +123,87 @@ class MySQLDB {
 
   async end() {
     await this.pool.end();
+  }
+
+  async ensureAIUsageDailyTable() {
+    if (this.aiUsageSchemaReady) return
+
+    const now = new Date()
+    const today = formatLocalDate(now)
+    const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+
+    await this.ensureUserUsageStatsTable()
+    await this.ensureUserUsageStatsColumn('ai_generate_count', 'INT DEFAULT 0')
+    await this.ensureUserUsageStatsColumn('total_ai_usage', 'INT DEFAULT 0')
+    await this.queryRaw(`CREATE TABLE IF NOT EXISTS ai_usage_daily (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      usage_date DATE NOT NULL,
+      optimize_count INT DEFAULT 0,
+      generate_count INT DEFAULT 0,
+      total_count INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY unique_user_usage_date (user_id, usage_date),
+      INDEX idx_user_id (user_id),
+      INDEX idx_usage_date (usage_date),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+    await this.query(
+      `UPDATE user_usage_stats
+       SET total_ai_usage = COALESCE(ai_optimize_count, 0) + COALESCE(ai_generate_count, 0)
+       WHERE COALESCE(total_ai_usage, 0) < COALESCE(ai_optimize_count, 0) + COALESCE(ai_generate_count, 0)`
+    )
+    await this.query(
+      `INSERT INTO ai_usage_daily (user_id, usage_date, optimize_count, generate_count, total_count)
+       SELECT s.user_id, ?, COALESCE(s.monthly_usage, 0), 0, COALESCE(s.monthly_usage, 0)
+       FROM user_usage_stats s
+       LEFT JOIN (
+         SELECT user_id, SUM(total_count) as current_month_total
+         FROM ai_usage_daily
+         WHERE usage_date >= ? AND usage_date < ?
+         GROUP BY user_id
+       ) d ON s.user_id = d.user_id
+       WHERE COALESCE(s.monthly_usage, 0) > 0
+         AND COALESCE(d.current_month_total, 0) = 0
+         AND COALESCE(s.last_reset_date, DATE(s.created_at), ?) >= ?
+         AND COALESCE(s.last_reset_date, DATE(s.created_at), ?) < ?
+       ON DUPLICATE KEY UPDATE
+         optimize_count = GREATEST(optimize_count, VALUES(optimize_count)),
+         total_count = GREATEST(total_count, VALUES(total_count))`,
+      [today, monthStart, nextMonthStart, monthStart, monthStart, monthStart, nextMonthStart]
+    )
+    this.aiUsageSchemaReady = true
+  }
+
+  async ensureUserUsageStatsTable() {
+    await this.queryRaw(`CREATE TABLE IF NOT EXISTS user_usage_stats (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL UNIQUE,
+      ai_optimize_count INT DEFAULT 0,
+      ai_generate_count INT DEFAULT 0,
+      total_ai_usage INT DEFAULT 0,
+      monthly_usage INT DEFAULT 0,
+      last_reset_date DATE DEFAULT (CURRENT_DATE),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_user_id (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+  }
+
+  private async ensureUserUsageStatsColumn(columnName: string, definition: string) {
+    const result = await this.query(
+      `SELECT COUNT(*) as count
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_usage_stats' AND COLUMN_NAME = ?`,
+      [columnName]
+    )
+    const row = (result.rows as { count?: number | string }[])[0]
+    if (Number(row?.count) > 0) return
+
+    await this.queryRaw(`ALTER TABLE user_usage_stats ADD COLUMN ${columnName} ${definition}`)
   }
 
   // 用户相关方法
@@ -139,7 +251,7 @@ class MySQLDB {
     );
 
     // 正确获取插入ID
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     if (!insertId) {
       throw new Error('用户创建失败：无法获取插入ID');
     }
@@ -169,7 +281,7 @@ class MySQLDB {
       [title, content, description, user_id, folder_id, category_id, mode || 'basic', is_public ? 1 : 0]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     const newPrompt = await this.getUserPromptById(insertId);
     return newPrompt;
   }
@@ -265,8 +377,8 @@ class MySQLDB {
       [title, author_id]
     );
     
-    if ((existingPrompt.rows as any[]).length > 0) {
-      return (existingPrompt.rows as any[])[0];
+    if ((existingPrompt.rows as RowDataPacket[]).length > 0) {
+      return (existingPrompt.rows as RowDataPacket[])[0];
     }
     
     const result = await this.query(
@@ -274,7 +386,7 @@ class MySQLDB {
       [title, content, description, author_id, category_id]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     const newPrompt = await this.getPublicPromptById(insertId);
     return newPrompt;
   }
@@ -333,7 +445,7 @@ class MySQLDB {
       [name, user_id, parent_id]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     const newFolder = await this.getFolderById(insertId);
     return newFolder;
   }
@@ -442,14 +554,18 @@ class MySQLDB {
 
   // 用户统计相关方法
   async createUserStats(userId: number) {
+    await this.ensureUserUsageStatsTable()
     const result = await this.query(
-      'INSERT INTO user_usage_stats (user_id) VALUES (?)',
+      'INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)',
       [userId]
     );
-    return (result.rows as any)[0];
+    return (result.rows as IndexedMutationResult)[0];
   }
 
   async getUserStats(userId: number) {
+    await this.ensureUserUsageStatsTable()
+    await this.ensureUserUsageStatsColumn('ai_generate_count', 'INT DEFAULT 0')
+    await this.ensureUserUsageStatsColumn('total_ai_usage', 'INT DEFAULT 0')
     const result = await this.query('SELECT * FROM user_usage_stats WHERE user_id = ?', [userId]);
     return (result.rows as DbRow[])[0];
   }
@@ -475,39 +591,49 @@ class MySQLDB {
   }
 
   async incrementAIUsage(userId: number, aiMode: 'ai_optimize' | 'ai_generate' = 'ai_optimize') {
-    const today = new Date().toISOString().split('T')[0]
-
-    // 确保用户有统计记录（INSERT IGNORE 不会报错如果已存在）
-    await this.query(
-      'INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)',
-      [userId]
-    );
-
-    // 根据AI模式更新相应的统计字段
-    if (aiMode === 'ai_generate') {
-      await this.query(
-        'UPDATE user_usage_stats SET ai_generate_count = ai_generate_count + 1, total_ai_usage = total_ai_usage + 1, monthly_usage = monthly_usage + 1 WHERE user_id = ?',
-        [userId]
-      );
-    } else {
-      await this.query(
-        'UPDATE user_usage_stats SET ai_optimize_count = ai_optimize_count + 1, total_ai_usage = total_ai_usage + 1, monthly_usage = monthly_usage + 1 WHERE user_id = ?',
-        [userId]
-      );
-    }
-
-    // 记录每日使用明细（用于热力图）
-    const optimizeInc = (aiMode === 'ai_optimize' || aiMode !== 'ai_generate') ? 1 : 0
+    const now = new Date()
+    const today = formatLocalDate(now)
+    const monthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const nextMonthStart = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+    const optimizeInc = aiMode === 'ai_generate' ? 0 : 1
     const generateInc = aiMode === 'ai_generate' ? 1 : 0
-    await this.query(
-      `INSERT INTO ai_usage_daily (user_id, usage_date, optimize_count, generate_count, total_count)
-       VALUES (?, ?, ?, ?, 1)
-       ON DUPLICATE KEY UPDATE
-         optimize_count = optimize_count + VALUES(optimize_count),
-         generate_count = generate_count + VALUES(generate_count),
-         total_count = total_count + 1`,
-      [userId, today, optimizeInc, generateInc]
-    )
+    await this.ensureAIUsageDailyTable()
+
+    const connection = await this.pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      await connection.execute('INSERT IGNORE INTO user_usage_stats (user_id) VALUES (?)', [userId])
+      await connection.execute(
+        `INSERT INTO ai_usage_daily (user_id, usage_date, optimize_count, generate_count, total_count)
+         VALUES (?, ?, ?, ?, 1)
+         ON DUPLICATE KEY UPDATE
+           optimize_count = optimize_count + VALUES(optimize_count),
+           generate_count = generate_count + VALUES(generate_count),
+           total_count = total_count + 1`,
+        [userId, today, optimizeInc, generateInc]
+      )
+      await connection.execute(
+        `UPDATE user_usage_stats
+         SET ai_optimize_count = ai_optimize_count + ?,
+             ai_generate_count = ai_generate_count + ?,
+             total_ai_usage = total_ai_usage + 1,
+             monthly_usage = (
+               SELECT COALESCE(SUM(total_count), 0)
+               FROM ai_usage_daily
+               WHERE user_id = ? AND usage_date >= ? AND usage_date < ?
+             ),
+             last_reset_date = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [optimizeInc, generateInc, userId, monthStart, nextMonthStart, monthStart, userId]
+      )
+      await connection.commit()
+    } catch (error) {
+      await connection.rollback()
+      throw error
+    } finally {
+      connection.release()
+    }
   }
 
   // 统计方法
@@ -532,7 +658,7 @@ class MySQLDB {
       'INSERT INTO tags (name, color) VALUES (?, ?)',
       [name, color || '#6366f1']
     );
-    return (result.rows as any)[0];
+    return (result.rows as IndexedMutationResult)[0];
   }
 
   async getTags() {
@@ -642,7 +768,7 @@ class MySQLDB {
       [name, description, user_id, original_folder_id]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     
     if (!insertId) {
       throw new Error('公共文件夹创建失败：无法获取插入ID');
@@ -703,7 +829,7 @@ class MySQLDB {
       [user_id, public_folder_id, name, description]
     );
 
-    const insertId = (result.rows as any).insertId;
+    const insertId = (result.rows as ResultSetHeader).insertId;
     return await this.getImportedFolderById(insertId);
   }
 
@@ -745,11 +871,11 @@ class MySQLDB {
       [importedFolderId]
     );
     
-    if (!importedFolder.rows || (importedFolder.rows as any[]).length === 0) {
+    if (!importedFolder.rows || (importedFolder.rows as RowDataPacket[]).length === 0) {
       return [];
     }
     
-    const publicFolderId = ((importedFolder.rows as any[])[0] as any).public_folder_id;
+    const publicFolderId = (importedFolder.rows as ScalarRow<'public_folder_id'>[])[0].public_folder_id;
     
     // 获取公共文件夹对应的原始文件夹ID
     const publicFolder = await this.query(
@@ -757,11 +883,11 @@ class MySQLDB {
       [publicFolderId]
     );
     
-    if (!publicFolder.rows || (publicFolder.rows as any[]).length === 0) {
+    if (!publicFolder.rows || (publicFolder.rows as RowDataPacket[]).length === 0) {
       return [];
     }
     
-    const originalFolderId = ((publicFolder.rows as any[])[0] as any).original_folder_id;
+    const originalFolderId = (publicFolder.rows as ScalarRow<'original_folder_id'>[])[0].original_folder_id;
     
     // 获取原始文件夹中的用户提示词，包含标签和分类信息
     const result = await this.query(
@@ -789,7 +915,7 @@ class MySQLDB {
         'DELETE FROM user_imported_folders WHERE id = ? AND user_id = ?',
         [folderId, userId]
       );
-      return (result.rows as any).affectedRows > 0;
+      return (result.rows as ResultSetHeader).affectedRows > 0;
     } catch (error) {
       console.error('删除用户导入文件夹失败:', error);
       return false;
@@ -803,11 +929,11 @@ class MySQLDB {
       [importedFolderId]
     );
     
-    if (!importedFolder.rows || (importedFolder.rows as any[]).length === 0) {
+    if (!importedFolder.rows || (importedFolder.rows as RowDataPacket[]).length === 0) {
       return 0;
     }
     
-    const publicFolderId = ((importedFolder.rows as any[])[0] as any).public_folder_id;
+    const publicFolderId = (importedFolder.rows as ScalarRow<'public_folder_id'>[])[0].public_folder_id;
     
     // 获取公共文件夹对应的原始文件夹ID
     const publicFolder = await this.query(
@@ -815,11 +941,11 @@ class MySQLDB {
       [publicFolderId]
     );
     
-    if (!publicFolder.rows || (publicFolder.rows as any[]).length === 0) {
+    if (!publicFolder.rows || (publicFolder.rows as RowDataPacket[]).length === 0) {
       return 0;
     }
     
-    const originalFolderId = ((publicFolder.rows as any[])[0] as any).original_folder_id;
+    const originalFolderId = (publicFolder.rows as ScalarRow<'original_folder_id'>[])[0].original_folder_id;
     
     // 获取原始文件夹中的提示词数量
     const result = await this.query(
@@ -827,7 +953,7 @@ class MySQLDB {
       [originalFolderId]
     );
     
-    return ((result.rows as any[])[0] as any).count || 0;
+    return (result.rows as ScalarRow<'count'>[])[0].count || 0;
   }
 
   // ===== 版本历史相关方法 =====
@@ -844,14 +970,14 @@ class MySQLDB {
       'SELECT COALESCE(MAX(version_number), 0) as max_version FROM prompt_versions WHERE prompt_id = ?',
       [data.prompt_id]
     );
-    const nextVersion = ((maxVersion.rows as any[])[0] as any).max_version + 1;
+    const nextVersion = (maxVersion.rows as ScalarRow<'max_version'>[])[0].max_version + 1;
 
     const result = await this.query(
       'INSERT INTO prompt_versions (prompt_id, user_id, title, content, version_number, change_summary) VALUES (?, ?, ?, ?, ?, ?)',
       [data.prompt_id, data.user_id, data.title, data.content, nextVersion, data.change_summary || null]
     );
 
-    return { id: (result.rows as any).insertId, version_number: nextVersion };
+    return { id: (result.rows as ResultSetHeader).insertId, version_number: nextVersion };
   }
 
   async getPromptVersions(promptId: number) {
@@ -859,7 +985,7 @@ class MySQLDB {
       'SELECT id, prompt_id, user_id, title, version_number, change_summary, created_at FROM prompt_versions WHERE prompt_id = ? ORDER BY version_number DESC',
       [promptId]
     );
-    return result.rows as any[];
+    return result.rows as Omit<PromptVersionRow, 'content'>[];
   }
 
   async getPromptVersion(versionId: number) {
@@ -867,7 +993,7 @@ class MySQLDB {
       'SELECT * FROM prompt_versions WHERE id = ?',
       [versionId]
     );
-    return (result.rows as any[])[0] || null;
+    return (result.rows as PromptVersionRow[])[0] || null;
   }
 
   async getPromptVersionByNumber(promptId: number, versionNumber: number) {
@@ -875,7 +1001,7 @@ class MySQLDB {
       'SELECT * FROM prompt_versions WHERE prompt_id = ? AND version_number = ?',
       [promptId, versionNumber]
     );
-    return (result.rows as any[])[0] || null;
+    return (result.rows as PromptVersionRow[])[0] || null;
   }
 
   // ===== 全局搜索相关方法 =====
@@ -929,27 +1055,33 @@ class MySQLDB {
 
     return {
       userPrompts: {
-        items: userPromptsResult.rows as any[],
-        total: ((userPromptsCountResult.rows as any[])[0] as any).total
+        items: userPromptsResult.rows as RowDataPacket[],
+        total: (userPromptsCountResult.rows as ScalarRow<'total'>[])[0].total
       },
       publicPrompts: {
-        items: publicPromptsResult.rows as any[],
-        total: ((publicPromptsCountResult.rows as any[])[0] as any).total
+        items: publicPromptsResult.rows as RowDataPacket[],
+        total: (publicPromptsCountResult.rows as ScalarRow<'total'>[])[0].total
       },
       folders: {
-        items: foldersResult.rows as any[]
+        items: foldersResult.rows as RowDataPacket[]
       }
     };
   }
 }
 
 // 防止 Next.js HMR 重复创建连接池导致 "Too many connections"
-const globalForDb = globalThis as unknown as { __mysqlDb?: MySQLDB }
+const globalForDb = globalThis as unknown as { __mysqlDb?: MySQLDB; __mysqlDbVersion?: number }
 
-const db = globalForDb.__mysqlDb ?? new MySQLDB()
+const shouldReuseDb =
+  globalForDb.__mysqlDb &&
+  globalForDb.__mysqlDbVersion === MYSQL_DB_INSTANCE_VERSION &&
+  typeof globalForDb.__mysqlDb.ensureAIUsageDailyTable === 'function'
+
+const db = shouldReuseDb ? globalForDb.__mysqlDb as MySQLDB : new MySQLDB()
 
 if (process.env.NODE_ENV !== 'production') {
   globalForDb.__mysqlDb = db
+  globalForDb.__mysqlDbVersion = MYSQL_DB_INSTANCE_VERSION
 }
 
 export default db;

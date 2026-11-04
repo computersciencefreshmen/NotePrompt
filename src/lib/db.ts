@@ -516,7 +516,7 @@ export class SimpleDB {
     const prompts = await readJsonFile<DBPrompt[]>('prompts.json', [])
     const users = await readJsonFile<DBUser[]>('users.json', [])
 
-    let publicPrompts = prompts.filter(p => p.is_public)
+    const publicPrompts = prompts.filter(p => p.is_public)
 
     // 转换为公共提示词格式
     const publicPromptsData: DBPublicPrompt[] = publicPrompts.map(p => {

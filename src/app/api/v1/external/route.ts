@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyApiKey } from '@/lib/auth'
-import { db } from '@/lib/db'
+import db from '@/lib/mysql-database'
+import type { ResultSetHeader } from 'mysql2'
 
 // API密钥验证中间件
 async function validateApiKey(request: NextRequest) {
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
 
     // 构建查询条件
     let whereClause = 'WHERE pp.is_public = 1'
-    const params: any[] = []
+    const params: (string | number)[] = []
 
     if (search) {
       whereClause += ' AND (pp.title LIKE ? OR pp.content LIKE ?)'
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
       `SELECT COUNT(*) as total FROM public_prompts pp ${whereClause}`,
       params
     )
-    const total = (countResult as any)[0].total
+    const total = (countResult as { total: number }[])[0].total
 
     // 获取数据
     const offset = (page - 1) * limit
@@ -128,7 +129,7 @@ export async function POST(request: NextRequest) {
       'SELECT user_id FROM api_keys WHERE api_key = ?',
       [apiKey]
     )
-    const userId = (userResult as any)[0]?.user_id
+    const userId = (userResult as { user_id: number }[])[0]?.user_id
 
     if (!userId) {
       return NextResponse.json(
@@ -144,7 +145,7 @@ export async function POST(request: NextRequest) {
       [title, content, description || '', category_id || null, userId]
     )
 
-    const promptId = (result as any).insertId
+    const promptId = (result as ResultSetHeader).insertId
 
     // 获取创建的提示词
     const [promptResult] = await db.execute(
@@ -167,7 +168,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: (promptResult as any)[0],
+      data: (promptResult as Record<string, unknown>[])[0],
       message: '提示词创建成功'
     })
 
@@ -178,4 +179,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

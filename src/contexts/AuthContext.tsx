@@ -101,8 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true)
     try {
       const response: AuthResponse = await api.auth.login(credentials)
-      if (response.success && response.data) {
-        setUser(response.data.user)
+      if (response.success && response.data?.user) {
+        setUser(response.data.user as User)
         setLoading(false)
         return { success: true }
       } else {
@@ -133,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         // 不需要验证，正常登录
         if (response.data?.user) {
-          setUser(response.data.user)
+          setUser(response.data.user as User)
         }
         setLoading(false)
         return { success: true, data: response.data }

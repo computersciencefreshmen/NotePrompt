@@ -25,10 +25,10 @@ export async function GET(request: NextRequest) {
     console.log('查询结果数量:', favoritePrompts.length)
     
     // 处理数据，添加标签信息和收藏状态
-    const processedFavorites = await Promise.all(favoritePrompts.map(async (item: any) => {
+    const processedFavorites = await Promise.all(favoritePrompts.map(async item => {
       // 获取提示词的标签
-      const tagsResult = await db.getPublicPromptTags(item.id)
-      const tags = tagsResult.map((tag: any) => tag.name)
+      const tagsResult = await db.getPublicPromptTags(item.id as number)
+      const tags = tagsResult.map(tag => tag.name)
       
       return {
         id: item.id,

@@ -26,7 +26,9 @@ import {
   ImportedFolder,
   AdminPrompt,
   AdminFolder,
-  PromptVersion
+  PromptVersion,
+  PromptAttachmentDraft,
+  PromptOptimizerMode
 } from '@/types'
 
 // API基础配置
@@ -58,11 +60,6 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
   const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
   const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
   const url = `${baseURL}/api/v1${endpoint}`
-  
-  // 开发环境输出日志
-  if (process.env.NODE_ENV === 'development') {
-    console.log('API请求URL:', url)
-  }
   
   const config: RequestInit = {
     ...options,
@@ -463,6 +460,7 @@ export const publicPrompts = {
     if (params?.category_id) queryParams.append('category_id', params.category_id.toString())
     if (params?.search) queryParams.append('search', params.search)
     if (params?.tag) queryParams.append('tag', params.tag)
+    if (params?.lang) queryParams.append('lang', params.lang)
     if (params?.sort) queryParams.append('sort', params.sort)
     if (params?.page) queryParams.append('page', params.page.toString())
     if (params?.limit) queryParams.append('limit', params.limit.toString())
@@ -472,8 +470,10 @@ export const publicPrompts = {
   },
 
   // 获取单个公共提示词详情
-  get: async (id: number): Promise<ApiResponse<PublicPrompt>> => {
-    return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}`)
+  get: async (id: number, lang?: string): Promise<ApiResponse<PublicPrompt>> => {
+    const queryParams = new URLSearchParams()
+    if (lang) queryParams.append('lang', lang)
+    return apiRequest<ApiResponse<PublicPrompt>>(`/public-prompts/${id}${queryParams.toString() ? `?${queryParams}` : ''}`)
   },
 
   // 导入提示词到用户库（支持公共提示词和用户提示词）
@@ -556,12 +556,54 @@ export const ai = {
   }
 }
 
+export const attachments = {
+  parse: async (files: File[]): Promise<ApiResponse<{ attachments: PromptAttachmentDraft[] }>> => {
+    if (files.length === 0) {
+      return { success: false, error: '请选择需要解析的附件' }
+    }
+
+    const currentPort = typeof window !== 'undefined' ? window.location.port : '3000'
+    const baseURL = process.env.NODE_ENV === 'production' ? '' : `http://localhost:${currentPort || '3000'}`
+    const formData = new FormData()
+    files.slice(0, 12).forEach(file => formData.append('files', file))
+
+    const token = getAuthToken()
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    try {
+      const response = await fetch(`${baseURL}/api/v1/attachments/parse`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      })
+
+      const data = await response.json().catch(() => ({ success: false, error: `请求失败: ${response.status}` }))
+      if (!response.ok) {
+        return { success: false, error: data.error || `请求失败: ${response.status}` }
+      }
+
+      return data
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '附件解析失败' }
+    }
+  },
+}
+
 // 简化的AI优化API
 export const optimizePrompt = async (data: {
   prompt: string;
   provider: string;
   model: string;
   temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  mode?: PromptOptimizerMode | 'normal' | 'professional';
+  style?: string;
+  tone?: string;
+  outputFormat?: string;
+  constraints?: string[];
+  attachments?: PromptAttachmentDraft[];
 }): Promise<{
   success: boolean;
   optimized?: string;
@@ -600,12 +642,25 @@ export const optimizePrompt = async (data: {
 export interface StreamCallbacks {
   onThinking?: (chunk: string) => void
   onContent?: (chunk: string) => void
-  onDone?: (result: { optimized: string; thinking?: string; processing_time: number; provider: string; model: string }) => void
+  onDone?: (result: { optimized: string; title?: string; thinking?: string; processing_time: number; provider: string; model: string }) => void
   onError?: (message: string) => void
 }
 
 export async function optimizePromptStream(
-  data: { prompt: string; provider: string; model: string; temperature?: number },
+  data: {
+    prompt: string
+    provider: string
+    model: string
+    temperature?: number
+    topP?: number
+    maxTokens?: number
+    mode?: PromptOptimizerMode | 'normal' | 'professional'
+    style?: string
+    tone?: string
+    outputFormat?: string
+    constraints?: string[]
+    attachments?: PromptAttachmentDraft[]
+  },
   callbacks: StreamCallbacks
 ): Promise<void> {
   if (!data.prompt || data.prompt.trim().length === 0) {
@@ -916,29 +971,35 @@ export const admin = {
 export const api = {
   auth,
   user,
+  attachments,
   folders,
   prompts,
   publicPrompts,
   publicFolders: {
     // 获取公共文件夹列表
-    list: async (params?: { page?: number; limit?: number; search?: string }): Promise<PaginatedResponse<PublicFolder>> => {
+    list: async (params?: { page?: number; limit?: number; search?: string; lang?: string }): Promise<PaginatedResponse<PublicFolder>> => {
       const queryParams = new URLSearchParams()
       if (params?.page) queryParams.append('page', params.page.toString())
       if (params?.limit) queryParams.append('limit', params.limit.toString())
       if (params?.search) queryParams.append('search', params.search)
+      if (params?.lang) queryParams.append('lang', params.lang)
 
       const endpoint = `/public-folders${queryParams.toString() ? `?${queryParams}` : ''}`
       return apiRequest<PaginatedResponse<PublicFolder>>(endpoint)
     },
 
     // 获取公共文件夹详情
-    get: async (id: number): Promise<ApiResponse<PublicFolder>> => {
-      return apiRequest<ApiResponse<PublicFolder>>(`/public-folders/${id}`)
+    get: async (id: number, lang?: string): Promise<ApiResponse<PublicFolder>> => {
+      const queryParams = new URLSearchParams()
+      if (lang) queryParams.append('lang', lang)
+      return apiRequest<ApiResponse<PublicFolder>>(`/public-folders/${id}${queryParams.toString() ? `?${queryParams}` : ''}`)
     },
 
     // 获取公共文件夹的提示词
-    getPrompts: async (id: number): Promise<ApiResponse<PublicPrompt[]>> => {
-      return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts`)
+    getPrompts: async (id: number, lang?: string): Promise<ApiResponse<PublicPrompt[]>> => {
+      const queryParams = new URLSearchParams()
+      if (lang) queryParams.append('lang', lang)
+      return apiRequest<ApiResponse<PublicPrompt[]>>(`/public-folders/${id}/prompts${queryParams.toString() ? `?${queryParams}` : ''}`)
     },
 
     // 导入公共文件夹

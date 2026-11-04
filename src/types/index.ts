@@ -1,5 +1,16 @@
 // === 编辑模式相关类型 ===
 export type EditMode = 'normal' | 'professional'
+export type PromptOptimizerMode = 'simple' | 'pro'
+
+export interface PromptAttachmentDraft {
+  id: string
+  name: string
+  type: string
+  size: number
+  textPreview?: string
+  parseStatus?: 'parsed' | 'metadata' | 'failed'
+  error?: string
+}
 
 export interface PromptTemplate {
   id: string
@@ -34,6 +45,9 @@ export interface ProfessionalModeData {
   task: string
   format?: string
   outputStyle?: string
+  formatRules?: string[]
+  qualityMetrics?: string[]
+  acceptanceCriteria?: string[]
   constraints?: string[]
   examples?: string[]
   variables?: Record<string, string>
@@ -238,6 +252,7 @@ export interface Prompt {
   created_at: string
   updated_at: string
   is_favorited?: boolean
+  is_public?: boolean
 }
 
 export interface Folder {
@@ -307,6 +322,7 @@ export interface PublicPromptQueryParams {
   category_id?: number
   search?: string
   tag?: string
+  lang?: 'zh' | 'en'
   sort?: 'latest' | 'popular' | 'featured' | 'favorites'
   page?: number
   limit?: number
@@ -354,6 +370,8 @@ export interface AIMultiTurnOptimizeResponse {
   optimizedPrompt: string
   conversationHistory: ConversationMessage[]
   round: number
+  title?: string
+  thinking?: string
   error?: string
 }
 
@@ -368,12 +386,17 @@ export interface AIOptimizeRequest {
   outputFormat?: string
   examples?: { input: string; output: string }[]
   tags?: string[]
-  mode?: 'normal' | 'professional'
+  mode?: 'normal' | 'professional' | PromptOptimizerMode
+  style?: string
+  constraints?: string[]
+  attachments?: PromptAttachmentDraft[]
   aiOptimization?: boolean
   templateName?: string
   modelType?: string
   modelName?: string
   temperature?: number // 添加temperature字段
+  topP?: number
+  maxTokens?: number
   optimizationMode?: 'optimize' | 'rewrite' // 新增：优化模式
 }
 
@@ -384,9 +407,13 @@ export interface AIMultiTurnOptimizeRequest {
   userFeedback: string
   conversationHistory: ConversationMessage[]
   optimizationMode?: 'optimize' | 'rewrite' // 新增：优化模式
+  provider?: string
+  model?: string
   modelType?: string
   modelName?: string
   temperature?: number
+  topP?: number
+  maxTokens?: number
 }
 
 export interface PublicFolder {

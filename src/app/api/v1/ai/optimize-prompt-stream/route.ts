@@ -1,5 +1,159 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validateAIModel, formatAIError } from '@/lib/ai-utils'
+import { FALLBACK_AI_MODEL, FALLBACK_AI_PROVIDER } from '@/config/ai'
+import { sanitizeAIProviderError } from '@/lib/ai-error-sanitizer'
+
+type RequestedAttachment = {
+  name: string
+  type: string
+  size: number
+  parseStatus: string
+  textPreview: string
+}
+
+function buildLocalOptimizedPrompt({
+  prompt,
+  mode,
+  style,
+  tone,
+  outputFormat,
+  constraints,
+  attachments,
+}: {
+  prompt: string
+  mode?: string
+  style?: string
+  tone?: string
+  outputFormat?: string
+  constraints: string[]
+  attachments: RequestedAttachment[]
+}) {
+  const parsedAttachments = attachments.filter(attachment => attachment.parseStatus === 'parsed' && attachment.textPreview)
+  const attachmentSection = parsedAttachments.length > 0
+    ? `\n\n## 参考资料\n${parsedAttachments.map((attachment, index) => `${index + 1}. ${attachment.name}\n\n摘录：${attachment.textPreview.slice(0, 1200)}`).join('\n\n')}`
+    : ''
+  const constraintsSection = constraints.length > 0
+    ? `\n\n## 约束条件\n${constraints.map(item => `- ${item}`).join('\n')}`
+    : ''
+  const preferenceSection = [
+    style ? `- 优化风格：${style}` : '',
+    tone ? `- 语调：${tone}` : '',
+    outputFormat ? `- 输出格式：${outputFormat}` : '',
+  ].filter(Boolean).join('\n')
+
+  if (mode === 'pro' || mode === 'professional') {
+    return `# Role: 专业任务执行助手
+
+## Profile
+- language: 中文
+- description: 根据用户目标、约束条件和附件上下文，完成高质量任务执行。
+
+## Goal
+${prompt}
+
+## Skills
+- 准确理解用户意图，保留原始需求中的关键细节。
+- 将任务拆解为可执行步骤，并在必要时主动补充上下文。
+- 输出结构清晰、可直接复制使用的结果。
+
+## Rules
+- 不编造附件中不存在的事实。
+- 如信息不足，先列出需要确认的问题。
+- 保持表达简洁、专业、可执行。
+${constraintsSection}
+${preferenceSection ? `\n\n## Preferences\n${preferenceSection}` : ''}
+${attachmentSection}
+
+## Workflow
+1. 识别任务目标和最终交付物。
+2. 梳理已知条件、约束和参考资料。
+3. 按最适合的结构输出答案。
+4. 最后给出可检查的质量标准。
+
+## OutputFormat
+请使用 Markdown 输出，层级清晰，重点突出。`
+  }
+
+  return `# 任务
+${prompt}
+
+## 要求
+- 保留原始意图，不遗漏关键细节。
+- 将表达整理得更清晰、更具体、更容易执行。
+- 如任务信息不足，先说明需要补充的内容。
+${constraints.length > 0 ? constraints.map(item => `- ${item}`).join('\n') : ''}
+${preferenceSection ? `\n\n## 偏好\n${preferenceSection}` : ''}
+${attachmentSection}
+
+## 输出
+请直接给出可使用的结果，使用 Markdown 分点分段。`
+}
+
+function buildLocalPromptTitle(content: string) {
+  const firstMeaningfulLine = content
+    .split('\n')
+    .map(line => line.replace(/^#+\s*/, '').replace(/^[-*\d.、\s]+/, '').trim())
+    .find(line => line.length > 0) || '优化提示词'
+
+  return firstMeaningfulLine
+    .replace(/[：:。,.，；;]+$/g, '')
+    .slice(0, 24) || '优化提示词'
+}
+
+async function generatePromptTitle({
+  content,
+  provider,
+  config,
+}: {
+  content: string
+  provider: string
+  config: NonNullable<ReturnType<typeof validateAIModel>['config']>
+}) {
+  const fallbackTitle = buildLocalPromptTitle(content)
+  const apiKey = config.headers['Authorization']?.replace('Bearer ', '')
+  if (!apiKey) return fallbackTitle
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 8000)
+  const isMiniMaxProvider = provider === 'minimax'
+  const usesCompletionTokensParam = provider === 'minimax' || provider === 'xiaomi'
+
+  try {
+    const response = await fetch(`${config.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: '你只负责给提示词生成中文短标题。只输出标题，不要解释。标题不超过18个汉字。' },
+          { role: 'user', content: `请为这个提示词生成标题：\n\n${content.slice(0, 2400)}` },
+        ],
+        [usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens']: 48,
+        temperature: isMiniMaxProvider ? 0.2 : 0.3,
+        ...(provider === 'xiaomi' ? { thinking: { type: 'disabled' }, top_p: 0.95 } : {}),
+        stream: false,
+      }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) return fallbackTitle
+    const data = await response.json()
+    const aiTitle = String(data.choices?.[0]?.message?.content || '')
+      .replace(/^标题[:：]\s*/i, '')
+      .replace(/["“”'`]/g, '')
+      .trim()
+      .slice(0, 24)
+
+    return aiTitle || fallbackTitle
+  } catch {
+    return fallbackTitle
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
 
 /**
  * 流式提示词优化API (SSE)
@@ -10,10 +164,39 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     const prompt = body.prompt || body.originalPrompt
-    const provider = body.provider || body.modelType || 'qwen'
-    const model = body.model || body.modelName || 'qwen3.5-plus'
+    const provider = body.provider || body.modelType || 'deepseek'
+    const model = body.model || body.modelName || 'deepseek-v4-flash'
     const temperatureOverride = body.temperature as number | undefined
+    const topPOverride = (body.topP ?? body.top_p) as number | undefined
+    const maxTokensOverride = (body.maxTokens ?? body.max_tokens) as number | undefined
     const requestedMode = body.mode as string | undefined
+    const requestedStyle = typeof body.style === 'string' ? body.style : ''
+    const requestedTone = typeof body.tone === 'string' ? body.tone : ''
+    const requestedOutputFormat = typeof body.outputFormat === 'string' ? body.outputFormat : ''
+    const requestedConstraints = Array.isArray(body.constraints)
+      ? body.constraints
+          .filter((item: unknown) => typeof item === 'string' && item.trim())
+          .slice(0, 12)
+          .map((item: string) => item.trim().slice(0, 500))
+      : []
+    const requestedAttachments: RequestedAttachment[] = Array.isArray(body.attachments)
+      ? body.attachments
+          .filter((item: unknown) => item && typeof item === 'object')
+          .slice(0, 12)
+          .map((item: { name?: unknown; type?: unknown; size?: unknown; textPreview?: unknown; parseStatus?: unknown }) => ({
+            name: typeof item.name === 'string' ? item.name.slice(0, 120) : 'unnamed',
+            type: typeof item.type === 'string' ? item.type.slice(0, 80) : 'application/octet-stream',
+            size: typeof item.size === 'number' ? item.size : 0,
+            parseStatus: typeof item.parseStatus === 'string' ? item.parseStatus : 'metadata',
+            textPreview: typeof item.textPreview === 'string' ? item.textPreview.slice(0, 5000) : '',
+          }))
+      : []
+    const attachmentTextLength = requestedAttachments.reduce((total, attachment) => total + attachment.textPreview.length, 0)
+    const attachmentDeclaredSize = requestedAttachments.reduce((total, attachment) => total + Math.max(0, attachment.size), 0)
+
+    if (attachmentTextLength > 30000 || attachmentDeclaredSize > 50 * 1024 * 1024) {
+      return NextResponse.json({ success: false, error: '附件上下文过大，请减少文件数量或内容长度' }, { status: 413 })
+    }
 
     const MAX_INPUT_LENGTH = 10000
     if (prompt && prompt.length > MAX_INPUT_LENGTH) {
@@ -33,11 +216,26 @@ export async function POST(request: NextRequest) {
     const aiConfig = validation.config!
 
     // 构建元提示词（与非流式路由一致）
-    const modeInstruction = requestedMode === 'professional'
+    const modeInstruction = requestedMode === 'professional' || requestedMode === 'pro'
       ? '\n\n**⚠️ 用户已显式选择【专业模式】，必须使用专业模式的完整 Role-Profile-Skills-Rules-Workflow-OutputFormat 结构输出。**'
-      : requestedMode === 'normal'
-        ? '\n\n**⚠️ 用户已选择【普通模式】，请根据提示词长度和复杂度自动判断使用简洁/专业/创意模式。**'
+      : requestedMode === 'normal' || requestedMode === 'simple'
+        ? '\n\n**⚠️ 用户已选择【简洁模式】，请保留必要结构，但避免过度展开。输出应短、清晰、可直接复制使用。**'
         : ''
+
+    const preferenceInstruction = [
+      requestedStyle ? `- 优化风格：${requestedStyle}` : '',
+      requestedTone ? `- 语调：${requestedTone}` : '',
+      requestedOutputFormat ? `- 输出格式：${requestedOutputFormat}` : '',
+      requestedConstraints.length > 0 ? `- 约束条件：${requestedConstraints.join('；')}` : '',
+    ].filter(Boolean).join('\n')
+
+    const attachmentInstruction = requestedAttachments.length > 0
+      ? requestedAttachments.map((attachment, index) => {
+          const status = attachment.parseStatus === 'parsed' ? '已解析正文' : '仅元数据'
+          const preview = attachment.textPreview ? `\n摘录：${attachment.textPreview}` : ''
+          return `${index + 1}. ${attachment.name} (${attachment.type}, ${attachment.size} bytes, ${status})${preview}`
+        }).join('\n\n')
+      : ''
 
     const systemPrompt = `你是世界顶级的提示词工程专家。你的唯一任务是：将用户的原始提示词优化为结构化、高效能的版本。
 
@@ -109,7 +307,11 @@ export async function POST(request: NextRequest) {
 
 现在，基于以下原始提示词进行智能优化：`
 
+    const contextInstruction = `${preferenceInstruction ? `**用户偏好：**\n${preferenceInstruction}\n` : ''}${attachmentInstruction ? `**附件上下文：**\n${attachmentInstruction}\n` : ''}`
+
     const userMessage = `**原始提示词：** ${prompt}
+
+  ${contextInstruction}
 
 **优化要求：**
 1. 完整保留原始提示词中的所有细节、要点和重要信息
@@ -136,48 +338,119 @@ export async function POST(request: NextRequest) {
             return
           }
 
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+          let activeProvider = effectiveProvider
+          let activeModel = model
+          let activeConfig = aiConfig
+
+          const isReasonerModel = (modelName: string) => modelName === 'deepseek-reasoner'
+          const standardMessages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ]
+
+          const requestProvider = async (providerKey: string, modelKey: string, config: typeof aiConfig) => {
+            const isMiniMaxProvider = providerKey === 'minimax'
+            const isXiaomiProvider = providerKey === 'xiaomi'
+            const usesCompletionTokensParam = isMiniMaxProvider || isXiaomiProvider
+            const requestTemperature = isMiniMaxProvider
+              ? Math.min(Math.max(temperatureOverride ?? config.temperature, 0.01), 1)
+              : Math.min(Math.max(temperatureOverride ?? config.temperature, 0), 2)
+            const requestMaxTokens = isMiniMaxProvider
+              ? Math.min(Math.max(maxTokensOverride ?? 2048, 1), 2048)
+              : Math.min(Math.max(maxTokensOverride ?? 2048, 512), 8192)
+            const requestMessages = isReasonerModel(config.model)
+              ? [{ role: 'user', content: systemPrompt + '\n\n' + userMessage }]
+              : standardMessages
+            const bodyObj: Record<string, unknown> = {
+              model: config.model,
+              messages: requestMessages,
+              stream: true,
+            }
+            bodyObj[usesCompletionTokensParam ? 'max_completion_tokens' : 'max_tokens'] = requestMaxTokens
+            if (!config.fixedTemperature) {
+              bodyObj.temperature = requestTemperature
+            }
+            if (isXiaomiProvider) {
+              bodyObj.thinking = { type: 'disabled' }
+            }
+            if (topPOverride !== undefined) {
+              bodyObj.top_p = Math.min(Math.max(topPOverride, 0.1), 1)
+            }
+
+            const requestApiKey = config.headers['Authorization']?.replace('Bearer ', '')
+            const abortController = new AbortController()
+            const timeoutId = setTimeout(() => abortController.abort(), 150000)
+
+            try {
+              const response = await fetch(`${config.baseURL}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${requestApiKey}`,
+                },
+                body: JSON.stringify(bodyObj),
+                signal: abortController.signal,
+              })
+              return { response, providerKey, modelKey }
+            } finally {
+              clearTimeout(timeoutId)
+            }
           }
 
-          const isReasonerModel = aiConfig.model === 'deepseek-reasoner'
-          const messages = isReasonerModel
-            ? [{ role: 'user', content: systemPrompt + '\n\n' + userMessage }]
-            : [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userMessage },
-              ]
-
-          const requestTemperature = temperatureOverride ?? aiConfig.temperature
-          const bodyObj: Record<string, unknown> = {
-            model: aiConfig.model,
-            messages,
-            max_tokens: Math.min(aiConfig.max_tokens, 8192),
-            stream: true,
-          }
-          if (!aiConfig.fixedTemperature) {
-            bodyObj.temperature = requestTemperature
-          }
-
-          const abortController = new AbortController()
-          const timeoutId = setTimeout(() => abortController.abort(), 150000)
-
-          const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(bodyObj),
-            signal: abortController.signal,
-          })
-
-          clearTimeout(timeoutId)
+          let { response } = await requestProvider(activeProvider, activeModel, activeConfig)
 
           if (!response.ok) {
             const errorText = await response.text()
-            send({ type: 'error', message: `${effectiveProvider} API请求失败: ${response.status}` })
-            console.error(`${effectiveProvider} stream error:`, errorText)
-            controller.close()
-            return
+            console.error(`${activeProvider} stream error:`, sanitizeAIProviderError(errorText))
+
+            const fallbackCandidates = [
+              { provider: FALLBACK_AI_PROVIDER, model: FALLBACK_AI_MODEL },
+              { provider: 'kimi', model: 'moonshot-v1-32k' },
+            ].filter(candidate => candidate.provider !== activeProvider || candidate.model !== activeModel)
+
+            let fallbackError = errorText
+            for (const candidate of fallbackCandidates) {
+              const fallbackValidation = validateAIModel(candidate.provider, candidate.model)
+              if (!fallbackValidation.isValid || !fallbackValidation.config) continue
+
+              activeProvider = candidate.provider
+              activeModel = candidate.model
+              activeConfig = fallbackValidation.config
+              const fallbackAttempt = await requestProvider(activeProvider, activeModel, activeConfig)
+              response = fallbackAttempt.response
+
+              if (response.ok) {
+                break
+              }
+
+              fallbackError = await response.text()
+              console.error(`${activeProvider} stream error:`, sanitizeAIProviderError(fallbackError))
+            }
+
+            if (!response.ok) {
+              console.error(`${activeProvider} final stream error:`, sanitizeAIProviderError(fallbackError))
+              const localOptimized = buildLocalOptimizedPrompt({
+                prompt,
+                mode: requestedMode,
+                style: requestedStyle,
+                tone: requestedTone,
+                outputFormat: requestedOutputFormat,
+                constraints: requestedConstraints,
+                attachments: requestedAttachments,
+              })
+              const processingTime = Math.round(((Date.now() - startTime) / 1000) * 100) / 100
+              send({ type: 'content', content: localOptimized })
+              send({
+                type: 'done',
+                title: buildLocalPromptTitle(localOptimized),
+                optimized: localOptimized,
+                processing_time: processingTime,
+                provider: 'local',
+                model: 'rule-based-v2',
+              })
+              controller.close()
+              return
+            }
           }
 
           // 解析AI提供商的SSE流
@@ -281,8 +554,16 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // 后处理：移除常见前缀
-          let finalContent = fullContent.trim()
+          // 后处理：移除常见前缀。如果供应商只返回 reasoning/thinking 而没有正文，使用本地优化兜底，避免前端得到空结果。
+          let finalContent = fullContent.trim() || buildLocalOptimizedPrompt({
+            prompt,
+            mode: requestedMode,
+            style: requestedStyle,
+            tone: requestedTone,
+            outputFormat: requestedOutputFormat,
+            constraints: requestedConstraints,
+            attachments: requestedAttachments,
+          })
           const prefixesToRemove = [
             '优化后的提示词：', '优化结果：', '优化后的内容：',
             'AI优化结果：', '优化建议：', '优化版本：',
@@ -297,13 +578,19 @@ export async function POST(request: NextRequest) {
           }
 
           const processingTime = Math.round(((Date.now() - startTime) / 1000) * 100) / 100
+          const generatedTitle = await generatePromptTitle({
+            content: finalContent,
+            provider: activeProvider,
+            config: activeConfig,
+          })
           send({
             type: 'done',
+            title: generatedTitle,
             optimized: finalContent,
             thinking: fullThinking || undefined,
             processing_time: processingTime,
-            provider,
-            model,
+            provider: activeProvider,
+            model: activeModel,
           })
           controller.close()
         } catch (error) {

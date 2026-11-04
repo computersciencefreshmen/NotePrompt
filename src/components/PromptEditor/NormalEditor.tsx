@@ -9,17 +9,13 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FileText, Tag, X, Sparkles } from 'lucide-react'
 import { NormalModeData, PromptTemplate } from '@/types'
-import { AILoading, AIOptimizingLoading } from '@/components/ui/ai-loading'
-import { optimizePrompt, generatePrompt, api } from '@/lib/api'
-import { getAvailableProviders, getProviderModels } from '@/config/ai'
 
 interface NormalEditorProps {
   data: NormalModeData
   onChange: (data: NormalModeData) => void
   onSave?: () => void
   loading?: boolean
-  aiOptimizing?: boolean
-  onAiOptimizingChange?: (optimizing: boolean) => void
+  onOpenOptimizer?: () => void
   tags?: string[]
   onTagsChange?: (tags: string[]) => void
   availableTags?: string[]
@@ -135,8 +131,7 @@ export default function NormalEditor({
   onChange,
   onSave,
   loading = false,
-  aiOptimizing = false,
-  onAiOptimizingChange,
+  onOpenOptimizer,
   tags = [],
   onTagsChange,
   availableTags = [],
@@ -144,22 +139,13 @@ export default function NormalEditor({
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [showTips, setShowTips] = useState(true)
   const [newTag, setNewTag] = useState('')
-  const [modelType, setModelType] = useState<'deepseek' | 'kimi' | 'qwen' | 'zhipu'>('qwen')
-  const [modelName, setModelName] = useState<string>('qwen3-coder-plus')
-  const [temperature, setTemperature] = useState<number>(0.7)
-  const [aiFunction, setAiFunction] = useState<'optimize' | 'generate'>('optimize')
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
   
   // 复制功能
   const handleCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text)
-      setSuccess('已复制到剪贴板')
-      setTimeout(() => setSuccess(''), 2000)
-    } catch (err) {
-      setError('复制失败，请手动复制')
-      setTimeout(() => setError(''), 3000)
+    } catch {
+      return
     }
   }
   
@@ -213,141 +199,6 @@ export default function NormalEditor({
     }
     onChange(newData)
     setSelectedTemplate(template.id)
-  }
-
-  const generateLocalPrompt = (): string => {
-    let prompt = ''
-
-    if (data.objective) {
-      prompt += `目标：${data.objective}\n\n`
-    }
-
-    if (data.context) {
-      prompt += `背景：${data.context}\n\n`
-    }
-
-    if (data.style || data.tone) {
-      prompt += `要求：`
-      if (data.style) prompt += `使用${styleOptions.find(s => s.value === data.style)?.label}的风格`
-      if (data.style && data.tone) prompt += `，`
-      if (data.tone) prompt += `保持${toneOptions.find(t => t.value === data.tone)?.label}的语调`
-      prompt += `\n\n`
-    }
-
-    if (data.format) {
-      const formatLabel = formatOptions.find(f => f.value === data.format)?.label
-      prompt += `输出格式：${formatLabel}\n\n`
-    }
-
-    if (data.examples) {
-      prompt += `参考示例：${data.examples}\n\n`
-    }
-
-    return prompt.trim()
-  }
-
-  const handleOptimize = async (promptContent: string, temperature?: number) => {
-    // 输入验证
-    if (!promptContent || promptContent.trim().length === 0) {
-      setError('请输入要处理的提示词内容')
-      setTimeout(() => setError(''), 3000)
-      return
-    }
-
-    if (promptContent.trim().length < 10) {
-      setError('提示词内容太短，请输入至少10个字符')
-      setTimeout(() => setError(''), 3000)
-      return
-    }
-
-    // 设置加载状态
-    if (onAiOptimizingChange) {
-      onAiOptimizingChange(true)
-    }
-    setError('')
-    setSuccess('')
-
-    try {
-      if (aiFunction === 'optimize') {
-        // AI优化功能
-        
-        const result = await optimizePrompt({ 
-          prompt: promptContent.trim(),
-          provider: modelType,
-          model: modelName,
-          temperature: temperature
-        })
-        
-        if (result.success && result.optimized) {
-          // 将优化结果应用到当前内容
-          onChange({ ...data, objective: result.optimized })
-          
-          // 记录AI使用次数
-          api.user.incrementAIUsage('ai_optimize').catch(() => {})
-          
-          // 显示成功消息
-          setSuccess('AI优化完成！')
-          setTimeout(() => setSuccess(''), 3000)
-        } else {
-          setError(result.error || 'AI优化失败')
-          setTimeout(() => setError(''), 5000)
-        }
-      } else {
-        // AI生成功能
-        
-        const result = await generatePrompt({ 
-          userInfo: promptContent.trim(),
-          targetDescription: data.objective || '生成专业提示词',
-          writingStyle: data.style || '专业、清晰',
-          tone: data.tone || '正式、友好',
-          outputFormat: data.format || '结构化文本',
-          examples: data.examples || '',
-          tags: tags.join(', ') || '',
-          provider: modelType,
-          model: modelName
-        })
-        
-        if (result.success && result.generated) {
-          // 将生成结果应用到当前内容
-          onChange({ ...data, objective: result.generated })
-          
-          // 记录AI使用次数
-          api.user.incrementAIUsage('ai_generate').catch(() => {})
-          
-          // 显示成功消息
-          setSuccess('AI生成完成！')
-          setTimeout(() => setSuccess(''), 3000)
-        } else {
-          setError(result.error || 'AI生成失败')
-          setTimeout(() => setError(''), 5000)
-        }
-      }
-      
-    } catch (error) {
-      // Handle error silently
-      
-      // 更详细的错误信息
-      let errorMessage = aiFunction === 'optimize' ? 'AI优化失败，请稍后重试' : 'AI生成失败，请稍后重试'
-      if (error instanceof Error) {
-        if (error.message.includes('500')) {
-          errorMessage = 'AI服务暂时不可用，请稍后重试'
-        } else if (error.message.includes('timeout')) {
-          errorMessage = 'AI处理超时，请稍后重试'
-        } else if (error.message.includes('network')) {
-          errorMessage = '网络连接失败，请检查网络后重试'
-        } else {
-          errorMessage = error.message
-        }
-      }
-      
-      setError(errorMessage)
-      setTimeout(() => setError(''), 5000)
-    } finally {
-      // 重置加载状态
-      if (onAiOptimizingChange) {
-        onAiOptimizingChange(false)
-      }
-    }
   }
 
   const addTag = (tag: string) => {
@@ -571,101 +422,17 @@ export default function NormalEditor({
           <CardHeader>
             <div className="flex items-center justify-between">
               <span className="text-lg font-bold whitespace-nowrap">内容预览</span>
-              <div className="flex items-center space-x-4">
-                {/* AI功能选择 */}
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-600">AI功能:</span>
-                  <Select value={aiFunction} onValueChange={(value: 'optimize' | 'generate') => setAiFunction(value)}>
-                    <SelectTrigger className="w-32 h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="optimize">AI优化</SelectItem>
-                      <SelectItem value="generate">AI生成</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {/* 模型选择 */}
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-600">AI模型:</span>
-                  <Select value={modelType} onValueChange={(value: 'deepseek' | 'kimi' | 'qwen' | 'zhipu') => {
-                    setModelType(value)
-                    // 当提供商改变时，重置模型选择为第一个可用模型
-                    const providerModels = getProviderModels(value)
-                    if (providerModels.length > 0) {
-                      setModelName(providerModels[0].key)
-                    }
-                  }}>
-                    <SelectTrigger className="w-32 h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="qwen">Qwen (阿里)</SelectItem>
-                      <SelectItem value="deepseek">DeepSeek</SelectItem>
-                      <SelectItem value="kimi">Kimi (月之暗面)</SelectItem>
-                      <SelectItem value="zhipu">智谱GLM</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  {/* 二级模型选择 */}
-                  <Select value={modelName} onValueChange={setModelName}>
-                    <SelectTrigger className="w-40 h-8">
-                      <SelectValue placeholder="选择具体模型" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getProviderModels(modelType).map((model) => (
-                        <SelectItem key={model.key} value={model.key}>
-                          {model.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {/* Temperature控制 */}
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-600">创造性:</span>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={temperature}
-                      onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                      className="w-20 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                    />
-                    <span className="text-xs text-gray-500 w-8">{temperature}</span>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {temperature <= 0.3 ? '精确' : temperature <= 0.7 ? '平衡' : '创意'}
-                  </div>
-                </div>
-              {aiOptimizing ? (
-                  <div className="flex items-center space-x-2">
-                    <div className="relative w-3.5 h-3.5">
-                      {/* 主旋转环 */}
-                      <div className="w-3.5 h-3.5 border-2 border-teal-200 border-t-teal-600 rounded-full animate-spin"></div>
-                    </div>
-                    <span className="text-xs text-teal-600 font-medium">AI优化中</span>
-                  </div>
-                ) : (
-                  <Button
-                    onClick={() => {
-                      // 组装所有用户输入字段传给大模型
-                      const fullPrompt = generateLocalPrompt() || data.objective
-                      handleOptimize(fullPrompt, temperature)
-                    }}
-                    disabled={!data.objective}
-                    size="sm"
-                    className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white"
-                  >
-                    <Sparkles className="h-3 w-3 mr-1" />
-                    {aiFunction === 'optimize' ? 'AI优化' : 'AI生成'}
-                  </Button>
-                )}
-            </div>
+              <div className="flex items-center">
+                <Button
+                  onClick={onOpenOptimizer}
+                  disabled={!data.objective || !onOpenOptimizer}
+                  size="sm"
+                  className="bg-[#1f1a14] text-[#fffaf0] hover:bg-[#3b3329] dark:bg-[#f4efe7] dark:text-[#171410] dark:hover:bg-white"
+                >
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  在优化台打开
+                </Button>
+              </div>
           </div>
         </CardHeader>
         <CardContent>

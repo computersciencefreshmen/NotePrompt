@@ -4,8 +4,8 @@ import { validateAIModel, getRecommendedModels } from '@/lib/ai-utils'
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const provider = searchParams.get('provider') || 'qwen'
-    const model = searchParams.get('model') || 'qwen3.5-plus'
+    const provider = searchParams.get('provider') || 'deepseek'
+    const model = searchParams.get('model') || 'deepseek-v4-flash'
 
     // 验证指定模型
     const modelValidation = validateAIModel(provider, model)

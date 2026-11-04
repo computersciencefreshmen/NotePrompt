@@ -18,7 +18,8 @@ export async function POST(request: NextRequest) {
         AND COLUMN_NAME = 'email_verified'
     `)
 
-    if (checkColumn.rows && checkColumn.rows.length > 0) {
+    const existingColumns = Array.isArray(checkColumn.rows) ? checkColumn.rows : []
+    if (existingColumns.length > 0) {
       return NextResponse.json({
         success: true,
         message: '数据库已经是最新版本，无需迁移'
